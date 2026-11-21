@@ -294,6 +294,8 @@ func (h *Handler) setupRoutes() {
 	// site allows it -- publishing one. Registered whatever
 	// HTTP_API_SITE_APPS_DIR says, so the page can explain that the
 	// feature is off rather than 404.
+	mux.Handle("/api/v1/admin/connectors", cors(http.HandlerFunc(h.handleAdminConnectors)))
+	mux.Handle("/api/v1/admin/connectors/", cors(http.HandlerFunc(h.handleAdminConnectors)))
 	mux.Handle("/api/v1/admin/site-apps", cors(http.HandlerFunc(h.handleAdminSiteApps)))
 	mux.Handle("/api/v1/admin/site-apps/", cors(http.HandlerFunc(h.handleAdminSiteApps)))
 	// API key management (admin-only). The collection path covers

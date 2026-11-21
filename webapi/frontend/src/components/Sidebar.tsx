@@ -84,6 +84,11 @@ const ADMIN_NAV = [
   { href: '/admin/clients', label: 'OAuth2 Clients' },
   { href: '/admin/tokens', label: 'OAuth2 Tokens' },
   { href: '/admin/api-keys', label: 'API Keys' },
+  // Connectors go OUT (accounts this server connects to); OAuth2
+  // Clients come IN. Adjacent in the menu because they are adjacent in
+  // an operator's head, which is exactly why each page says which it
+  // is.
+  { href: '/admin/connectors', label: 'Connectors' },
   { href: '/admin/site-apps', label: 'Site Apps' },
   { href: '/admin/usage', label: 'Usage' },
   { href: '/admin/logs', label: 'Logs' },
