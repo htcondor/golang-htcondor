@@ -303,7 +303,9 @@ func TestPipeFailureReachesTheReaderAsAFailure(t *testing.T) {
 			readErr = err
 			break
 		}
-		if _, err := io.Copy(io.Discard, tr); err != nil {
+		// Bounded, so a mutation that produced an endless stream
+		// would fail the test rather than hang it.
+		if _, err := io.Copy(io.Discard, io.LimitReader(tr, 1<<20)); err != nil {
 			readErr = err
 			break
 		}
