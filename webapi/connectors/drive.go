@@ -53,6 +53,10 @@ type DriveFile struct {
 	ID   string
 	Name string
 	Size int64
+	// SizeKnown reports that Drive gave a size. It does not for its own
+	// document types, which have no bytes to download and must be
+	// exported to a chosen format instead.
+	SizeKnown bool
 }
 
 // Drive reads files with one user's access token.
@@ -115,7 +119,9 @@ func (d *Drive) Stat(ctx context.Context, token, fileID string) (DriveFile, erro
 	}
 	out := DriveFile{ID: body.ID, Name: body.Name}
 	if body.Size != "" {
-		out.Size, _ = strconv.ParseInt(body.Size, 10, 64)
+		if n, err := strconv.ParseInt(body.Size, 10, 64); err == nil {
+			out.Size, out.SizeKnown = n, true
+		}
 	}
 	if out.ID == "" {
 		out.ID = fileID

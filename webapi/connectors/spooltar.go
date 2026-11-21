@@ -23,7 +23,17 @@ import (
 type SpoolFile struct {
 	Name string
 	Size int64
-	Open func() (io.ReadCloser, error)
+	// SizeKnown reports that Size came from the provider rather than
+	// being a zero nobody filled in.
+	//
+	// tar writes the size in the header BEFORE the body, so a file
+	// whose size the provider does not report cannot be streamed into
+	// one -- and the only alternatives are buffering it, which this
+	// path exists to avoid, or writing a header that lies. Drive does
+	// not report a size for its own document types, so this is a real
+	// case and not a defensive flourish.
+	SizeKnown bool
+	Open      func() (io.ReadCloser, error)
 }
 
 // MergeSpoolTar writes userTar's entries and extra into one archive.
@@ -87,6 +97,12 @@ func MergeSpoolTar(w io.Writer, userTar io.Reader, extra []SpoolFile) error {
 }
 
 func writeSpoolFile(tw *tar.Writer, f SpoolFile) error {
+	if !f.SizeKnown {
+		return fmt.Errorf("%q: the provider reported no size, and a file has to be "+
+			"sized before it can be streamed into an archive. Google reports no size "+
+			"for its own document types (Docs, Sheets, Slides), which have to be "+
+			"exported to a chosen format rather than downloaded", f.Name)
+	}
 	rc, err := f.Open()
 	if err != nil {
 		return fmt.Errorf("fetching %q: %w", f.Name, err)
@@ -115,4 +131,32 @@ func writeSpoolFile(tw *tar.Writer, f SpoolFile) error {
 			f.Name, n, f.Size)
 	}
 	return nil
+}
+
+// MergeSpoolTarToPipe is MergeSpoolTar writing into a pipe, and it
+// closes the pipe itself.
+//
+// Use THIS rather than MergeSpoolTar with a pipe of your own. The
+// closing discipline is the whole reason it exists, and this repository
+// has already paid for getting it wrong once: tar.Writer.Close appends
+// a valid end-of-archive marker to whatever has been written so far, so
+// a failure followed by a plain close hands the reader a well-formed
+// archive holding a PREFIX of the files. The schedd accepts it and
+// releases the jobs; the 500 the handler returns afterwards arrives too
+// late, and every proc of the cluster is running with a partial
+// sandbox. See writeMultipartTar, which carries the same note for the
+// same reason.
+//
+// So: on success the marker goes on and the pipe closes cleanly. On
+// failure the pipe is closed WITH the error, and the reader sees an
+// error rather than a shorter archive.
+func MergeSpoolTarToPipe(pw *io.PipeWriter, userTar io.Reader, extra []SpoolFile) (err error) {
+	defer func() {
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_ = pw.Close()
+	}()
+	return MergeSpoolTar(pw, userTar, extra)
 }

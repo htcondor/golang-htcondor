@@ -56,8 +56,9 @@ func readTar(t *testing.T, b []byte) map[string]string {
 
 func spoolFile(name, body string) SpoolFile {
 	return SpoolFile{
-		Name: name,
-		Size: int64(len(body)),
+		Name:      name,
+		Size:      int64(len(body)),
+		SizeKnown: true,
 		Open: func() (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(body)), nil
 		},
@@ -153,8 +154,9 @@ func TestMergeRefusesTwoExtrasWithOneName(t *testing.T) {
 // and is not.
 func TestMergeCatchesAShortProvider(t *testing.T) {
 	short := SpoolFile{
-		Name: "truncated.csv",
-		Size: 100, // claimed
+		Name:      "truncated.csv",
+		Size:      100, // claimed
+		SizeKnown: true,
 		Open: func() (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader("only a little")), nil
 		},
@@ -172,9 +174,10 @@ func TestMergeCatchesAShortProvider(t *testing.T) {
 
 func TestMergeReportsAFetchThatFails(t *testing.T) {
 	failing := SpoolFile{
-		Name: "gone.csv",
-		Size: 4,
-		Open: func() (io.ReadCloser, error) { return nil, io.ErrUnexpectedEOF },
+		Name:      "gone.csv",
+		Size:      4,
+		SizeKnown: true,
+		Open:      func() (io.ReadCloser, error) { return nil, io.ErrUnexpectedEOF },
 	}
 	var out bytes.Buffer
 	err := MergeSpoolTar(&out, bytes.NewReader(makeTar(t, nil)), []SpoolFile{failing})
@@ -265,5 +268,208 @@ func TestRecordInputRefsWithNoneChangesNothing(t *testing.T) {
 	in := "executable = run.sh\nqueue\n"
 	if got := RecordInputRefs(in, nil); got != in {
 		t.Errorf("a file with no refs was modified: %q", got)
+	}
+}
+
+// --- the pipe discipline ----------------------------------------------
+
+// A failure must reach the reader AS a failure.
+//
+// tar.Writer.Close appends a valid end-of-archive marker to whatever
+// has been written, so a failure followed by a plain close hands the
+// reader a well-formed archive holding a PREFIX of the files. The
+// schedd accepts that and releases the jobs, and the error the handler
+// reports afterwards arrives too late -- every proc of the cluster is
+// already running with a partial sandbox. This repository has paid for
+// that once; see writeMultipartTar.
+func TestPipeFailureReachesTheReaderAsAFailure(t *testing.T) {
+	user := makeTar(t, map[string]string{"run.sh": "#!/bin/sh\n"})
+	failing := SpoolFile{
+		Name: "never.csv", Size: 4, SizeKnown: true,
+		Open: func() (io.ReadCloser, error) { return nil, io.ErrUnexpectedEOF },
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		_ = MergeSpoolTarToPipe(pw, bytes.NewReader(user), []SpoolFile{failing})
+	}()
+
+	// Read it the way the schedd would.
+	tr := tar.NewReader(pr)
+	var readErr error
+	for {
+		_, err := tr.Next()
+		if err != nil {
+			readErr = err
+			break
+		}
+		if _, err := io.Copy(io.Discard, tr); err != nil {
+			readErr = err
+			break
+		}
+	}
+
+	if readErr == nil || errors.Is(readErr, io.EOF) {
+		t.Fatalf("the reader saw %v -- a clean end of archive. It would accept a "+
+			"partial sandbox and release the jobs.", readErr)
+	}
+}
+
+// And a success closes cleanly, so the reader sees a whole archive.
+func TestPipeSuccessClosesCleanly(t *testing.T) {
+	user := makeTar(t, map[string]string{"run.sh": "#!/bin/sh\n"})
+
+	pr, pw := io.Pipe()
+	go func() {
+		_ = MergeSpoolTarToPipe(pw, bytes.NewReader(user), []SpoolFile{
+			spoolFile("remote.csv", "a,b,c\n"),
+		})
+	}()
+
+	got := map[string]string{}
+	tr := tar.NewReader(pr)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading: %v", err)
+		}
+		body, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[hdr.Name] = string(body)
+	}
+	if len(got) != 2 || got["remote.csv"] != "a,b,c\n" || got["run.sh"] != "#!/bin/sh\n" {
+		t.Errorf("merged = %v", got)
+	}
+}
+
+// --- streaming --------------------------------------------------------
+
+// Nothing is read into memory before it is written out. A connector
+// file arrives as a stream and leaves as one; the whole point of the
+// spool path is that a large input never lands on this server's disk
+// or in its heap.
+func TestMergeStreamsRatherThanBuffering(t *testing.T) {
+	const size = 4 << 20 // bigger than any sane buffer the code might hold
+
+	var peak int64
+	counting := &countingReader{r: repeating('x', size), peak: &peak}
+
+	big := SpoolFile{
+		Name: "big.dat", Size: size, SizeKnown: true,
+		Open: func() (io.ReadCloser, error) { return io.NopCloser(counting), nil },
+	}
+
+	// A writer that counts how much has been written by the time each
+	// read happens. If the merge buffered the file, every byte would be
+	// read before any was written.
+	var written int64
+	w := &countingWriter{written: &written, onWrite: func() {
+		counting.writtenSoFar = &written
+	}}
+
+	if err := MergeSpoolTar(w, bytes.NewReader(makeTar(t, nil)), []SpoolFile{big}); err != nil {
+		t.Fatal(err)
+	}
+
+	if counting.maxUnwritten >= size {
+		t.Errorf("the whole file (%d bytes) was read before anything was written; "+
+			"this path must stream", size)
+	}
+	if written < size {
+		t.Errorf("wrote %d bytes of a %d byte file", written, size)
+	}
+}
+
+type countingReader struct {
+	r            io.Reader
+	read         int64
+	writtenSoFar *int64
+	maxUnwritten int64
+	peak         *int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += int64(n)
+	var w int64
+	if c.writtenSoFar != nil {
+		w = *c.writtenSoFar
+	}
+	if gap := c.read - w; gap > c.maxUnwritten {
+		c.maxUnwritten = gap
+	}
+	return n, err
+}
+
+type countingWriter struct {
+	written *int64
+	onWrite func()
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	*c.written += int64(len(p))
+	if c.onWrite != nil {
+		c.onWrite()
+	}
+	return len(p), nil
+}
+
+func repeating(b byte, n int) io.Reader {
+	return io.LimitReader(byteRepeater{b}, int64(n))
+}
+
+type byteRepeater struct{ b byte }
+
+func (r byteRepeater) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.b
+	}
+	return len(p), nil
+}
+
+// --- unknown size -----------------------------------------------------
+
+// Drive reports no size for its own document types. tar needs the size
+// before the body, so such a file cannot be streamed into one -- and
+// the alternatives are buffering it, which this path exists to avoid,
+// or writing a header that lies.
+func TestAFileWithNoReportedSizeIsRefusedWithADiagnosis(t *testing.T) {
+	unknown := SpoolFile{
+		Name: "notes", Size: 0, SizeKnown: false,
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("content after all")), nil
+		},
+	}
+	var out bytes.Buffer
+	err := MergeSpoolTar(&out, bytes.NewReader(makeTar(t, nil)), []SpoolFile{unknown})
+	if err == nil {
+		t.Fatal("a file with no reported size produced an archive")
+	}
+	// "archive/tar: write too long" is what this used to say, which
+	// names neither the cause nor the remedy.
+	if !strings.Contains(err.Error(), "Docs") {
+		t.Errorf("error = %q, want it to name the likely cause", err)
+	}
+}
+
+// A genuinely empty file is not the same as one of unknown size.
+func TestAnEmptyFileWithAKnownSizeIsFine(t *testing.T) {
+	empty := SpoolFile{
+		Name: "empty.txt", Size: 0, SizeKnown: true,
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("")), nil
+		},
+	}
+	var out bytes.Buffer
+	if err := MergeSpoolTar(&out, bytes.NewReader(makeTar(t, nil)), []SpoolFile{empty}); err != nil {
+		t.Fatalf("an empty file was refused: %v", err)
+	}
+	if got := readTar(t, out.Bytes()); got["empty.txt"] != "" {
+		t.Errorf("merged = %v", got)
 	}
 }
