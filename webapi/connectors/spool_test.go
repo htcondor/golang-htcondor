@@ -12,19 +12,19 @@ func TestParseInputURL(t *testing.T) {
 		wantErr string
 	}{
 		{
-			raw:  "connector://webapi_builtin_gdrive/FILEID/data.csv",
-			want: InputRef{Service: "webapi_builtin_gdrive", FileID: "FILEID", Name: "data.csv"},
+			raw:  "webapi-builtin-gdrive+gdrive2://FILEID/data.csv",
+			want: InputRef{Service: "webapi-builtin-gdrive", Method: "gdrive2", FileID: "FILEID", Name: "data.csv"},
 		},
 		{
-			raw:  "connector://api2_site_cryoem/1a2b-3c/run.tar.gz",
-			want: InputRef{Service: "api2_site_cryoem", FileID: "1a2b-3c", Name: "run.tar.gz"},
+			raw:  "api2-site-cryoem+gdrive2://1a2b-3c/run.tar.gz",
+			want: InputRef{Service: "api2-site-cryoem", Method: "gdrive2", FileID: "1a2b-3c", Name: "run.tar.gz"},
 		},
 
-		{raw: "connector://svc/FILEID", wantErr: "does not name a file"},
-		{raw: "connector://svc/FILEID/", wantErr: "does not name a file"},
-		{raw: "connector://svc/a/b/c.txt", wantErr: "does not name a file"},
-		{raw: "connector:///FILEID/data.csv", wantErr: "names no connector"},
-		{raw: "gdrive://svc/FILEID/data.csv", wantErr: "not a connector:// reference"},
+		{raw: "svc+gdrive2://FILEID", wantErr: "does not name a file"},
+		{raw: "svc+gdrive2://FILEID/", wantErr: "does not name a file"},
+		{raw: "svc+gdrive2://a/b/c.txt", wantErr: "does not name a file"},
+		{raw: "svc+gdrive2:///data.csv", wantErr: "names no file id"},
+		{raw: "gdrive2://FILEID/data.csv", wantErr: "names no credential"},
 	}
 
 	for _, tc := range tests {
@@ -64,7 +64,7 @@ func TestAColonInTheAuthorityWouldNotSurviveParsing(t *testing.T) {
 func TestSplitRewritesTheReferenceToItsName(t *testing.T) {
 	in := strings.Join([]string{
 		"executable = run.sh",
-		"transfer_input_files = connector://webapi_builtin_gdrive/FILEID/data.csv",
+		"transfer_input_files = webapi-builtin-gdrive+gdrive2://FILEID/data.csv",
 		"queue",
 	}, "\n")
 
@@ -84,7 +84,7 @@ func TestSplitRewritesTheReferenceToItsName(t *testing.T) {
 	// Nothing advertises a `connector` transfer method, so a reference
 	// left in place becomes a Requirements clause nothing satisfies and
 	// the job never matches.
-	if strings.Contains(out, "connector://") {
+	if strings.Contains(out, "+gdrive2://") {
 		t.Error("a connector reference survived the rewrite")
 	}
 }
@@ -98,7 +98,7 @@ func TestSplitLeavesTheRestOfTheFileAlone(t *testing.T) {
 		"MYMACRO = something",
 		"executable = run.sh",
 		"arguments = --in $(MYMACRO)",
-		"transfer_input_files = local.dat, connector://svc/ID/remote.csv, other.dat",
+		"transfer_input_files = local.dat, svc+gdrive2://ID/remote.csv, other.dat",
 		"+WantSomething = true",
 		"queue 5",
 	}, "\n")
@@ -110,14 +110,14 @@ func TestSplitLeavesTheRestOfTheFileAlone(t *testing.T) {
 	if len(refs) != 1 {
 		t.Fatalf("refs = %+v", refs)
 	}
-	want := strings.Replace(in, "connector://svc/ID/remote.csv", "remote.csv", 1)
+	want := strings.Replace(in, "svc+gdrive2://ID/remote.csv", "remote.csv", 1)
 	if out != want {
 		t.Errorf("rewritten file differs by more than the reference:\n--- got ---\n%s\n--- want ---\n%s", out, want)
 	}
 }
 
 func TestSplitHandlesSeveralOnOneLine(t *testing.T) {
-	in := "transfer_input_files = connector://svc/A/a.csv, connector://svc/B/b.csv\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://A/a.csv, svc+gdrive2://B/b.csv\nqueue\n"
 
 	out, refs, err := SplitSpoolInputs(in)
 	if err != nil {
@@ -147,7 +147,7 @@ func TestSplitLeavesAFileWithNoReferencesUnchanged(t *testing.T) {
 
 // The same file named twice is one fetch.
 func TestSplitDedupesTheSameFile(t *testing.T) {
-	in := "transfer_input_files = connector://svc/A/a.csv, connector://svc/A/a.csv\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://A/a.csv, svc+gdrive2://A/a.csv\nqueue\n"
 	_, refs, err := SplitSpoolInputs(in)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestSplitDedupesTheSameFile(t *testing.T) {
 // job that silently runs on the wrong input is worse than one that does
 // not start.
 func TestTwoConnectorFilesCannotShareAName(t *testing.T) {
-	in := "transfer_input_files = connector://svc/A/data.csv, connector://svc/B/data.csv\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://A/data.csv, svc+gdrive2://B/data.csv\nqueue\n"
 
 	_, _, err := SplitSpoolInputs(in)
 	if err == nil {
@@ -177,7 +177,7 @@ func TestTwoConnectorFilesCannotShareAName(t *testing.T) {
 
 // The same collision arriving from the other direction.
 func TestAConnectorFileCannotShadowAnOrdinaryInput(t *testing.T) {
-	in := "transfer_input_files = data.csv, connector://svc/A/data.csv\nqueue\n"
+	in := "transfer_input_files = data.csv, svc+gdrive2://A/data.csv\nqueue\n"
 
 	_, _, err := SplitSpoolInputs(in)
 	if err == nil {
@@ -191,7 +191,7 @@ func TestAConnectorFileCannotShadowAnOrdinaryInput(t *testing.T) {
 func TestACollisionIsRefusedNotRenamed(t *testing.T) {
 	// A generated name would be one the submit file does not mention,
 	// so the job would look for an input that is not there.
-	in := "transfer_input_files = connector://svc/A/x.csv, connector://svc/B/x.csv\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://A/x.csv, svc+gdrive2://B/x.csv\nqueue\n"
 	out, refs, err := SplitSpoolInputs(in)
 	if err == nil {
 		t.Fatalf("accepted a collision, rewriting to %q with refs %+v", out, refs)
@@ -202,7 +202,7 @@ func TestACollisionIsRefusedNotRenamed(t *testing.T) {
 }
 
 func TestAMalformedReferenceRefusesTheWholeSubmission(t *testing.T) {
-	in := "transfer_input_files = connector://svc/NOFILENAME\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://NOFILENAME\nqueue\n"
 	if _, _, err := SplitSpoolInputs(in); err == nil {
 		t.Fatal("a malformed reference was accepted")
 	}
@@ -216,8 +216,8 @@ func TestAMalformedReferenceRefusesTheWholeSubmission(t *testing.T) {
 // nothing satisfies and the job never matches.
 func TestOutputRefsAreFound(t *testing.T) {
 	in := strings.Join([]string{
-		"transfer_input_files = connector://svc/A/in.csv",
-		`transfer_output_remaps = "result.dat = connector://svc/FOLDER/result.dat"`,
+		"transfer_input_files = svc+gdrive2://A/in.csv",
+		`transfer_output_remaps = "result.dat = svc+gdrive2://FOLDER/result.dat"`,
 		"queue",
 	}, "\n")
 
@@ -231,14 +231,14 @@ func TestOutputRefsAreFound(t *testing.T) {
 }
 
 func TestOutputRefsIgnoresInputs(t *testing.T) {
-	in := "transfer_input_files = connector://svc/A/in.csv\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://A/in.csv\nqueue\n"
 	if got := OutputRefs(in); len(got) != 0 {
 		t.Errorf("OutputRefs = %v, want none; an input is not an output", got)
 	}
 }
 
 func TestOutputRefsFindsOutputDestination(t *testing.T) {
-	in := "output_destination = connector://svc/FOLDER/out\nqueue\n"
+	in := "output_destination = svc+gdrive2://FOLDER/out\nqueue\n"
 	if got := OutputRefs(in); len(got) != 1 {
 		t.Errorf("OutputRefs = %v, want the output_destination", got)
 	}

@@ -224,7 +224,7 @@ func order(t *testing.T, extra []SpoolFile) string {
 // --- the attribute ----------------------------------------------------
 
 func TestInputRefsRoundTripThroughTheJobAttribute(t *testing.T) {
-	in := "transfer_input_files = connector://svc/A/a.csv, connector://svc/B/b.csv\nqueue\n"
+	in := "transfer_input_files = svc+gdrive2://A/a.csv, svc+gdrive2://B/b.csv\nqueue\n"
 	_, refs, err := SplitSpoolInputs(in)
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestInputRefsRoundTripThroughTheJobAttribute(t *testing.T) {
 }
 
 func TestRecordInputRefsAddsTheAttribute(t *testing.T) {
-	_, refs, err := SplitSpoolInputs("transfer_input_files = connector://svc/A/a.csv\nqueue\n")
+	_, refs, err := SplitSpoolInputs("transfer_input_files = svc+gdrive2://A/a.csv\nqueue\n")
 	if err != nil {
 		t.Fatal(err)
 	}

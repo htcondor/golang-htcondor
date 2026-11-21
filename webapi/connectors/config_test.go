@@ -76,7 +76,7 @@ func TestBuiltinSuppliesWhatTheOperatorShouldNotKnow(t *testing.T) {
 	if len(d.Scopes) != 1 || !strings.HasSuffix(d.Scopes[0], "/drive.file") {
 		t.Errorf("Scopes = %v, want the narrow drive.file default", d.Scopes)
 	}
-	if d.Service != "webapi_builtin_gdrive" {
+	if d.Service != "webapi-builtin-gdrive" {
 		t.Errorf("Service = %q, want webapi_builtin_gdrive", d.Service)
 	}
 	// spool is the default because it needs nothing deployed anywhere
@@ -123,7 +123,7 @@ func TestSiteConnectorSuppliesEverything(t *testing.T) {
 		t.Errorf("Groups = %v, want the JSON array parsed", d.Groups)
 	}
 	// A site connector gets no builtin's endpoints by accident.
-	if d.Service != "webapi_site_cryoem" {
+	if d.Service != "webapi-site-cryoem" {
 		t.Errorf("Service = %q", d.Service)
 	}
 }
@@ -136,7 +136,7 @@ func TestServicePrefixIsConfigurable(t *testing.T) {
 		"HTTP_API_CONNECTOR_PREFIX": "api2",
 	})
 	d, _ := src.Definition(MustParse("builtin:gdrive"))
-	if d.Service != "api2_builtin_gdrive" {
+	if d.Service != "api2-builtin-gdrive" {
 		t.Errorf("Service = %q, want the configured prefix", d.Service)
 	}
 }

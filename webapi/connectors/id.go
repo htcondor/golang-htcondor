@@ -104,13 +104,21 @@ func namespaceList() string {
 
 // validateName checks the name half.
 //
-// The character set is the intersection of what is unambiguous in the
-// three places a name lands: a URL path segment, an HTCondor
-// configuration parameter name, and a credd file name
-// (okay_for_oauth_filename in store_cred.cpp allows rather more than
-// this, so this is the narrower of the two constraints). Rejecting here
-// means no handler downstream has to wonder whether a name can contain a
-// slash or a space.
+// Lowercase letters, digits and hyphen. No underscore, and that
+// exclusion does two jobs.
+//
+// It is what lets the credd service name appear in a URL SCHEME. A job
+// addresses a connector's file as <service>+gdrive2://..., and
+// HTCondor's IsUrl accepts only alphanumerics, '+', '-' and '.' in a
+// scheme (condor_url.cpp) -- an underscore anywhere in it means the
+// string is not recognised as a URL at all, so the schedd would treat
+// it as a plain filename and the job would fail looking for it.
+//
+// And it makes MacroID injective. That mapping turns '-' into '_' for
+// configuration parameter names, so with underscores allowed in names
+// site:my-app and site:my_app would be two connectors and one
+// parameter. Banning one of the two spellings removes the collision
+// rather than detecting it.
 func validateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("connector name is empty")
@@ -122,11 +130,11 @@ func validateName(name string) error {
 		return fmt.Errorf("connector name %q must begin and end with a lowercase letter or digit", name)
 	}
 	for _, r := range name {
-		if isNameAlnum(r) || r == '-' || r == '_' {
+		if isNameAlnum(r) || r == '-' {
 			continue
 		}
 		return fmt.Errorf("connector name %q contains %q; names may use only "+
-			"lowercase letters, digits, hyphen and underscore", name, r)
+			"lowercase letters, digits and hyphen", name, r)
 	}
 	return nil
 }
@@ -165,8 +173,9 @@ const configPrefix = "HTTP_API_CONNECTOR_"
 // is legal to set but reads as subtraction wherever a name appears in an
 // expression.
 //
-// It is NOT injective: site:my-app and site:my_app are different
-// connectors and the same parameter name. See MacroCollision.
+// Injective, because a connector name may not contain an underscore
+// (validateName): nothing else maps onto a name a hyphen produces.
+// MacroCollision remains as a guard rather than a necessity.
 func (id ID) MacroID() string {
 	return strings.ToUpper(strings.ReplaceAll(
 		string(id.Namespace)+"_"+id.Name, "-", "_"))
@@ -209,7 +218,13 @@ func MacroCollision(ids []ID) map[string][]ID {
 const DefaultServicePrefix = "webapi"
 
 // Service is the name this connector's credential is stored under in the
-// credd: "<prefix>_<namespace>_<name>".
+// credd, and the credential half of a job's file reference:
+// "<prefix>-<namespace>-<name>".
+//
+// Hyphens, not underscores, because this string becomes part of a URL
+// SCHEME -- <service>+gdrive2://<id>/<name> -- and HTCondor's IsUrl
+// accepts no underscore in one. A service name with one would not be
+// recognised as a URL at all.
 //
 // The credd's cred dir is shared with the administrator's own credmons
 // and nothing arbitrates, so a credential stored as plain "gdrive" is
@@ -229,10 +244,5 @@ func (id ID) Service(prefix string) string {
 	if prefix == "" {
 		prefix = DefaultServicePrefix
 	}
-	return prefix + "_" + id.MacroIDLower()
-}
-
-// MacroIDLower is MacroID in the case a credd file name uses.
-func (id ID) MacroIDLower() string {
-	return strings.ToLower(id.MacroID())
+	return prefix + "-" + string(id.Namespace) + "-" + id.Name
 }

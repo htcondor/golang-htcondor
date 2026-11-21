@@ -12,29 +12,53 @@ import (
 // Naming a connector's file as a job input, and taking it back out
 // again for the spool path.
 //
-//	transfer_input_files = connector://webapi_builtin_gdrive/FILEID/data.csv
+//	transfer_input_files = webapi-builtin-gdrive+gdrive2://FILEID/data.csv
 //
-// The authority is the credd SERVICE name, which is already built to be
-// a safe identifier -- no colons, so url.Parse does not read half of it
-// as a port -- and is the same string the credential is stored under.
+// ONE spelling for both transfer modes, which is the point. The scheme
+// is the provider's protocol and the prefix before '+' is the
+// credential -- exactly the grammar contrib/gdrive2_plugin reads, and
+// the shape HTCondor already uses for a prefixed scheme (getURLType
+// returns the part after the last '+', so chtc+https dispatches to the
+// https plugin).
+//
+// So the submitter writes one thing and the ACCESS POINT decides what
+// happens to it:
+//
+//   - spool: this server fetches the file and rewrites the reference to
+//     the bare name, so no third-party token reaches an execute node.
+//   - direct: the reference is left alone and the plugin on the execute
+//     node fetches it.
+//
+// A submit file therefore moves between modes without being rewritten,
+// which a scheme naming the connector rather than the protocol could
+// not manage -- and which is why this is not `connector://`: the
+// connector is the auth, the scheme is the provider.
+//
 // The last path component is the file's name in the sandbox, because
 // that is where HTCondor takes it from: "the destination file is given
 // by the file name within the URL" (file-transfer.rst).
-//
-// In SPOOL mode the server fetches these itself and the reference is
-// replaced by the bare name, because nothing advertises a `connector`
-// transfer method -- left in place, the URL would add a
-// TARGET.HasFileTransferPluginMethods clause nothing can satisfy and
-// the job would never match anything. Rewriting is not a nicety.
 
-// InputScheme is the URL scheme that names a connector's file.
-const InputScheme = "connector"
+// InputMethods are the transfer-plugin methods a connector reference
+// may name, mapped to the provider this server knows how to fetch from
+// in spool mode.
+//
+// gdrive is the stock plugin's method and gdrive2 the ID-addressed
+// one; both name Google Drive, and spool mode fetches the same way for
+// either. A method this server cannot fetch for is refused rather than
+// silently left in place.
+var InputMethods = map[string]string{
+	"gdrive":  "gdrive",
+	"gdrive2": "gdrive",
+}
 
 // InputRef is one connector-sourced job input.
 type InputRef struct {
-	// Service is the credd service name in the URL's authority, which
-	// is what identifies the connector.
+	// Service is the credd service name, the part of the scheme before
+	// '+'. It is what identifies the connector.
 	Service string
+	// Method is the transfer-plugin method after '+': which provider's
+	// protocol this is.
+	Method string
 	// FileID is the provider's id for the file.
 	FileID string
 	// Name is what the file is called in the job's sandbox.
@@ -52,30 +76,39 @@ type InputRef struct {
 // wrote them, where regenerating the file from a parse would not. The
 // scheme is distinctive enough that a false positive would have to be
 // somebody writing this URL where they did not mean one.
-var inputURL = regexp.MustCompile(`\bconnector://[^\s,;"']+`)
+var inputURL = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9.+-]*\+(?:` +
+	`gdrive2|gdrive` +
+	`)://[^\s,;"']+`)
 
 // ParseInputURL reads one reference.
 func ParseInputURL(raw string) (InputRef, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return InputRef{}, fmt.Errorf("%q is not a usable connector reference: %w", raw, err)
+		return InputRef{}, fmt.Errorf("%q is not a usable file reference: %w", raw, err)
 	}
-	if u.Scheme != InputScheme {
-		return InputRef{}, fmt.Errorf("%q is not a %s:// reference", raw, InputScheme)
+	service, method, found := strings.Cut(u.Scheme, "+")
+	if !found || service == "" {
+		return InputRef{}, fmt.Errorf(
+			"%q names no credential; expected <service>+<method>://<id>/<name>", raw)
+	}
+	if _, ok := InputMethods[method]; !ok {
+		return InputRef{}, fmt.Errorf(
+			"%q names the method %q, which this access point cannot fetch for", raw, method)
 	}
 	if u.Host == "" {
-		return InputRef{}, fmt.Errorf("%q names no connector; expected %s://<service>/<id>/<name>",
-			raw, InputScheme)
-	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return InputRef{}, fmt.Errorf(
-			"%q does not name a file; expected %s://<service>/<id>/<name>", raw, InputScheme)
+			"%q names no file id; expected <service>+%s://<id>/<name>", raw, method)
+	}
+	name := strings.TrimPrefix(u.Path, "/")
+	if name == "" || strings.Contains(name, "/") {
+		return InputRef{}, fmt.Errorf(
+			"%q does not name a file; expected <service>+%s://<id>/<name>", raw, method)
 	}
 	return InputRef{
-		Service: u.Host,
-		FileID:  parts[0],
-		Name:    parts[1],
+		Service: service,
+		Method:  method,
+		FileID:  u.Host,
+		Name:    name,
 		Raw:     raw,
 	}, nil
 }
@@ -166,7 +199,7 @@ func plainInputCollides(submitFile, name string) bool {
 		}
 		for _, item := range strings.Split(value, ",") {
 			item = strings.TrimSpace(item)
-			if item == "" || strings.HasPrefix(item, InputScheme+"://") {
+			if item == "" || inputURL.MatchString(item) {
 				continue
 			}
 			if path.Base(item) == name {

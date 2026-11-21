@@ -200,7 +200,7 @@ func (s *Handler) connectorAccessToken(
 // file and records them on the job instead.
 //
 // The reference cannot stay where it is: nothing advertises a
-// `connector` transfer method, so the schedd would add a
+// a connector transfer method, so the schedd would add a
 // TARGET.HasFileTransferPluginMethods clause nothing satisfies and the
 // job would sit idle for ever with no error to explain it. So each is
 // rewritten to the name its spooled copy will have, and the originals

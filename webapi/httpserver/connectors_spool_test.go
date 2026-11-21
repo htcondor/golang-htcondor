@@ -77,7 +77,7 @@ func TestPrepareRewritesAndRecords(t *testing.T) {
 	h := &Handler{}
 	in := strings.Join([]string{
 		"executable = run.sh",
-		"transfer_input_files = local.dat, connector://webapi_builtin_gdrive/FILEID/data.csv",
+		"transfer_input_files = local.dat, webapi-builtin-gdrive+gdrive2://FILEID/data.csv",
 		"queue",
 	}, "\n")
 
@@ -117,8 +117,8 @@ func TestPrepareLeavesAnOrdinarySubmitAlone(t *testing.T) {
 func TestPrepareRefusesAConnectorOutput(t *testing.T) {
 	h := &Handler{}
 	in := strings.Join([]string{
-		"transfer_input_files = connector://svc/A/in.csv",
-		`transfer_output_remaps = "r.dat = connector://svc/FOLDER/r.dat"`,
+		"transfer_input_files = svc+gdrive2://A/in.csv",
+		`transfer_output_remaps = "r.dat = svc+gdrive2://FOLDER/r.dat"`,
 		"queue",
 	}, "\n")
 
@@ -130,7 +130,7 @@ func TestPrepareRefusesAConnectorOutput(t *testing.T) {
 // --- reading the refs back --------------------------------------------
 
 func TestConnectorRefsOfReadsTheAttribute(t *testing.T) {
-	ad := adWithRefs(t, "connector://svc/A/a.csv connector://svc/B/b.csv")
+	ad := adWithRefs(t, "svc+gdrive2://A/a.csv svc+gdrive2://B/b.csv")
 	refs, err := connectorRefsOf(ad)
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestUploadReaderMergesTheConnectorFile(t *testing.T) {
 	f.google.PickFile("FILEID", "data.csv", []byte("a,b,c\n"))
 
 	req := f.authedRequest(t, c)
-	ad := adWithRefs(t, "connector://webapi_builtin_gdrive/FILEID/data.csv")
+	ad := adWithRefs(t, "webapi-builtin-gdrive+gdrive2://FILEID/data.csv")
 	upload := bytes.NewReader(userTar(t, map[string]string{"run.sh": "#!/bin/sh\n"}))
 
 	merged, err := f.h.connectorUploadReader(t.Context(), req, ad, upload)
@@ -213,7 +213,7 @@ func TestUploadReaderChecksGroupsAtUseNotAtSubmit(t *testing.T) {
 	out := f.login(t, "alice", "other_lab")
 	req := f.authedRequest(t, out)
 
-	ad := adWithRefs(t, "connector://webapi_builtin_gdrive/FILEID/data.csv")
+	ad := adWithRefs(t, "webapi-builtin-gdrive+gdrive2://FILEID/data.csv")
 	_, err := f.h.connectorUploadReader(t.Context(), req,
 		ad, bytes.NewReader(userTar(t, nil)))
 	if err == nil {
@@ -229,7 +229,7 @@ func TestUploadReaderReportsAnUnknownConnector(t *testing.T) {
 	c := f.login(t, "alice", "smith_lab")
 	req := f.authedRequest(t, c)
 
-	ad := adWithRefs(t, "connector://nosuch_service/FILEID/data.csv")
+	ad := adWithRefs(t, "nosuch-service+gdrive2://FILEID/data.csv")
 	_, err := f.h.connectorUploadReader(t.Context(), req, ad,
 		bytes.NewReader(userTar(t, nil)))
 	if err == nil {
@@ -245,7 +245,7 @@ func TestUploadReaderReportsAnUnconnectedUser(t *testing.T) {
 	c := f.login(t, "alice", "smith_lab") // never connected
 	req := f.authedRequest(t, c)
 
-	ad := adWithRefs(t, "connector://webapi_builtin_gdrive/FILEID/data.csv")
+	ad := adWithRefs(t, "webapi-builtin-gdrive+gdrive2://FILEID/data.csv")
 	_, err := f.h.connectorUploadReader(t.Context(), req, ad,
 		bytes.NewReader(userTar(t, nil)))
 	if err == nil {
@@ -266,7 +266,7 @@ func TestUploadReaderFailsOnAFileThatWasNeverPicked(t *testing.T) {
 	// Deliberately not picked.
 
 	req := f.authedRequest(t, c)
-	ad := adWithRefs(t, "connector://webapi_builtin_gdrive/NEVERPICKED/data.csv")
+	ad := adWithRefs(t, "webapi-builtin-gdrive+gdrive2://NEVERPICKED/data.csv")
 	_, err := f.h.connectorUploadReader(t.Context(), req, ad,
 		bytes.NewReader(userTar(t, nil)))
 	if err == nil {
@@ -287,7 +287,7 @@ func TestSpoolingRecordsConnectorUse(t *testing.T) {
 
 	id := connectors.MustParse("builtin:gdrive")
 	req := f.authedRequest(t, c)
-	ad := adWithRefs(t, "connector://webapi_builtin_gdrive/FILEID/data.csv")
+	ad := adWithRefs(t, "webapi-builtin-gdrive+gdrive2://FILEID/data.csv")
 	merged, err := f.h.connectorUploadReader(t.Context(), req, ad,
 		bytes.NewReader(userTar(t, nil)))
 	if err != nil {

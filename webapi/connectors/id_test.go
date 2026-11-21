@@ -15,7 +15,10 @@ func TestParseID(t *testing.T) {
 		{in: "builtin:gdrive", want: ID{Builtin, "gdrive"}},
 		{in: "site:cryoem", want: ID{Site, "cryoem"}},
 		{in: "site:my-app", want: ID{Site, "my-app"}},
-		{in: "site:my_app", want: ID{Site, "my_app"}},
+		// Underscore is out: it would break the URL scheme a job
+		// addresses the credential with, and it is what made MacroID
+		// non-injective.
+		{in: "site:my_app", wantErr: "may use only"},
 		{in: "site:a1", want: ID{Site, "a1"}},
 
 		{in: "gdrive", wantErr: "no namespace"},
@@ -128,10 +131,13 @@ func TestConfigKey(t *testing.T) {
 // answer: enabling either would be enabling it under a configuration
 // that might have been written for the other, and these configurations
 // carry client registrations.
+// A guard rather than a necessity now: validateName refuses the
+// underscore spelling, so nothing a caller can PARSE collides. The
+// check stays for ids built by hand.
 func TestMacroCollision(t *testing.T) {
 	ids := []ID{
 		{Site, "my-app"},
-		{Site, "my_app"},
+		{Site, "my_app"}, // not parseable; constructed directly
 		{Builtin, "gdrive"},
 		{Site, "cryoem"},
 	}
@@ -169,8 +175,8 @@ func TestServiceNameIsInjectiveAcrossNamespaces(t *testing.T) {
 	if a == b {
 		t.Fatalf("builtin:gdrive and site:gdrive both store as %q", a)
 	}
-	if a != "webapi_builtin_gdrive" {
-		t.Errorf("builtin:gdrive stores as %q, want webapi_builtin_gdrive", a)
+	if a != "webapi-builtin-gdrive" {
+		t.Errorf("builtin:gdrive stores as %q, want webapi-builtin-gdrive", a)
 	}
 }
 
@@ -184,14 +190,14 @@ func TestServiceNameIsNeverTheBareProviderName(t *testing.T) {
 			t.Fatalf("prefix %q produced the bare provider name %q, which is "+
 				"the administrator's credd file", prefix, got)
 		}
-		if !strings.HasSuffix(got, "_builtin_gdrive") {
-			t.Errorf("Service(%q) = %q, want it to end in _builtin_gdrive", prefix, got)
+		if !strings.HasSuffix(got, "-builtin-gdrive") {
+			t.Errorf("Service(%q) = %q, want it to end in -builtin-gdrive", prefix, got)
 		}
 	}
 }
 
 func TestServiceNameDefaultsThePrefix(t *testing.T) {
-	if got := (ID{Builtin, "gdrive"}).Service(""); got != DefaultServicePrefix+"_builtin_gdrive" {
+	if got := (ID{Builtin, "gdrive"}).Service(""); got != DefaultServicePrefix+"-builtin-gdrive" {
 		t.Errorf("Service(\"\") = %q, want the default prefix applied", got)
 	}
 }
@@ -205,11 +211,34 @@ func TestServiceNameIsStorableByTheCredd(t *testing.T) {
 			(r >= '0' && r <= '9') ||
 			r == '-' || r == '+' || r == '=' || r == '_' || r == '.'
 	}
-	for _, name := range []string{"gdrive", "my-app", "my_app", "a1"} {
+	for _, name := range []string{"gdrive", "my-app", "a1"} {
 		id := ID{Site, name}
 		for _, r := range id.Service("webapi") {
 			if !ok(r) {
 				t.Errorf("Service for %v contains %q, which the credd refuses", id, r)
+			}
+		}
+	}
+}
+
+// The service name becomes part of a URL SCHEME in a job's file
+// reference, and HTCondor's IsUrl accepts only alphanumerics, '+', '-'
+// and '.' there (condor_url.cpp). An underscore anywhere in it means
+// the string is not recognised as a URL at all, so the schedd would
+// treat it as a plain filename and the job would fail looking for it.
+func TestServiceNameIsLegalInAURLScheme(t *testing.T) {
+	legal := func(r rune) bool {
+		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.'
+	}
+	for _, name := range []string{"gdrive", "my-app", "a1"} {
+		for _, ns := range Namespaces() {
+			svc := ID{ns, name}.Service("webapi")
+			for _, r := range svc {
+				if !legal(r) {
+					t.Errorf("service %q contains %q, which HTCondor will not accept "+
+						"in a URL scheme", svc, r)
+				}
 			}
 		}
 	}

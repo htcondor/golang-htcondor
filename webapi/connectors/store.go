@@ -499,3 +499,42 @@ func (s *Store) CountCredentials(ctx context.Context, id ID) (users int, lastUse
 	}
 	return users, lastUsed, nil
 }
+
+// CredentialsFor lists every grant for one connector, without their
+// refresh tokens, for the admin page's per-connector view.
+func (s *Store) CredentialsFor(ctx context.Context, id ID) ([]Credential, error) {
+	if !s.ready() {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT subject, provider_subject, granted_scopes, obtained_at,
+		       last_refreshed_at, last_used_at
+		FROM connector_credentials WHERE connector = ? ORDER BY subject`, id.String())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Credential
+	for rows.Next() {
+		var (
+			c               Credential
+			scopes          string
+			refreshed, used sql.NullTime
+		)
+		if err := rows.Scan(&c.Subject, &c.ProviderSubject, &scopes,
+			&c.ObtainedAt, &refreshed, &used); err != nil {
+			return nil, err
+		}
+		c.Connector = id
+		c.GrantedScopes = strings.Fields(scopes)
+		if refreshed.Valid {
+			c.LastRefreshedAt = refreshed.Time
+		}
+		if used.Valid {
+			c.LastUsedAt = used.Time
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
