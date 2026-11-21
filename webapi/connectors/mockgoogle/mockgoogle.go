@@ -69,6 +69,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -126,6 +127,9 @@ type Server struct {
 	// denyAuthorization makes the authorization endpoint redirect with
 	// error=access_denied, which is what a user clicking "cancel" does.
 	denyAuthorization bool
+	// extraHeaders go on every response, for driving a client's
+	// handling of one.
+	extraHeaders map[string]string
 
 	seq int
 }
@@ -134,13 +138,14 @@ type Server struct {
 func New(t *testing.T, cfg Config) *Server {
 	t.Helper()
 	s := &Server{
-		t:        t,
-		cfg:      cfg,
-		codes:    map[string]*grant{},
-		refresh:  map[string]*token{},
-		access:   map[string]*token{},
-		files:    map[string][]byte{},
-		listable: map[string]string{},
+		t:            t,
+		cfg:          cfg,
+		codes:        map[string]*grant{},
+		refresh:      map[string]*token{},
+		access:       map[string]*token{},
+		files:        map[string][]byte{},
+		listable:     map[string]string{},
+		extraHeaders: map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/o/oauth2/v2/auth", s.handleAuthorize)
@@ -186,6 +191,16 @@ func (s *Server) Revoke(refreshToken string) {
 	}
 }
 
+// SetHeader adds a header to every response, for driving a client's
+// handling of one -- Retry-After being the one that matters, since a
+// client that ignores it backs off on its own schedule rather than the
+// provider's.
+func (s *Server) SetHeader(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.extraHeaders[key] = value
+}
+
 // FailNext queues HTTP statuses to return in place of doing the work.
 func (s *Server) FailNext(statuses ...int) {
 	s.mu.Lock()
@@ -209,6 +224,15 @@ func (s *Server) AccessTokenValid(tok string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.access[tok]
 	return ok
+}
+
+// applyHeaders copies the configured extra headers onto a response.
+func (s *Server) applyHeaders(w http.ResponseWriter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, v := range s.extraHeaders {
+		w.Header().Set(k, v)
+	}
 }
 
 func (s *Server) takeStatus() (int, bool) {
@@ -300,6 +324,7 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
+	s.applyHeaders(w)
 	s.mu.Lock()
 	if code, ok := s.takeStatus(); ok {
 		s.mu.Unlock()
@@ -457,6 +482,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 // --- Drive ------------------------------------------------------------
 
 func (s *Server) handleFileGet(w http.ResponseWriter, r *http.Request) {
+	s.applyHeaders(w)
 	s.mu.Lock()
 	if code, ok := s.takeStatus(); ok {
 		s.mu.Unlock()
@@ -483,7 +509,18 @@ func (s *Server) handleFileGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("alt") != "media" {
-		writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": s.listable[id]})
+		s.mu.Lock()
+		name := s.listable[id]
+		s.mu.Unlock()
+		// Drive sends size as a STRING, not a number. A client that
+		// decodes it into an int fails on the real API and passes
+		// against a mock that sends a number, which is exactly the
+		// class of wrongness this package exists to avoid.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":   id,
+			"name": name,
+			"size": strconv.Itoa(len(content)),
+		})
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
