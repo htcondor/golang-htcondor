@@ -91,7 +91,6 @@ type AdminConnectorRequest struct {
 	Groups   []string `json:"groups"`
 	Transfer string   `json:"transfer"`
 	Enabled  *bool    `json:"enabled,omitempty"`
-	Picker   *bool    `json:"picker,omitempty"`
 }
 
 // AdminConnectorUser is one person's grant, for the per-connector view.
@@ -181,7 +180,6 @@ func (s *Handler) adminListConnectors(w http.ResponseWriter, r *http.Request) {
 			Groups:     d.Groups,
 			Scopes:     d.Scopes,
 			Transfer:   string(d.Transfer),
-			Picker:     d.Picker,
 			ClientID:   d.ClientID,
 			SecretFile: d.ClientSecretFile,
 		}
@@ -286,12 +284,6 @@ func (s *Handler) adminPutConnector(w http.ResponseWriter, r *http.Request, id c
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	// Off unless asked for: the chooser is the only part that widens
-	// the page's Content-Security-Policy.
-	picker := false
-	if req.Picker != nil {
-		picker = *req.Picker
-	}
 
 	stored := connectors.Stored{
 		ID:               id,
@@ -303,7 +295,6 @@ func (s *Handler) adminPutConnector(w http.ResponseWriter, r *http.Request, id c
 		Groups:           req.Groups,
 		Transfer:         transfer,
 		Enabled:          enabled,
-		Picker:           picker,
 	}
 
 	// nil leaves the stored secret alone; a non-nil empty clears it.
@@ -435,12 +426,6 @@ func (s *Handler) adminTestConnector(w http.ResponseWriter, r *http.Request, id 
 	}
 	if _, err := s.connectorSecret(r, def); err != nil {
 		problems = append(problems, fmt.Sprintf("the client secret could not be read: %v", err))
-	}
-	if def.Picker {
-		if b, ok := connectors.Lookup(def.ID); !ok || len(b.PickerScript) == 0 {
-			problems = append(problems,
-				"a file chooser was asked for, but no chooser ships for this connector")
-		}
 	}
 	if def.Kind == connectors.KindOAuth2 && def.Transfer == connectors.TransferDirect {
 		if b, ok := connectors.Lookup(def.ID); ok && b.TransferMethod == "" {

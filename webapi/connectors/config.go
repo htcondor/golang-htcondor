@@ -52,12 +52,6 @@ type Definition struct {
 
 	Transfer Transfer
 	Enabled  bool
-	// Picker is whether this connector offers a browser file chooser.
-	//
-	// Off unless asked for, because the chooser is the only part that
-	// widens the page's Content-Security-Policy, and a connector used
-	// only to name job inputs never opens one.
-	Picker bool
 
 	// Service is the credd service name this connector's credentials are
 	// stored under. See ID.Service.
@@ -245,7 +239,6 @@ func (c *ConfigSource) Definition(id ID) (Definition, bool) {
 		d.Transfer = Transfer(strings.ToLower(strings.TrimSpace(v)))
 	}
 	d.Enabled = c.params.GetBool(id.ConfigKey("ENABLED"), true)
-	d.Picker = c.params.GetBool(id.ConfigKey("PICKER"), false)
 
 	return d, true
 }

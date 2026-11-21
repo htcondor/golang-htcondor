@@ -143,7 +143,6 @@ func (s *Handler) definitionFromStored(row connectors.Stored) connectors.Definit
 		Groups:           row.Groups,
 		Transfer:         row.Transfer,
 		Enabled:          row.Enabled,
-		Picker:           row.Picker,
 		Service:          row.ID.Service(s.connectorConfig.ServicePrefix()),
 		Origin:           "stored",
 	}
@@ -216,39 +215,45 @@ type PickerOrigins struct {
 	Img []string
 }
 
-// pickerOrigins returns the origins the configured connectors need.
+// pickerOrigins returns the origins the configured CHOOSERS need.
 //
-// Only for connectors that are ENABLED and whose definition declares a
-// picker. A policy is widened for a feature in use, never on the chance
-// that one might be.
+// Driven by the pickers, not by the connectors. A chooser is a
+// provider's and belongs to the page; two connectors for the same
+// provider share one, and a connector with no chooser contributes
+// nothing however it is configured. An earlier version drove this from
+// a boolean on each connector, which widened the policy for sites that
+// only ever named job inputs.
+//
+// Deduplicated by ORIGIN, because that is what the directive holds:
+// two choosers for one provider must not list it twice.
 func (s *Handler) pickerOrigins() PickerOrigins {
-	var out PickerOrigins
-	seen := map[string]bool{}
-	for _, d := range s.connectorDefinitions() {
-		// Enabled AND asked for. The chooser is the only part that
-		// widens the policy, and a connector used only to name job
-		// inputs -- ids from a site app, a script, a catalogue --
-		// never opens one and should not pay for it.
-		if !d.Enabled || !d.Picker {
-			continue
-		}
-		b, ok := connectors.Lookup(d.ID)
-		if !ok || len(b.PickerScript) == 0 {
-			continue
-		}
-		if seen[d.ID.String()] {
-			continue
-		}
-		seen[d.ID.String()] = true
-		out.Script = append(out.Script, b.PickerScript...)
-		out.Frame = append(out.Frame, b.PickerFrame...)
-		out.Connect = append(out.Connect, b.PickerConnect...)
-		out.Img = append(out.Img, b.PickerImg...)
-	}
-	// A test points every one of these at its stand-in, so the policy
-	// under test is the policy that ships rather than a relaxed one.
+	// A test points every directive at its stand-in, so the policy
+	// under test is the policy that ships.
 	if s.connectorPickerOverride != nil {
 		return *s.connectorPickerOverride
+	}
+
+	var out PickerOrigins
+	seen := map[string]bool{}
+	add := func(dst *[]string, origins []string) {
+		for _, o := range origins {
+			key := fmt.Sprintf("%p:%s", dst, o)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			*dst = append(*dst, o)
+		}
+	}
+	for _, p := range s.connectorConfig.Pickers() {
+		def, ok := p.Def()
+		if !ok {
+			continue
+		}
+		add(&out.Script, def.Script)
+		add(&out.Frame, def.Frame)
+		add(&out.Connect, def.Connect)
+		add(&out.Img, def.Img)
 	}
 	return out
 }

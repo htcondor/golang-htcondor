@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -44,6 +43,45 @@ func newConnectFixtureWithPicker(t *testing.T, groups string) *connectFixture {
 func newConnectFixture(t *testing.T, groups string) *connectFixture {
 	t.Helper()
 	return newConnectFixtureOpts(t, groups, false)
+}
+
+// newConnectFixtureWithTwoPickers configures two choosers for the same
+// provider, which is what a site with two labs' credentials looks like.
+func newConnectFixtureWithTwoPickers(t *testing.T, groups string) *connectFixture {
+	t.Helper()
+	f := newConnectFixtureOpts(t, groups, true)
+	cfg, err := config.NewFromReader(strings.NewReader(strings.Join([]string{
+		"HTTP_API_CONNECTORS = builtin:gdrive",
+		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS = " + groups,
+		"HTTP_API_PICKERS = drive, drive-two",
+		"HTTP_API_PICKER_DRIVE_PROVIDER = gdrive",
+		"HTTP_API_PICKER_DRIVE_CONNECTOR = builtin:gdrive",
+		"HTTP_API_PICKER_DRIVE_API_KEY = k1",
+		"HTTP_API_PICKER_DRIVE_TWO_PROVIDER = gdrive",
+		"HTTP_API_PICKER_DRIVE_TWO_CONNECTOR = builtin:gdrive",
+		"HTTP_API_PICKER_DRIVE_TWO_API_KEY = k2",
+	}, "\n")))
+	if err != nil {
+		t.Fatalf("parse the test configuration: %v", err)
+	}
+	f.h.SetConnectorConfig(cfg)
+	return f
+}
+
+// pickerLines configures a chooser, or nothing. A chooser is its own
+// entity, not a flag on the connector: it is a provider's, it borrows
+// the connector's credential, and it carries a developer key that is
+// not a credential's to hold.
+func pickerLines(on bool) string {
+	if !on {
+		return ""
+	}
+	return strings.Join([]string{
+		"HTTP_API_PICKERS = drive",
+		"HTTP_API_PICKER_DRIVE_PROVIDER = gdrive",
+		"HTTP_API_PICKER_DRIVE_CONNECTOR = builtin:gdrive",
+		"HTTP_API_PICKER_DRIVE_API_KEY = test-developer-key",
+	}, "\n")
 }
 
 func newConnectFixtureOpts(t *testing.T, groups string, picker bool) *connectFixture {
@@ -99,7 +137,7 @@ func newConnectFixtureOpts(t *testing.T, groups string, picker bool) *connectFix
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS = " + groups,
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_AUTHORIZATION_URL = " + g.AuthorizationURL(),
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_TOKEN_URL = " + g.TokenURL(),
-		fmt.Sprintf("HTTP_API_CONNECTOR_BUILTIN_GDRIVE_PICKER = %t", picker),
+		pickerLines(picker),
 	}, "\n")))
 	if err != nil {
 		t.Fatalf("parse the test configuration: %v", err)

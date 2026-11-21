@@ -40,15 +40,17 @@ func cspOf(t *testing.T, picker PickerOrigins) map[string]string {
 // reason. A chooser missing any one of them fails differently and all
 // of them look like "it does not work".
 func TestPickerOriginsWidenEveryDirectiveItNeeds(t *testing.T) {
-	gdrive, ok := connectors.Lookup(connectors.MustParse("builtin:gdrive"))
+	// From the CHOOSER's definition, not the connector's: a chooser is
+	// a provider's, and two connectors for one provider share it.
+	gdrive, ok := connectors.LookupPickerProvider("gdrive")
 	if !ok {
-		t.Fatal("builtin:gdrive is not in the catalogue")
+		t.Fatal("no gdrive chooser is in the catalogue")
 	}
 	csp := cspOf(t, PickerOrigins{
-		Script:  gdrive.PickerScript,
-		Frame:   gdrive.PickerFrame,
-		Connect: gdrive.PickerConnect,
-		Img:     gdrive.PickerImg,
+		Script:  gdrive.Script,
+		Frame:   gdrive.Frame,
+		Connect: gdrive.Connect,
+		Img:     gdrive.Img,
 	})
 
 	for _, tc := range []struct{ directive, want, why string }{
@@ -151,17 +153,32 @@ func TestADisabledConnectorDoesNotWidenThePolicy(t *testing.T) {
 		t.Fatal("precondition: the enabled connector should widen the policy")
 	}
 
+	// Adding another connector changes nothing: the origins come from
+	// the configured CHOOSERS, and there is still one.
 	if err := f.h.connectorStore().PutConnector(t.Context(), connectors.Stored{
-		ID: connectors.MustParse("site:nopicker"), Kind: connectors.KindOAuth2,
-		Groups: []string{"smith_lab"}, Enabled: true, Picker: true,
+		ID: connectors.MustParse("site:other"), Kind: connectors.KindOAuth2,
+		Groups: []string{"smith_lab"}, Enabled: true,
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// A site connector has no builtin definition and so declares no
-	// picker origins; asking for a chooser it has no definition for
-	// must not widen anything.
 	if n := len(f.h.pickerOrigins().Script); n != 1 {
-		t.Errorf("a site connector with no picker definition changed the origin count: %d", n)
+		t.Errorf("another connector changed the origin count: %d; origins belong to "+
+			"the chooser, not to each credential", n)
+	}
+}
+
+// Two choosers for one provider contribute its origins ONCE. The
+// directive holds origins, not choosers, and a duplicated entry is a
+// policy nobody can read.
+func TestTwoChoosersForOneProviderDoNotDuplicateOrigins(t *testing.T) {
+	f := newConnectFixtureWithTwoPickers(t, "smith_lab")
+
+	got := f.h.pickerOrigins()
+	if len(got.Script) != 1 {
+		t.Errorf("script origins = %v, want one entry for one provider", got.Script)
+	}
+	if len(got.Frame) != 1 {
+		t.Errorf("frame origins = %v, want one entry", got.Frame)
 	}
 }
 
@@ -169,12 +186,12 @@ func TestADisabledConnectorDoesNotWidenThePolicy(t *testing.T) {
 // mixed content on an https page, which browsers block anyway -- and a
 // policy that permits it says this server would accept one.
 func TestEveryPickerOriginIsHTTPS(t *testing.T) {
-	for _, id := range connectors.BuiltinIDs() {
-		b, _ := connectors.Lookup(id)
-		for _, group := range [][]string{b.PickerScript, b.PickerFrame, b.PickerConnect, b.PickerImg} {
+	for _, name := range connectors.PickerProviderNames() {
+		p, _ := connectors.LookupPickerProvider(name)
+		for _, group := range [][]string{p.Script, p.Frame, p.Connect, p.Img} {
 			for _, origin := range group {
 				if !strings.HasPrefix(origin, "https://") {
-					t.Errorf("%s names %q, which is not https", id, origin)
+					t.Errorf("chooser %s names %q, which is not https", name, origin)
 				}
 			}
 		}
