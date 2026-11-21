@@ -122,6 +122,25 @@ func (f *connectFixture) login(t *testing.T, user string, groups ...string) *htt
 	}
 }
 
+// authedRequest is a request carrying c's session cookie, for calling
+// a handler's internals directly rather than over HTTP.
+func (f *connectFixture) authedRequest(t *testing.T, c *http.Client) *http.Request {
+	t.Helper()
+	u, err := url.Parse(f.srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut,
+		f.srv.URL+"/api/v1/jobs/1.0/input", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ck := range c.Jar.Cookies(u) {
+		req.AddCookie(ck)
+	}
+	return req
+}
+
 func anonymous() *http.Client {
 	return &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse

@@ -1866,8 +1866,19 @@ func (s *Handler) handleJobInput(w http.ResponseWriter, r *http.Request, jobID s
 	}
 	jobAds := []*classad.ClassAd{procAd}
 
+	// A job that named connector files gets them merged into the
+	// stream on the way past. One spool or none: SpoolJobFilesFromTar
+	// releases the job when it finishes, so a connector file left out
+	// here is a job running with a partial sandbox.
+	spoolSource, err := s.connectorUploadReader(ctx, r, procAd, limitedReader)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("Could not fetch this job's connector files: %v", err))
+		return
+	}
+
 	// Spool job files from tar
-	if err := s.scheddFor(ctx).SpoolJobFilesFromTar(ctx, jobAds, limitedReader); err != nil {
+	if err := s.scheddFor(ctx).SpoolJobFilesFromTar(ctx, jobAds, spoolSource); err != nil {
 		if isAuthenticationError(err) {
 			s.writeError(w, http.StatusUnauthorized, fmt.Sprintf("Authentication failed: %v", err))
 			return
@@ -4232,6 +4243,16 @@ func (s *Handler) spoolClusterFromStream(
 	// fan-out starts while the upload is still arriving -- see
 	// PlanStreaming for what that does to the volume rule.
 	attempt, planned, maxTar, err := spool.PlanStreaming(ads, lim)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge the connector files in BEFORE the buffer, so one fetch
+	// serves every proc. ConnectorInputs is a cluster-level attribute,
+	// so every proc of the cluster wants the same files; merging per
+	// proc instead would be one fetch each and a rate limit from the
+	// provider on any sizeable cluster.
+	tar, err = s.connectorUploadReader(ctx, r, ads[0], tar)
 	if err != nil {
 		return nil, err
 	}

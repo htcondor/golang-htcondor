@@ -480,6 +480,9 @@ type Handler struct {
 	// connectorFlows remembers authorizations in flight, bound to the
 	// session that began each one.
 	connectorFlows *connectors.Flow
+	// connectorDriveBaseURL overrides the Drive API root. Empty means
+	// the real one; a test points it at a stand-in.
+	connectorDriveBaseURL string
 
 	siteApps *siteapps.Library
 	// siteAppConfig is the configuration-backed policy alone. Kept
