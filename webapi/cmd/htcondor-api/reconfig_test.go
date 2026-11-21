@@ -46,11 +46,16 @@ func (f *fakeTarget) SetMCPSkillsDir(v string)       { f.record("skills_dir", v)
 
 // SetSiteAppPolicy records that the whole policy was re-read, which is
 // what a reconfigure does with it; there is no single value to record.
-func (f *fakeTarget) SetSiteAppPolicy(*config.Config)  { f.record("site_app_policy", "reread") }
-func (f *fakeTarget) SetMCPDisabledTools(v string)     { f.record("disabled_tools", v) }
-func (f *fakeTarget) SetMCPReadOnly(v string)          { f.record("read_only", v) }
-func (f *fakeTarget) SetMCPConfirmSubmitOver(v string) { f.record("confirm_submit_over", v) }
-func (f *fakeTarget) SetMCPConfirmRemoveOver(v string) { f.record("confirm_remove_over", v) }
+func (f *fakeTarget) SetSiteAppPolicy(*config.Config) { f.record("site_app_policy", "reread") }
+
+// SetConnectorConfig records the same way and for the same reason: a
+// connector's definition spans several parameters, so there is no
+// single value to diff or to record.
+func (f *fakeTarget) SetConnectorConfig(*config.Config) { f.record("connector_config", "reread") }
+func (f *fakeTarget) SetMCPDisabledTools(v string)      { f.record("disabled_tools", v) }
+func (f *fakeTarget) SetMCPReadOnly(v string)           { f.record("read_only", v) }
+func (f *fakeTarget) SetMCPConfirmSubmitOver(v string)  { f.record("confirm_submit_over", v) }
+func (f *fakeTarget) SetMCPConfirmRemoveOver(v string)  { f.record("confirm_remove_over", v) }
 
 func (f *fakeTarget) SetInteractiveJupyter(v string)  { f.record("interactive_jupyter", v) }
 func (f *fakeTarget) SetInteractiveVSCode(v string)   { f.record("interactive_vscode", v) }

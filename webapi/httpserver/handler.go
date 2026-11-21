@@ -33,6 +33,7 @@ import (
 	"github.com/bbockelm/golang-htcondor/logging"
 	"github.com/bbockelm/golang-htcondor/metricsd"
 	"github.com/bbockelm/golang-htcondor/webapi/appolicy"
+	"github.com/bbockelm/golang-htcondor/webapi/connectors"
 	"github.com/bbockelm/golang-htcondor/webapi/dagman"
 	"github.com/bbockelm/golang-htcondor/webapi/dbmirror"
 	"github.com/bbockelm/golang-htcondor/webapi/httpserver/appdb"
@@ -463,6 +464,23 @@ type Handler struct {
 	// siteApps serves operator-deployed static web apps under /site/.
 	// nil when HTTP_API_SITE_APPS_DIR is unset, which leaves the whole
 	// feature -- routes included -- out of the server.
+	// Connectors: the third-party accounts this server obtains
+	// credentials for on a user's behalf. Not to be confused with
+	// oauth2_clients, which are applications connecting TO this
+	// server's identity provider; these are accounts it connects to.
+	//
+	// connectorConfig holds the *config.Config and reads on each
+	// lookup rather than snapshotting, so there is one copy of the
+	// answer; a reconfigure replaces it whole (SetConnectorConfig).
+	connectorConfig *connectors.ConfigSource
+	// connectorStored is the database half: connectors this server
+	// declares, and what users have granted them. Nil without a
+	// database.
+	connectorStored *connectors.Store
+	// connectorFlows remembers authorizations in flight, bound to the
+	// session that began each one.
+	connectorFlows *connectors.Flow
+
 	siteApps *siteapps.Library
 	// siteAppConfig is the configuration-backed policy alone. Kept
 	// apart from the library's chained source so the upload path can
@@ -2240,6 +2258,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h.siteAppsReloadInterval = cfg.SiteAppsReloadInterval
 	h.siteAppUpload = cfg.SiteAppsUpload
 	h.siteAppGitHub = cfg.SiteAppsGitHub
+	h.newConnectors(cfg.HTCondorConfig)
 	h.siteApps = h.newSiteAppLibrary(cfg.SiteAppsDir, cfg.HTCondorConfig)
 	h.branding = newBrandingState(logger, brandingOptions{
 		SiteName:    cfg.WebUISiteName,

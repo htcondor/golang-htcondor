@@ -169,6 +169,14 @@ func (h *Handler) setupRoutes() {
 	// themselves are registered through MCP.
 	mux.Handle("/api/v1/watches/", cors(h.requireCondorScope(http.HandlerFunc(h.handleWatchPath))))
 
+	// Connectors: a browser session grants this server access to a
+	// third-party account. Deliberately NOT behind requireCondorScope:
+	// these are session-only (see connectCaller), because a browser is
+	// the only thing that can complete the flow, and a bearer-token
+	// gate here would be the wrong gate rather than a stricter one.
+	mux.HandleFunc("/api/v1/connect", h.handleConnectCollection)
+	mux.HandleFunc("/api/v1/connect/", h.handleConnectItem)
+
 	mux.Handle("/api/v1/creds/user", cors(h.requireCondorScope(http.HandlerFunc(h.handleUserCredential))))
 	mux.Handle("/api/v1/creds/service", cors(h.requireCondorScope(http.HandlerFunc(h.handleServiceCredentialCollection))))
 	mux.Handle("/api/v1/creds/service/", cors(h.requireCondorScope(http.HandlerFunc(h.handleServiceCredentialItem))))
