@@ -483,6 +483,11 @@ type Handler struct {
 	// connectorDriveBaseURL overrides the Drive API root. Empty means
 	// the real one; a test points it at a stand-in.
 	connectorDriveBaseURL string
+	// connectorPickerOverride replaces the origins a connector's file
+	// chooser needs in the CSP. Nil means the connectors' own; a test
+	// points it at its stand-in so the policy under test is the policy
+	// that ships.
+	connectorPickerOverride *PickerOrigins
 
 	siteApps *siteapps.Library
 	// siteAppConfig is the configuration-backed policy alone. Kept
@@ -2866,7 +2871,7 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isTransparentProxyPath(r.URL.Path) {
 		// The site's own logo origins widen img-src; see
 		// brandingSnapshot.imgSrc.
-		applySecurityHeaders(w, h.branding.snapshot().imgSrc, h.siteAppGitHub)
+		applySecurityHeaders(w, h.branding.snapshot().imgSrc, h.siteAppGitHub, h.pickerOrigins())
 	}
 	// Bound every request body, for the same reason again: a route added
 	// later inherits it. Routes that need more (uploads, MCP) or less say
@@ -3158,7 +3163,7 @@ func (h *Handler) isUserHeaderTrustedSource(r *http.Request) bool {
 //     Named rather than left open because a policy that permits any
 //     origin permits exfiltration to any origin, which is most of what
 //     a CSP on an authenticated page is for.
-func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub bool) {
+func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub bool, picker PickerOrigins) {
 	h := w.Header()
 	if h.Get("Content-Security-Policy") == "" {
 		if brandingImgSrc != "" {
@@ -3168,12 +3173,27 @@ func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub b
 		if gitHub {
 			connectSrc += " https://api.github.com"
 		}
+		// A connector's file chooser is not a library this server can
+		// host: it loads from the provider, renders in the provider's
+		// IFRAME and calls the provider's API. Each is refused by the
+		// browser under default-src 'self' unless named here.
+		//
+		// frame-src is stated even when empty, because a CSP with no
+		// frame-src falls back to default-src -- the fallback is what
+		// makes a missing directive invisible until somebody opens the
+		// page and sees an empty box.
+		connectSrc += joinOrigins(picker.Connect)
+		scriptSrc := "script-src 'self' 'unsafe-inline'" + joinOrigins(picker.Script)
+		frameSrc := "frame-src 'self'" + joinOrigins(picker.Frame)
+		imgSrc := "img-src 'self' data: blob:" + brandingImgSrc + joinOrigins(picker.Img)
+
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"img-src 'self' data: blob:"+brandingImgSrc+"; "+
+				imgSrc+"; "+
 				"style-src 'self' 'unsafe-inline'; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				scriptSrc+"; "+
 				connectSrc+"; "+
+				frameSrc+"; "+
 				"object-src 'none'; "+
 				"frame-ancestors 'self'; "+
 				"base-uri 'self'")
@@ -3187,6 +3207,19 @@ func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub b
 	if h.Get("Referrer-Policy") == "" {
 		h.Set("Referrer-Policy", "same-origin")
 	}
+}
+
+// joinOrigins renders origins for a CSP directive, each preceded by a
+// space, or nothing at all when there are none.
+//
+// Named rather than opened: a policy permitting any origin permits
+// exfiltration to any origin, which is most of what a CSP on an
+// authenticated page is for.
+func joinOrigins(origins []string) string {
+	if len(origins) == 0 {
+		return ""
+	}
+	return " " + strings.Join(origins, " ")
 }
 
 // Start initializes the handler and starts background goroutines.

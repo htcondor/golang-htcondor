@@ -91,6 +91,22 @@ type BuiltinDef struct {
 	// Summary is one line for the admin page's catalogue.
 	Summary string
 
+	// Picker* are the origins a browser file chooser for this provider
+	// needs the page's Content-Security-Policy to allow. Empty means
+	// the provider has no browser chooser and the policy is not
+	// widened for it.
+	//
+	// Transcribed from Google's Picker documentation, and the one part
+	// of this catalogue that CANNOT be verified without a real
+	// browser: a wrong or missing origin shows up as a chooser that
+	// never appears, with the reason only in the browser's console.
+	// Operators can override these, because they are the sort of thing
+	// a provider moves without telling anyone.
+	PickerScript  []string
+	PickerFrame   []string
+	PickerConnect []string
+	PickerImg     []string
+
 	// AuthStyle is how the client credentials go on a token request.
 	//
 	// Worth setting, because the zero value makes x/oauth2 PROBE: it
@@ -122,7 +138,15 @@ var builtins = map[string]BuiltinDef{
 		// needed. Read 2026-11-21; see connectors/mockgoogle.
 		AuthStyle:      oauth2.AuthStyleInParams,
 		TransferMethod: "gdrive",
-		Summary:        "Google Drive, limited to files the user picks",
+		// The Picker loads from apis.google.com, renders its chooser in
+		// a docs.google.com iframe, and calls googleapis.com. A CSP
+		// with no frame-src falls back to default-src, so without the
+		// frame entry the chooser is an empty box.
+		PickerScript:  []string{"https://apis.google.com"},
+		PickerFrame:   []string{"https://docs.google.com"},
+		PickerConnect: []string{"https://content.googleapis.com", "https://www.googleapis.com"},
+		PickerImg:     []string{"https://*.googleusercontent.com"},
+		Summary:       "Google Drive, limited to files the user picks",
 	},
 	"box": { //nolint:gosec // G101: published endpoint, not a credential
 		Kind:             KindOAuth2,

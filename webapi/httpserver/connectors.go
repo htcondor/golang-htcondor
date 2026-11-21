@@ -188,3 +188,62 @@ func (s *Handler) connectorSecret(r *http.Request, d connectors.Definition) (str
 	}
 	return string(b), nil
 }
+
+// --- the browser picker, and the policy that has to allow it ---------
+
+// PickerOrigins is the set of origins a connector's file chooser needs
+// the Content-Security-Policy to allow.
+//
+// Google's Picker is not a library this server can host: it loads from
+// apis.google.com, renders its chooser in a docs.google.com IFRAME, and
+// talks to googleapis.com. The page's CSP is default-src 'self', so
+// every one of those is refused by the browser unless named -- and this
+// repository has already shipped a browser-side feature that was
+// blocked in every real browser and silent about it (the site-apps
+// update badge). So the directives are widened here, from the
+// connector's own definition, and asserted in a test.
+type PickerOrigins struct {
+	// Script is where the chooser's own code is loaded from.
+	Script []string
+	// Frame is where it renders. A CSP with no frame-src falls back to
+	// default-src, so an iframe to another origin is blocked without
+	// this and the chooser appears as an empty box.
+	Frame []string
+	// Connect is what it calls.
+	Connect []string
+	// Img is where its thumbnails come from.
+	Img []string
+}
+
+// pickerOrigins returns the origins the configured connectors need.
+//
+// Only for connectors that are ENABLED and whose definition declares a
+// picker. A policy is widened for a feature in use, never on the chance
+// that one might be.
+func (s *Handler) pickerOrigins() PickerOrigins {
+	var out PickerOrigins
+	seen := map[string]bool{}
+	for _, d := range s.connectorDefinitions() {
+		if !d.Enabled {
+			continue
+		}
+		b, ok := connectors.Lookup(d.ID)
+		if !ok || len(b.PickerScript) == 0 {
+			continue
+		}
+		if seen[d.ID.String()] {
+			continue
+		}
+		seen[d.ID.String()] = true
+		out.Script = append(out.Script, b.PickerScript...)
+		out.Frame = append(out.Frame, b.PickerFrame...)
+		out.Connect = append(out.Connect, b.PickerConnect...)
+		out.Img = append(out.Img, b.PickerImg...)
+	}
+	// A test points every one of these at its stand-in, so the policy
+	// under test is the policy that ships rather than a relaxed one.
+	if s.connectorPickerOverride != nil {
+		return *s.connectorPickerOverride
+	}
+	return out
+}
