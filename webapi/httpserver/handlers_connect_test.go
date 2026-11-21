@@ -504,3 +504,222 @@ func decode(t *testing.T, resp *http.Response, into any) {
 		t.Fatalf("decode: %v", err)
 	}
 }
+
+// --- the token endpoint -----------------------------------------------
+//
+// The one place a third-party credential leaves this server, so these
+// are the tests that matter most in this file.
+
+// connectAs runs a whole flow so the caller holds a stored grant.
+func (f *connectFixture) connectAs(t *testing.T, c *http.Client) {
+	t.Helper()
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive", "text/html")
+	_ = resp.Body.Close()
+	authURL, err := resp.Location()
+	if err != nil {
+		t.Fatalf("no redirect to the provider: %v", err)
+	}
+	provResp, err := c.Get(authURL.String()) //nolint:noctx,bodyclose // followed immediately below
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = provResp.Body.Close()
+	back, err := provResp.Location()
+	if err != nil {
+		t.Fatalf("the provider did not redirect back: %v", err)
+	}
+	cb := f.get(t, c, back.Path+"?"+back.RawQuery, "application/json")
+	_ = cb.Body.Close()
+	if cb.StatusCode != http.StatusOK {
+		t.Fatalf("callback status %d", cb.StatusCode)
+	}
+}
+
+func TestTokenEndpointServesAConnectedBrowser(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "alice", "smith_lab")
+	f.connectAs(t, c)
+
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive/token", "application/json")
+	defer func() { _ = resp.Body.Close() }()
+
+	var body struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", resp.StatusCode, readBody(t, resp))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.AccessToken == "" {
+		t.Fatal("no access token")
+	}
+	if !f.google.AccessTokenValid(body.AccessToken) {
+		t.Error("the token is not one the provider issued")
+	}
+	if body.ExpiresIn <= 0 {
+		t.Errorf("expires_in = %d, want the life of the token", body.ExpiresIn)
+	}
+
+	// A bearer credential with a short life must not be cached by
+	// anything between here and the browser.
+	if got := resp.Header.Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+// A request carrying its own Authorization is refused even with a valid
+// session cookie. Holding both reads as "a program, not a person's
+// browser tab", and the cost of being wrong the other way is handing a
+// user's Google token to whatever asked.
+func TestTokenEndpointRefusesACallerHoldingItsOwnCredential(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "alice", "smith_lab")
+	f.connectAs(t, c)
+
+	for _, auth := range []string{"Bearer some-token", "Basic dXNlcjpwdw==", "token abc"} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+			f.srv.URL+"/api/v1/connect/builtin:gdrive/token", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", auth)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := readBody(t, resp)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("%q: a caller with its own credential was given a user's token", auth)
+		}
+		if strings.Contains(body, "access_token") {
+			t.Fatalf("%q: the response carried a token anyway: %s", auth, body)
+		}
+	}
+}
+
+func TestTokenEndpointRefusesWithoutASession(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	resp := f.get(t, anonymous(), "/api/v1/connect/builtin:gdrive/token", "application/json")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestTokenEndpointRefusesOutsideYourGroups(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "mallory", "other_lab")
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive/token", "application/json")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status %d, want 403", resp.StatusCode)
+	}
+}
+
+// Not connected is an ordinary state, and the answer says where to go
+// rather than being an error the page has to interpret.
+func TestTokenEndpointTellsAnUnconnectedCallerWhereToGo(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "alice", "smith_lab")
+
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive/token", "application/json")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status %d, want 409", resp.StatusCode)
+	}
+	var body struct {
+		Connected  bool   `json:"connected"`
+		ConnectURL string `json:"connect_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Connected || body.ConnectURL != "/api/v1/connect/builtin:gdrive" {
+		t.Errorf("body = %+v, want connected false and the entry point", body)
+	}
+}
+
+// A revoked grant is reported as needing consent, and the stored row is
+// LEFT ALONE: a lapse is often temporary, and destroying the token
+// forces a consent screen for what may be an afternoon's change.
+func TestTokenEndpointReportsARevokedGrantWithoutDestroyingIt(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "alice", "smith_lab")
+	f.connectAs(t, c)
+
+	stored, err := f.h.connectorStore().RefreshToken(t.Context(), "alice",
+		connectors.MustParse("builtin:gdrive"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.google.Revoke(string(stored))
+
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive/token", "application/json")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status %d, want 409", resp.StatusCode)
+	}
+	var body struct {
+		NeedsConsent bool `json:"needs_consent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.NeedsConsent {
+		t.Error("a revoked grant was not reported as needing consent")
+	}
+
+	if _, found, _ := f.h.connectorStore().Credential(t.Context(), "alice",
+		connectors.MustParse("builtin:gdrive")); !found {
+		t.Error("the stored credential was destroyed over a revocation")
+	}
+}
+
+// Issuing a token counts as use, which is what lets a connector report
+// whether anyone uses it and warn a user before a job holds.
+func TestIssuingATokenRecordsUse(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "alice", "smith_lab")
+	f.connectAs(t, c)
+
+	id := connectors.MustParse("builtin:gdrive")
+	if _, lastUsed, _ := f.h.connectorStore().CountCredentials(t.Context(), id); !lastUsed.IsZero() {
+		t.Fatalf("last use was %v before any token was issued", lastUsed)
+	}
+
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive/token", "application/json")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+
+	users, lastUsed, err := f.h.connectorStore().CountCredentials(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if users != 1 || lastUsed.IsZero() {
+		t.Errorf("users=%d lastUsed=%v; issuing a token should count as use", users, lastUsed)
+	}
+}
+
+// One user's token is never served to another.
+func TestTokenEndpointNeverCrossesUsers(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	alice := f.login(t, "alice", "smith_lab")
+	bob := f.login(t, "bob", "smith_lab")
+	f.connectAs(t, alice)
+
+	// bob is in the group but has not connected.
+	resp := f.get(t, bob, "/api/v1/connect/builtin:gdrive/token", "application/json")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("bob was served a token: %s", readBody(t, resp))
+	}
+}

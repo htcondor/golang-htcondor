@@ -170,6 +170,8 @@ func (h *Handler) handleConnectItem(w http.ResponseWriter, r *http.Request) {
 		h.beginConnect(w, r, session, def)
 	case "callback":
 		h.finishConnect(w, r, session, def)
+	case "token":
+		h.connectorToken(w, r, session, def)
 	default:
 		h.writeError(w, http.StatusNotFound, "Not found")
 	}
@@ -304,4 +306,112 @@ func connectURL(id connectors.ID) string {
 func (h *Handler) connectorRedirectURI(r *http.Request, id connectors.ID) string {
 	base := strings.TrimSuffix(h.publicBaseURLFor(r), "/")
 	return base + connectURL(id) + "/callback"
+}
+
+// connectorToken answers GET /api/v1/connect/{ns}:{name}/token with a
+// short-lived access token for the caller's own browser.
+//
+// This exists because Google's Picker runs client-side: the page itself
+// has to hold a token to show a file chooser. It is the ONE place a
+// third-party credential leaves this server, and it therefore carries
+// the sharpest rule in the design.
+//
+// A browser session is the only thing that may ask. The shared gate
+// above already refuses a caller with no session, but that is not quite
+// enough here: a client could hold both a session cookie and a bearer
+// token, and the useful reading of that is "a program, not a person's
+// browser tab". So a request carrying its own Authorization is refused
+// outright, whatever else it carries. The cost of being wrong in the
+// other direction is handing a user's Google token to whatever asked.
+func (h *Handler) connectorToken(w http.ResponseWriter, r *http.Request, session *SessionData, def connectors.Definition) {
+	if r.Header.Get("Authorization") != "" {
+		h.logger.Warn(logging.DestinationHTTP,
+			"refused a connector token to a request carrying its own credential",
+			"connector", def.ID.String(), "user", session.Username)
+		h.writeError(w, http.StatusForbidden,
+			"This endpoint serves a browser session only. A client holding its own "+
+				"credential cannot ask for somebody's third-party token.")
+		return
+	}
+	if def.Kind != connectors.KindOAuth2 {
+		h.writeError(w, http.StatusNotImplemented,
+			fmt.Sprintf("Connector %q is of kind %q and holds no token here", def.ID, def.Kind))
+		return
+	}
+
+	store := h.connectorStore()
+	if store == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "No credential store is configured")
+		return
+	}
+	refresh, err := store.RefreshToken(r.Context(), session.Username, def.ID)
+	if err != nil {
+		// Not connected is the ordinary case and gets an answer the
+		// page can act on, rather than an error it has to interpret.
+		h.writeJSON(w, http.StatusConflict, map[string]any{
+			"connector":   def.ID.String(),
+			"connected":   false,
+			"connect_url": connectURL(def.ID),
+		})
+		return
+	}
+
+	secret, err := h.connectorSecret(r, def)
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable,
+			fmt.Sprintf("Connector %q is not usable; its client secret could not be read", def.ID))
+		return
+	}
+
+	tok, err := h.connectorFlow().Refresh(r.Context(), def, secret, string(refresh))
+	if err != nil {
+		if errors.Is(err, connectors.ErrNeedsConsent) {
+			// The grant is dead. Say so with somewhere to go, and
+			// leave the row alone: a user may be outside the group
+			// this week and back next, and destroying the token would
+			// force a consent screen for what may be a temporary
+			// thing.
+			h.writeJSON(w, http.StatusConflict, map[string]any{
+				"connector":     def.ID.String(),
+				"connected":     false,
+				"needs_consent": true,
+				"connect_url":   connectURL(def.ID),
+			})
+			return
+		}
+		h.logger.Warn(logging.DestinationHTTP, "could not refresh a connector credential",
+			"connector", def.ID.String(), "user", session.Username, "error", err)
+		h.writeError(w, http.StatusBadGateway, "The provider could not be reached")
+		return
+	}
+
+	if err := store.MarkUsed(r.Context(), session.Username, def.ID); err != nil {
+		// Worth a line and not worth failing over: the token is good,
+		// and the only loss is the freshness of a report.
+		h.logger.Warn(logging.DestinationHTTP, "could not record connector use",
+			"connector", def.ID.String(), "user", session.Username, "error", err)
+	}
+
+	// Logged because this is the egress point. The token is not in the
+	// line; its existence is.
+	h.logger.Info(logging.DestinationHTTP, "issued a connector token to a browser session",
+		"connector", def.ID.String(), "user", session.Username)
+
+	// No caching anywhere: this is a bearer credential with a short
+	// life, and a proxy keeping a copy would hand it to the next
+	// person through.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+
+	expiresIn := 0
+	if !tok.Expiry.IsZero() {
+		if d := int(time.Until(tok.Expiry).Seconds()); d > 0 {
+			expiresIn = d
+		}
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"access_token": tok.Token,
+		"expires_in":   expiresIn,
+		"connector":    def.ID.String(),
+	})
 }
