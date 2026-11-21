@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -33,7 +34,19 @@ type connectFixture struct {
 	secretFP string
 }
 
+// newConnectFixtureWithPicker is newConnectFixture with the file
+// chooser asked for, which is what widens the page's CSP.
+func newConnectFixtureWithPicker(t *testing.T, groups string) *connectFixture {
+	t.Helper()
+	return newConnectFixtureOpts(t, groups, true)
+}
+
 func newConnectFixture(t *testing.T, groups string) *connectFixture {
+	t.Helper()
+	return newConnectFixtureOpts(t, groups, false)
+}
+
+func newConnectFixtureOpts(t *testing.T, groups string, picker bool) *connectFixture {
 	t.Helper()
 
 	db, err := appdb.Open(filepath.Join(t.TempDir(), "app.db"))
@@ -86,6 +99,7 @@ func newConnectFixture(t *testing.T, groups string) *connectFixture {
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS = " + groups,
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_AUTHORIZATION_URL = " + g.AuthorizationURL(),
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_TOKEN_URL = " + g.TokenURL(),
+		fmt.Sprintf("HTTP_API_CONNECTOR_BUILTIN_GDRIVE_PICKER = %t", picker),
 	}, "\n")))
 	if err != nil {
 		t.Fatalf("parse the test configuration: %v", err)

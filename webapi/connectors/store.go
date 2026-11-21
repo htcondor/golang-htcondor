@@ -47,6 +47,10 @@ type Stored struct {
 	Groups           []string
 	Transfer         Transfer
 	Enabled          bool
+	// Picker is whether this connector offers a browser file chooser.
+	// Off unless asked for; it is the only part that widens the page's
+	// Content-Security-Policy.
+	Picker bool
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -149,8 +153,8 @@ func (s *Store) PutConnector(ctx context.Context, c Stored, secret []byte) error
 	// touches the column. See TestUpdateKeepsCreatedAt.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO connectors (id, kind, client_id, authorization_url, token_url,
-		                        scopes, groups, transfer, enabled, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		                        scopes, groups, transfer, enabled, picker, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			kind = excluded.kind,
 			client_id = excluded.client_id,
@@ -160,10 +164,11 @@ func (s *Store) PutConnector(ctx context.Context, c Stored, secret []byte) error
 			groups = excluded.groups,
 			transfer = excluded.transfer,
 			enabled = excluded.enabled,
+			picker = excluded.picker,
 			updated_at = excluded.updated_at`,
 		c.ID.String(), string(c.Kind), c.ClientID, c.AuthorizationURL, c.TokenURL,
 		strings.Join(c.Scopes, ","), strings.Join(c.Groups, ","), string(c.Transfer),
-		c.Enabled, now, now); err != nil {
+		c.Enabled, c.Picker, now, now); err != nil {
 		return err
 	}
 
@@ -236,7 +241,7 @@ const connectorSelect = `
 	SELECT id, kind, client_id,
 	       CASE WHEN client_secret IS NULL THEN 0 ELSE 1 END AS secret_set,
 	       secret_updated_at, authorization_url, token_url, scopes, groups,
-	       transfer, enabled, created_at, updated_at
+	       transfer, enabled, picker, created_at, updated_at
 	FROM connectors`
 
 func scanConnector(rows *sql.Rows) (Stored, error) {
@@ -251,7 +256,7 @@ func scanConnector(rows *sql.Rows) (Stored, error) {
 	)
 	if err := rows.Scan(&idStr, &kind, &c.ClientID, &secretSet, &secretUpdate,
 		&c.AuthorizationURL, &c.TokenURL, &scopes, &groups, &transfer,
-		&c.Enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.Enabled, &c.Picker, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return Stored{}, err
 	}
 	id, err := ParseID(idStr)

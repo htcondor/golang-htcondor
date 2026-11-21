@@ -105,27 +105,63 @@ func TestNoPickerLeavesThePolicyClosed(t *testing.T) {
 	}
 }
 
-// The origins come from the ENABLED connectors, so turning one off
-// closes the policy again rather than leaving it open.
-func TestADisabledConnectorDoesNotWidenThePolicy(t *testing.T) {
+// A connector widens the policy only when its CHOOSER is asked for.
+//
+// Configuring builtin:gdrive is not the same as wanting a file chooser:
+// a site whose file ids come from a site app, a script or a catalogue
+// never opens one, and should not carry script-src and frame-src
+// entries for it. The default is off, because that is the discoverable
+// failure -- an operator who wanted the chooser goes looking for the
+// setting -- where on-by-default is the invisible one.
+func TestAConnectorWithoutItsPickerLeavesThePolicyClosed(t *testing.T) {
+	// newConnectFixture configures builtin:gdrive and does NOT set
+	// _PICKER, which is the common case.
 	f := newConnectFixture(t, "smith_lab")
 
-	if got := f.h.pickerOrigins(); len(got.Script) == 0 {
-		t.Fatal("an enabled gdrive connector contributed no picker origins")
+	got := f.h.pickerOrigins()
+	if len(got.Script) != 0 || len(got.Frame) != 0 {
+		t.Fatalf("a connector with no chooser widened the policy: %+v", got)
 	}
 
-	// Disable it the way an operator would.
+	csp := cspOf(t, got)
+	if strings.Contains(csp["script-src"], "google") || strings.Contains(csp["frame-src"], "google") {
+		t.Errorf("the policy names the provider anyway: script-src=%q frame-src=%q",
+			csp["script-src"], csp["frame-src"])
+	}
+}
+
+// And it does widen when the chooser is asked for.
+func TestAskingForThePickerWidensThePolicy(t *testing.T) {
+	f := newConnectFixtureWithPicker(t, "smith_lab")
+
+	got := f.h.pickerOrigins()
+	if len(got.Script) == 0 || len(got.Frame) == 0 {
+		t.Fatalf("the chooser was asked for and the policy was not widened: %+v", got)
+	}
+	csp := cspOf(t, got)
+	if !strings.Contains(csp["frame-src"], "https://docs.google.com") {
+		t.Errorf("frame-src = %q", csp["frame-src"])
+	}
+}
+
+// A disabled connector contributes nothing even with the chooser on.
+func TestADisabledConnectorDoesNotWidenThePolicy(t *testing.T) {
+	f := newConnectFixtureWithPicker(t, "smith_lab")
+	if len(f.h.pickerOrigins().Script) == 0 {
+		t.Fatal("precondition: the enabled connector should widen the policy")
+	}
+
 	if err := f.h.connectorStore().PutConnector(t.Context(), connectors.Stored{
 		ID: connectors.MustParse("site:nopicker"), Kind: connectors.KindOAuth2,
-		Groups: []string{"smith_lab"}, Enabled: true,
+		Groups: []string{"smith_lab"}, Enabled: true, Picker: true,
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// A site connector has no builtin definition and so declares no
-	// picker; it must not widen anything.
-	before := len(f.h.pickerOrigins().Script)
-	if before != 1 {
-		t.Errorf("a site connector with no picker changed the origin count: %d", before)
+	// picker origins; asking for a chooser it has no definition for
+	// must not widen anything.
+	if n := len(f.h.pickerOrigins().Script); n != 1 {
+		t.Errorf("a site connector with no picker definition changed the origin count: %d", n)
 	}
 }
 

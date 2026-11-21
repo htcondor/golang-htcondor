@@ -242,6 +242,9 @@ function ConnectorRow({
 
       <td className={TD}>
         <div className="text-sm">{c.transfer}</div>
+        <div className="text-xs text-gray-500" data-testid={`connector-picker-${c.id}`}>
+          chooser {c.picker ? "on" : "off"}
+        </div>
         {c.transfer === "direct" && !c.transfer_method && (
           <div className="text-xs text-amber-700">no transfer plugin ships for this</div>
         )}
@@ -326,6 +329,7 @@ function ConnectorForm({
   const [tokenURL, setTokenURL] = useState("");
   const [groups, setGroups] = useState("");
   const [transfer, setTransfer] = useState("spool");
+  const [picker, setPicker] = useState(false);
 
   const effectiveID = editingID ?? id;
   const isBuiltin = effectiveID.startsWith("builtin:");
@@ -343,6 +347,7 @@ function ConnectorForm({
         .map((g) => g.trim())
         .filter(Boolean),
       transfer,
+      picker,
     };
     // Only send the secret when one was typed. An empty string would
     // CLEAR a stored secret, so an edit that does not mention it must
@@ -457,6 +462,24 @@ function ConnectorForm({
         <span className="block text-xs text-gray-500">
           <Code>spool</Code> keeps third-party tokens off execute nodes and needs nothing deployed
           there.
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={picker}
+          onChange={(e) => setPicker(e.target.checked)}
+          className="mt-1"
+          data-testid="connector-picker"
+        />
+        <span>
+          <span className="text-gray-700">Offer a file chooser</span>
+          <span className="block text-xs text-gray-500">
+            Lets people pick files in the submit page. This is the only setting that widens this
+            site&apos;s Content-Security-Policy, because the chooser loads from the provider and
+            renders in its iframe — so leave it off unless it is wanted.
+          </span>
         </span>
       </label>
 

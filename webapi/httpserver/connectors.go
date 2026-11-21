@@ -143,6 +143,7 @@ func (s *Handler) definitionFromStored(row connectors.Stored) connectors.Definit
 		Groups:           row.Groups,
 		Transfer:         row.Transfer,
 		Enabled:          row.Enabled,
+		Picker:           row.Picker,
 		Service:          row.ID.Service(s.connectorConfig.ServicePrefix()),
 		Origin:           "stored",
 	}
@@ -224,7 +225,11 @@ func (s *Handler) pickerOrigins() PickerOrigins {
 	var out PickerOrigins
 	seen := map[string]bool{}
 	for _, d := range s.connectorDefinitions() {
-		if !d.Enabled {
+		// Enabled AND asked for. The chooser is the only part that
+		// widens the policy, and a connector used only to name job
+		// inputs -- ids from a site app, a script, a catalogue --
+		// never opens one and should not pay for it.
+		if !d.Enabled || !d.Picker {
 			continue
 		}
 		b, ok := connectors.Lookup(d.ID)

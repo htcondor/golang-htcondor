@@ -1613,6 +1613,10 @@ export interface AdminConnector {
    *  editing a form to no effect. */
   shadowed?: boolean;
   enabled: boolean;
+  /** Whether this connector offers a browser file chooser. The only
+   *  setting that widens the page's Content-Security-Policy, so it is
+   *  off unless asked for. */
+  picker: boolean;
   groups: string[];
   scopes: string[];
   transfer: string;
@@ -1652,6 +1656,7 @@ export interface AdminConnectorRequest {
   groups?: string[];
   transfer?: string;
   enabled?: boolean;
+  picker?: boolean;
 }
 
 export interface AdminSiteApp {
