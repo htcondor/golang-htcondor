@@ -531,7 +531,13 @@ func (h *Handler) sshGatewayCredential(ctx context.Context, account string, scop
 		return nil, fmt.Errorf("no HTCondor credential could be minted for %q; refusing to run the "+
 			"session as this daemon", account)
 	}
-	return cctx, nil
+	// Name the caller as well as crediting them. The credential alone
+	// says what the context may DO, not who it belongs to, and code that
+	// has to check the two agree -- anything caching per account, where
+	// serving one caller's data to another is the failure -- has nothing
+	// to compare against otherwise. The account here is the authenticated
+	// one from the connection's Permissions, never conn.User().
+	return htcondor.WithAuthenticatedUser(cctx, account), nil
 }
 
 // sshGatewayResolve turns a target into a job.

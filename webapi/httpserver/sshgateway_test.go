@@ -463,3 +463,22 @@ func TestInteractiveSessionsGetTheCredentialBootstrap(t *testing.T) {
 		t.Error("sessions would be submitted without the preparation every other submit path runs")
 	}
 }
+
+// TestSSHGatewayCredentialNamesTheCaller: the credential says what a
+// channel may do, not whose it is. Code that must check the two agree --
+// anything caching per account, where serving one caller's data to
+// another is the failure -- needs the name on the context to compare
+// against.
+func TestSSHGatewayCredentialNamesTheCaller(t *testing.T) {
+	h := credSessTestHandler(t)
+	ctx, err := h.sshGatewayCredential(context.Background(), "alice", []string{"condor:/WRITE"})
+	if err != nil {
+		t.Fatalf("sshGatewayCredential: %v", err)
+	}
+	if got := htcondor.GetAuthenticatedUserFromContext(ctx); got != "alice" {
+		t.Errorf("authenticated user on the channel context = %q, want %q", got, "alice")
+	}
+	if _, ok := htcondor.GetSecurityConfigFromContext(ctx); !ok {
+		t.Error("the channel context carries no credential")
+	}
+}
