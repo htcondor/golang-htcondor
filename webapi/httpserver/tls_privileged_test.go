@@ -47,8 +47,8 @@ func TestServeTLSReadsARootOnlyKeyAfterDrop(t *testing.T) {
 		t.Fatal("the TLS key was readable as nobody; the fixture proves nothing")
 	}
 
-	if _, err := loadKeyPairMaybeAsRoot(certPath, keyPath); err != nil {
-		t.Fatalf("loadKeyPairMaybeAsRoot after drop: %v", err)
+	if _, err := newCertReloader(certPath, keyPath, time.Minute, nil); err != nil {
+		t.Fatalf("reading the keypair after drop: %v", err)
 	}
 
 	// And it actually serves: the certificate is installed on TLSConfig
