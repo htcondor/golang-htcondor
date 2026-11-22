@@ -16,14 +16,24 @@ package sftpjobs
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/htcondor/golang-htcondor/webapi/templates"
+)
+
+// The two files served inside a template's directory. Both are
+// generated: job.sub is the template's submit description, README
+// describes its columns. Neither is a file on disk anywhere.
+const (
+	SubmitFileName = "job.sub"
+	ReadmeFileName = "README"
 )
 
 // templatesEnabled reports whether this view has a templates tree.
@@ -36,48 +46,31 @@ func (f *FS) listTemplates(r ref, p string) (listerAt, error) {
 	if !f.templatesEnabled() {
 		return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 	}
-	ctx := f.cfg.Context
 
 	switch r.kind {
 	case kindTemplates:
-		// Both namespaces always appear, even with nothing in them: an
-		// empty directory says "no templates here", while a missing one
-		// says "this access point has no templates at all", and those
+		// One directory per template the caller may use, whoever wrote
+		// it. An empty listing says "no templates here", while a missing
+		// /templates says "this access point has none at all", and those
 		// are different answers.
-		return listerAt{
-			dirInfo(NamespaceSystem, time.Time{}),
-			dirInfo(NamespaceUser, time.Time{}),
-		}, nil
-
-	case kindNamespace:
-		if r.tref.Namespace == NamespaceUser {
-			// Only ever your own, so the level below has exactly one
-			// entry. Listing other accounts would be a directory of
-			// names nobody may open.
-			return listerAt{dirInfo(f.cfg.Account, time.Time{})}, nil
+		visible := visibleTemplates(f.cfg.Templates, f.cfg.Account)
+		out := make(listerAt, 0, len(visible))
+		for _, t := range visible {
+			out = append(out, dirInfo(t.ID, time.Time{}))
 		}
-		return f.templateDirs(ctx, NamespaceSystem, "")
-
-	case kindUserOwner:
-		if r.tref.Owner != f.cfg.Account {
-			return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
-		}
-		return f.templateDirs(ctx, NamespaceUser, f.cfg.Account)
+		sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+		return out, nil
 
 	case kindTemplate:
-		tmpl, err := f.cfg.Templates.Template(ctx, f.cfg.Account, r.tref)
+		tmpl, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, r.tid)
 		if err != nil {
 			return nil, err
 		}
 		out := listerAt{
-			fileInfo{name: SubmitFileName, size: int64(len(tmpl.Submit)), mode: 0o444},
+			fileInfo{name: SubmitFileName, size: int64(len(submitText(tmpl))), mode: 0o444},
+			fileInfo{name: ReadmeFileName, size: int64(len(readmeText(tmpl))), mode: 0o444},
 			dirInfo(submitDirName, time.Time{}),
 			dirInfo(statusDirName, time.Time{}),
-		}
-		if tmpl.Readme != "" {
-			out = append(out, fileInfo{
-				name: ReadmeFileName, size: int64(len(tmpl.Readme)), mode: 0o444,
-			})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 		return out, nil
@@ -86,20 +79,20 @@ func (f *FS) listTemplates(r ref, p string) (listerAt, error) {
 		// Write-only by design. Listing back what was dropped would mean
 		// keeping it, and the file has already become jobs -- what
 		// happened to it is in status/.
-		if _, err := f.cfg.Templates.Template(ctx, f.cfg.Account, r.tref); err != nil {
+		if _, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, r.tid); err != nil {
 			return nil, err
 		}
 		return listerAt{}, nil
 
 	case kindStatusDir:
-		if _, err := f.cfg.Templates.Template(ctx, f.cfg.Account, r.tref); err != nil {
+		if _, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, r.tid); err != nil {
 			return nil, err
 		}
-		names := f.statusNames(r.tref)
+		names := f.statusNames(r.tid)
 		sort.Strings(names)
 		out := make(listerAt, 0, len(names))
 		for _, name := range names {
-			st, ok := f.statusFor(r.tref, name)
+			st, ok := f.statusFor(r.tid, name)
 			if !ok {
 				continue
 			}
@@ -116,48 +109,23 @@ func (f *FS) listTemplates(r ref, p string) (listerAt, error) {
 	return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 }
 
-// templateDirs lists one namespace's templates as directories.
-func (f *FS) templateDirs(ctx context.Context, namespace, owner string) (listerAt, error) {
-	refs, err := f.cfg.Templates.Templates(ctx, f.cfg.Account)
-	if err != nil {
-		return nil, err
-	}
-	out := listerAt{}
-	for _, tr := range refs {
-		if tr.Namespace != namespace || tr.Owner != owner {
-			continue
-		}
-		out = append(out, dirInfo(tr.Name, time.Time{}))
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
-	return out, nil
-}
-
 // statTemplates answers a stat in the templates tree.
 func (f *FS) statTemplates(r ref, p string) (listerAt, error) {
 	if !f.templatesEnabled() {
 		return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 	}
-	ctx := f.cfg.Context
 
 	switch r.kind {
 	case kindTemplates:
 		return listerAt{dirInfo(templatesDir, time.Time{})}, nil
-	case kindNamespace:
-		return listerAt{dirInfo(r.tref.Namespace, time.Time{})}, nil
-	case kindUserOwner:
-		if r.tref.Owner != f.cfg.Account {
-			return nil, &os.PathError{Op: "stat", Path: p, Err: syscall.ENOENT}
-		}
-		return listerAt{dirInfo(r.tref.Owner, time.Time{})}, nil
 
 	case kindTemplate, kindSubmitDir, kindStatusDir:
 		// Each one exists exactly when the template does, which is the
-		// one thing worth asking the source.
-		if _, err := f.cfg.Templates.Template(ctx, f.cfg.Account, r.tref); err != nil {
+		// one thing worth asking the library.
+		if _, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, r.tid); err != nil {
 			return nil, err
 		}
-		name := r.tref.Name
+		name := r.tid
 		switch r.kind {
 		case kindSubmitDir:
 			name = submitDirName
@@ -180,7 +148,7 @@ func (f *FS) statTemplates(r ref, p string) (listerAt, error) {
 		return nil, &os.PathError{Op: "stat", Path: p, Err: syscall.ENOENT}
 
 	case kindStatusFile:
-		st, ok := f.statusFor(r.tref, r.name)
+		st, ok := f.statusFor(r.tid, r.name)
 		if !ok {
 			return nil, &os.PathError{Op: "stat", Path: p, Err: syscall.ENOENT}
 		}
@@ -194,20 +162,78 @@ func (f *FS) statTemplates(r ref, p string) (listerAt, error) {
 
 // templateFileText reads job.sub or README.
 func (f *FS) templateFileText(r ref) (string, error) {
-	tmpl, err := f.cfg.Templates.Template(f.cfg.Context, f.cfg.Account, r.tref)
+	tmpl, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, r.tid)
 	if err != nil {
 		return "", err
 	}
 	switch r.name {
 	case SubmitFileName:
-		return tmpl.Submit, nil
+		return submitText(tmpl), nil
 	case ReadmeFileName:
-		if tmpl.Readme == "" {
-			return "", fmt.Errorf("%s: %w", ReadmeFileName, fs.ErrNotExist)
-		}
-		return tmpl.Readme, nil
+		return readmeText(tmpl), nil
 	}
 	return "", fmt.Errorf("%s: %w", r.name, fs.ErrNotExist)
+}
+
+// submitText is the template's submit description, newline-terminated.
+//
+// Served without the queue statement the submission appends, which is
+// how the template is stored: see ValidateTemplate for why a template
+// carrying its own is refused.
+func submitText(t templates.Template) string {
+	body := strings.TrimRight(t.Contents, "\n")
+	if body == "" {
+		return ""
+	}
+	return body + "\n"
+}
+
+// readmeText describes the template, from the template.
+//
+// Synthesized rather than stored, because everything worth saying is
+// already structured: the name, the description, and the columns with
+// their own descriptions. A hand-written file beside the submit
+// description would be a second place for the column list to drift from
+// the macros the body actually expands.
+//
+// It also carries the refusal a drop would hit, so somebody reads it
+// here instead of discovering it in status/ after uploading.
+func readmeText(t templates.Template) string {
+	var b strings.Builder
+	name := t.Name
+	if name == "" {
+		name = t.ID
+	}
+	fmt.Fprintf(&b, "%s\n", name)
+	fmt.Fprintf(&b, "%s\n\n", strings.Repeat("=", len(name)))
+	if t.Description != "" {
+		fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(t.Description))
+	}
+
+	if err := ValidateTemplate(t); err != nil {
+		fmt.Fprintf(&b, "This template cannot be submitted by dropping a CSV here:\n\n  %s\n\n", err)
+		return b.String()
+	}
+
+	cols := templates.ColumnNames(t.Columns)
+	fmt.Fprintf(&b, "Drop a CSV into submit/ with these columns, in any order:\n\n")
+	for _, c := range t.Columns {
+		if c.Description != "" {
+			fmt.Fprintf(&b, "  %-20s %s\n", c.Name, c.Description)
+		} else {
+			fmt.Fprintf(&b, "  %s\n", c.Name)
+		}
+	}
+	fmt.Fprintf(&b, "\nOne job per row. For example:\n\n")
+	fmt.Fprintf(&b, "  %s\n", strings.Join(cols, ","))
+	row := make([]string, len(cols))
+	for i, c := range cols {
+		row[i] = "value-of-" + c
+	}
+	fmt.Fprintf(&b, "  %s\n\n", strings.Join(row, ","))
+	fmt.Fprintf(&b, "What happened to an upload is in status/ under the same name.\n")
+	fmt.Fprintf(&b, "Output comes back under /%s once the jobs finish.\n", outputsDir)
+	return b.String()
 }
 
 // readTemplates answers a read in the templates tree.
@@ -223,7 +249,7 @@ func (f *FS) readTemplates(r ref, p string) (io.ReaderAt, error) {
 		}
 		return bytes.NewReader([]byte(text)), nil
 	case kindStatusFile:
-		st, ok := f.statusFor(r.tref, r.name)
+		st, ok := f.statusFor(r.tid, r.name)
 		if !ok {
 			return nil, &os.PathError{Op: "open", Path: p, Err: syscall.ENOENT}
 		}
@@ -242,16 +268,19 @@ func (f *FS) writeTemplates(r ref, p string) (io.WriterAt, error) {
 		return nil, &os.PathError{Op: "write", Path: p, Err: syscall.EROFS}
 	}
 	// Checked before a byte is accepted: uploading a megabyte only to be
-	// told the template does not exist is a worse answer than refusing
-	// the open.
-	tmpl, err := f.cfg.Templates.Template(f.cfg.Context, f.cfg.Account, r.tref)
+	// told the template does not exist, or that it cannot take a CSV at
+	// all, is a worse answer than refusing the open.
+	tmpl, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, r.tid)
 	if err != nil {
 		return nil, err
 	}
-	limits := tmpl.Limits.withDefaults()
+	if err := ValidateTemplate(tmpl); err != nil {
+		return nil, err
+	}
+	limits := f.cfg.Limits.withDefaults()
 	return &upload{
 		fs:   f,
-		tref: r.tref,
+		tid:  r.tid,
 		name: r.name,
 		max:  limits.MaxBytes + 1,
 	}, nil

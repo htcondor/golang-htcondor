@@ -21,15 +21,6 @@ import (
 	htcondor "github.com/htcondor/golang-htcondor"
 )
 
-func goodTemplate() Template {
-	return Template{
-		Ref: TemplateRef{Namespace: NamespaceSystem, Name: "blast"},
-		Submit: "executable = /usr/bin/blastn\n" +
-			"transfer_executable = false\n" +
-			"arguments = -query $(reads) -out $(sample).out\n",
-	}
-}
-
 // TestBuildSubmitParsesAndQueuesOnePerRow drives the real submit parser:
 // the generated text has to queue exactly as many jobs as the CSV has
 // rows, with the variables bound.
@@ -71,9 +62,10 @@ func TestBuildSubmitParsesAndQueuesOnePerRow(t *testing.T) {
 	if v, ok := ad.EvaluateAttrBool("TransferExecutable"); !ok || v {
 		t.Errorf("TransferExecutable = %v (set=%v), want false", v, ok)
 	}
-	// The template is recorded on the job.
-	if v, _ := ad.EvaluateAttrString(AttrTemplate); v != "system:blast" {
-		t.Errorf("%s = %q, want %q", AttrTemplate, v, "system:blast")
+	// The template is recorded on the job, by the library id the web
+	// page and /api/v1/templates use for the same template.
+	if v, _ := ad.EvaluateAttrString(AttrTemplate); v != "blast" {
+		t.Errorf("%s = %q, want %q", AttrTemplate, v, "blast")
 	}
 }
 
@@ -82,7 +74,7 @@ func TestBuildSubmitParsesAndQueuesOnePerRow(t *testing.T) {
 func TestValidateTemplateRequiresNoQueueStatement(t *testing.T) {
 	for _, line := range []string{"queue", "queue 5", "QUEUE sample from", "  queue\n"} {
 		tmpl := goodTemplate()
-		tmpl.Submit += line + "\n"
+		tmpl.Contents += line + "\n"
 		err := ValidateTemplate(tmpl)
 		if err == nil {
 			t.Errorf("a template containing %q was accepted", line)
@@ -99,10 +91,8 @@ func TestValidateTemplateRequiresNoQueueStatement(t *testing.T) {
 // spools, and a spooling job whose executable needs transferring waits
 // on HoldReasonCode 16 forever for an upload a CSV never carries.
 func TestValidateTemplateRequiresTransferExecutableFalse(t *testing.T) {
-	bad := Template{
-		Ref:    TemplateRef{Namespace: NamespaceSystem, Name: "blast"},
-		Submit: "executable = /usr/bin/blastn\n",
-	}
+	bad := goodTemplate()
+	bad.Contents = "executable = /usr/bin/blastn\n"
 	err := ValidateTemplate(bad)
 	if err == nil {
 		t.Fatal("a template that would hold every job forever was accepted")
@@ -116,14 +106,14 @@ func TestValidateTemplateRequiresTransferExecutableFalse(t *testing.T) {
 	// The spellings HTCondor accepts for false.
 	for _, v := range []string{"false", "FALSE", "0", "no", "F"} {
 		tmpl := bad
-		tmpl.Submit = "executable = /usr/bin/blastn\ntransfer_executable = " + v + "\n"
+		tmpl.Contents = "executable = /usr/bin/blastn\ntransfer_executable = " + v + "\n"
 		if err := ValidateTemplate(tmpl); err != nil {
 			t.Errorf("transfer_executable = %s was refused: %v", v, err)
 		}
 	}
 	// And true is still refused.
 	tmpl := bad
-	tmpl.Submit = "executable = /x\ntransfer_executable = true\n"
+	tmpl.Contents = "executable = /x\ntransfer_executable = true\n"
 	if err := ValidateTemplate(tmpl); err == nil {
 		t.Error("transfer_executable = true was accepted")
 	}
@@ -137,7 +127,7 @@ func TestBuildSubmitRefusesNothingToDo(t *testing.T) {
 		t.Error("accepted a submission with no rows")
 	}
 	empty := goodTemplate()
-	empty.Submit = "   \n"
+	empty.Contents = "   \n"
 	if err := ValidateTemplate(empty); err == nil {
 		t.Error("accepted an empty submit description")
 	}

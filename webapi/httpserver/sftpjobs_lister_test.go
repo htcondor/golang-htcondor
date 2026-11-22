@@ -21,6 +21,7 @@ import (
 
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
+	"github.com/htcondor/golang-htcondor/webapi/templates"
 )
 
 // TestSFTPJobsConstraintIsTheQueuesCompletedJobs pins what this listing
@@ -99,14 +100,22 @@ func TestReadableJobsSaysWhyItCannotAnswer(t *testing.T) {
 // TestJobTemplatesOffOrOnTogether: a template source without a
 // submitter would offer a drop point that cannot submit, which is worse
 // than offering nothing.
+//
+// Both halves follow the shared library, so the file service needs no
+// template configuration of its own -- an access point that offers
+// templates on the web page offers the same ones here.
 func TestJobTemplatesOffOrOnTogether(t *testing.T) {
 	off := &Handler{logger: testLogger(t)}
 	if off.jobTemplates() != nil || off.jobTemplateSubmitter() != nil {
-		t.Error("templates are configured with no directory set")
+		t.Error("templates are offered with no library built")
 	}
-	on := &Handler{logger: testLogger(t), jobTemplateDir: t.TempDir()}
+	lib, err := templates.NewLibrary(templates.LibraryConfig{})
+	if err != nil {
+		t.Fatalf("NewLibrary: %v", err)
+	}
+	on := &Handler{logger: testLogger(t), templateLibrary: lib}
 	if on.jobTemplates() == nil || on.jobTemplateSubmitter() == nil {
-		t.Error("a configured directory did not produce both halves")
+		t.Error("a built library did not produce both halves")
 	}
 }
 
@@ -115,9 +124,10 @@ func TestJobTemplatesOffOrOnTogether(t *testing.T) {
 // would charge them to the wrong person.
 func TestTemplateSubmitterChecksTheAccount(t *testing.T) {
 	s := templateSubmitter{h: &Handler{logger: testLogger(t)}}
-	tmpl := sftpjobs.Template{
-		Ref:    sftpjobs.TemplateRef{Namespace: sftpjobs.NamespaceSystem, Name: "t"},
-		Submit: "executable = /bin/true\ntransfer_executable = false\n",
+	tmpl := templates.Template{
+		ID:       "t",
+		Columns:  []templates.Column{{Name: "x"}},
+		Contents: "executable = /bin/true\ntransfer_executable = false\n",
 	}
 	sub := &sftpjobs.Submission{Vars: []string{"a"}, Rows: []string{"1"}}
 
@@ -134,9 +144,10 @@ func TestTemplateSubmitterChecksTheAccount(t *testing.T) {
 // hold every job forever from being submitted once.
 func TestTemplateSubmitterRefusesABadTemplate(t *testing.T) {
 	s := templateSubmitter{h: &Handler{logger: testLogger(t)}}
-	tmpl := sftpjobs.Template{
-		Ref:    sftpjobs.TemplateRef{Namespace: sftpjobs.NamespaceSystem, Name: "t"},
-		Submit: "executable = /bin/true\n", // no transfer_executable = false
+	tmpl := templates.Template{
+		ID:       "t",
+		Columns:  []templates.Column{{Name: "x"}},
+		Contents: "executable = /bin/true\n", // no transfer_executable = false
 	}
 	sub := &sftpjobs.Submission{Vars: []string{"a"}, Rows: []string{"1"}}
 	ctx := htcondor.WithAuthenticatedUser(context.Background(), "alice")

@@ -694,7 +694,6 @@ type Handler struct {
 	sshGatewayIssuer     string
 	sshHostKeyFile       string
 	sshGatewayPublicHost string
-	jobTemplateDir       string
 	sandboxCacheDir      string
 	sandboxCacheMB       int
 	sandboxMaxGB         int
@@ -1120,11 +1119,6 @@ type HandlerConfig struct {
 	// SandboxCacheMB is that cache's budget in megabytes. Zero takes a
 	// default, negative disables the cache.
 	SandboxCacheMB int
-	// JobTemplateDir holds one subdirectory per system job template,
-	// each with a job.sub and optionally a README. Empty disables the
-	// templates tree, so the file service serves job output only.
-	JobTemplateDir string
-
 	// SandboxMaxGB is the largest job sandbox the file service will
 	// serve, in gigabytes. Zero takes a default, negative means no
 	// limit.
@@ -2156,7 +2150,6 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h.sshHostKeyFile = strings.TrimSpace(cfg.SSHHostKeyFile)
 	h.sshCAKeyFile = strings.TrimSpace(cfg.SSHCAKeyFile)
 	h.sshGatewayPublicHost = strings.TrimSpace(cfg.SSHGatewayPublicHost)
-	h.jobTemplateDir = strings.TrimSpace(cfg.JobTemplateDir)
 	h.sandboxCacheDir = strings.TrimSpace(cfg.SandboxCacheDir)
 	h.sandboxCacheMB = cfg.SandboxCacheMB
 	h.sandboxMaxGB = cfg.SandboxMaxGB

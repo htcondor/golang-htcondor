@@ -78,8 +78,20 @@ type Config struct {
 	// into a template's submit/ directory submits one job per row. With
 	// either unset the tree is absent, and the file service serves job
 	// output only.
+	//
+	// Templates is the shared library -- the same templates the web
+	// submit page and /api/v1/templates offer -- so *templates.Library
+	// goes here.
 	Templates TemplateSource
 	Submitter Submitter
+
+	// Limits bound a dropped CSV. The zero value takes the package
+	// defaults.
+	//
+	// Per-service rather than per-template: a template says what its
+	// columns are, and how large a file this access point will accept is
+	// the operator's business, not the template author's.
+	Limits CSVLimits
 
 	// Window is the retention for a streamed read. Zero takes
 	// sandboxfs.DefaultWindow.

@@ -41,11 +41,11 @@ import (
 // rsync and for almost nothing else.
 type upload struct {
 	fs   *FS
-	tref TemplateRef
+	tid  string
 	name string
 
 	mu sync.Mutex
-	// buf holds the file. Bounded by the template's byte limit plus one,
+	// buf holds the file. Bounded by the service's byte limit plus one,
 	// which is enough to know it was exceeded.
 	buf []byte
 	max int64
@@ -112,14 +112,14 @@ func (u *upload) Close() error {
 		// Recorded rather than dropped silently: somebody whose upload
 		// died deserves to find out from the status directory rather
 		// than by noticing no jobs ran.
-		u.fs.putStatus(u.tref, u.name, uploadStatus{
+		u.fs.putStatus(u.tid, u.name, uploadStatus{
 			State:    "incomplete",
-			Template: u.tref.ID(),
+			Template: u.tid,
 			Err:      fmt.Sprintf("the upload did not finish: %v", failed),
 		})
 		return nil
 	}
-	return u.fs.acceptCSV(u.tref, u.name, content)
+	return u.fs.acceptCSV(u.tid, u.name, content)
 }
 
 // uploadStatus is what a status entry says.
@@ -164,14 +164,14 @@ func (s uploadStatus) Text() string {
 // client renders as "could not close file" and nothing more. A
 // per-row complaint has to be readable somewhere, and that somewhere is
 // a file the client can fetch.
-func (f *FS) acceptCSV(tref TemplateRef, name string, content []byte) error {
+func (f *FS) acceptCSV(tid, name string, content []byte) error {
 	ctx := f.cfg.Context
 	digest := sha256.Sum256(content)
 	hexDigest := hex.EncodeToString(digest[:])
 
 	fail := func(err error) error {
-		f.putStatus(tref, name, uploadStatus{
-			State: "refused", Template: tref.ID(), Digest: hexDigest,
+		f.putStatus(tid, name, uploadStatus{
+			State: "refused", Template: tid, Digest: hexDigest,
 			Err: err.Error(), At: time.Now(),
 		})
 		return err
@@ -180,7 +180,7 @@ func (f *FS) acceptCSV(tref TemplateRef, name string, content []byte) error {
 	if f.cfg.Templates == nil || f.cfg.Submitter == nil {
 		return fail(errors.New("this access point does not accept job templates"))
 	}
-	tmpl, err := f.cfg.Templates.Template(ctx, f.cfg.Account, tref)
+	tmpl, err := lookupTemplate(f.cfg.Templates, f.cfg.Account, tid)
 	if err != nil {
 		return fail(err)
 	}
@@ -188,16 +188,16 @@ func (f *FS) acceptCSV(tref TemplateRef, name string, content []byte) error {
 	// The same bytes dropped twice are one submission. Without this a
 	// retried upload -- a client that reconnects, or somebody who runs
 	// the same command again -- silently doubles the jobs.
-	if cluster, ok := f.seenUpload(tref, hexDigest); ok {
-		f.putStatus(tref, name, uploadStatus{
-			State: "duplicate", Template: tref.ID(), Cluster: cluster,
+	if cluster, ok := f.seenUpload(tid, hexDigest); ok {
+		f.putStatus(tid, name, uploadStatus{
+			State: "duplicate", Template: tid, Cluster: cluster,
 			Digest: hexDigest, At: time.Now(),
 			Err: fmt.Sprintf("these exact bytes were already submitted as cluster %d", cluster),
 		})
 		return nil
 	}
 
-	sub, err := ParseCSV(bytes.NewReader(content), tmpl.Limits)
+	sub, err := ParseCSV(bytes.NewReader(content), f.cfg.Limits)
 	if err != nil {
 		return fail(err)
 	}
@@ -207,13 +207,13 @@ func (f *FS) acceptCSV(tref TemplateRef, name string, content []byte) error {
 		return fail(err)
 	}
 
-	f.rememberUpload(tref, hexDigest, cluster)
-	f.putStatus(tref, name, uploadStatus{
-		State: "submitted", Template: tref.ID(), Rows: len(sub.Rows),
+	f.rememberUpload(tid, hexDigest, cluster)
+	f.putStatus(tid, name, uploadStatus{
+		State: "submitted", Template: tid, Rows: len(sub.Rows),
 		Cluster: cluster, Digest: hexDigest, At: time.Now(),
 	})
 	f.logf("sftpjobs: %s submitted %d jobs as cluster %d from %s/%s",
-		f.cfg.Account, len(sub.Rows), cluster, tref.ID(), name)
+		f.cfg.Account, len(sub.Rows), cluster, tid, name)
 	return nil
 }
 
@@ -221,7 +221,7 @@ func (f *FS) acceptCSV(tref TemplateRef, name string, content []byte) error {
 type statusKey struct{ template, name string }
 
 // putStatus records an outcome.
-func (f *FS) putStatus(tref TemplateRef, name string, st uploadStatus) {
+func (f *FS) putStatus(tid, name string, st uploadStatus) {
 	if st.At.IsZero() {
 		st.At = time.Now()
 	}
@@ -230,25 +230,24 @@ func (f *FS) putStatus(tref TemplateRef, name string, st uploadStatus) {
 	if f.status == nil {
 		f.status = map[statusKey]uploadStatus{}
 	}
-	f.status[statusKey{tref.ID(), name}] = st
+	f.status[statusKey{tid, name}] = st
 }
 
 // statusFor reads one back.
-func (f *FS) statusFor(tref TemplateRef, name string) (uploadStatus, bool) {
+func (f *FS) statusFor(tid, name string) (uploadStatus, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	st, ok := f.status[statusKey{tref.ID(), name}]
+	st, ok := f.status[statusKey{tid, name}]
 	return st, ok
 }
 
 // statusNames lists the entries for one template.
-func (f *FS) statusNames(tref TemplateRef) []string {
-	id := tref.ID()
+func (f *FS) statusNames(tid string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]string, 0, len(f.status))
 	for k := range f.status {
-		if k.template == id {
+		if k.template == tid {
 			out = append(out, k.name)
 		}
 	}
@@ -256,18 +255,18 @@ func (f *FS) statusNames(tref TemplateRef) []string {
 }
 
 // seenUpload reports a digest already submitted in this session.
-func (f *FS) seenUpload(tref TemplateRef, digest string) (int, bool) {
+func (f *FS) seenUpload(tid, digest string) (int, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	cluster, ok := f.submitted[statusKey{tref.ID(), digest}]
+	cluster, ok := f.submitted[statusKey{tid, digest}]
 	return cluster, ok
 }
 
-func (f *FS) rememberUpload(tref TemplateRef, digest string, cluster int) {
+func (f *FS) rememberUpload(tid, digest string, cluster int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.submitted == nil {
 		f.submitted = map[statusKey]int{}
 	}
-	f.submitted[statusKey{tref.ID(), digest}] = cluster
+	f.submitted[statusKey{tid, digest}] = cluster
 }

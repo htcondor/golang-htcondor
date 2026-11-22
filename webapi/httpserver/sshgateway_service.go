@@ -149,18 +149,23 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 	return nil
 }
 
-// jobTemplates is the template source, or nil when none is configured.
+// jobTemplates is the template source, or nil when there is none.
+//
+// The shared library, so a template authored once -- built in, in the
+// operator's catalog, or saved by a user on the submit page -- is
+// offered here too. Nothing is configured separately for this service;
+// it is the same catalog, under the same access rules.
 func (h *Handler) jobTemplates() sftpjobs.TemplateSource {
-	if h.jobTemplateDir == "" {
+	if h.templateLibrary == nil {
 		return nil
 	}
-	return sftpjobs.DirTemplates{Dir: h.jobTemplateDir}
+	return h.templateLibrary
 }
 
 // jobTemplateSubmitter pairs with it. Returned nil together with the
 // source, so the tree is absent rather than half-present.
 func (h *Handler) jobTemplateSubmitter() sftpjobs.Submitter {
-	if h.jobTemplateDir == "" {
+	if h.templateLibrary == nil {
 		return nil
 	}
 	return templateSubmitter{h: h}

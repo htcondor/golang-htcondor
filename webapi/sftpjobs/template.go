@@ -16,167 +16,99 @@ package sftpjobs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
-	"strings"
+
+	"github.com/htcondor/golang-htcondor/webapi/templates"
 )
 
-// A template is a submit description somebody drops a CSV onto.
+// A template is a submit description somebody drops a CSV onto, and it
+// is the same template the web submit page and /api/v1/templates
+// offer: templates.Template, from the one library.
 //
-// Templates live in two namespaces, and the distinction is who may write
-// them rather than who may use them:
+// That reuse is the point. A template is authored once -- as a built-in,
+// in the operator's catalog, or saved by a user -- and every surface
+// offers it. The library already answers the two questions this tree
+// asks, with the access rules attached: All(owner) is what somebody may
+// use, Get(id, owner) resolves one id for them.
 //
-//	system:blast          published by the access point, read-only
-//	user:alice:myjob      alice's own
+// The tree spells a template as one directory level:
 //
-// Those are the identifiers -- what appears in a log, in config, and on
-// the submitted job. The SFTP tree spells the same thing as directory
-// levels:
+//	/templates/hello-world/
 //
-//	/templates/system/blast/
-//	/templates/user/alice/myjob/
+// which is the library's own id, the same string the REST endpoints and
+// the submit page use. There is no second namespace: who may write a
+// template is Source and Owner on the template, and who may see it is
+// Visibility, both decided in the library.
+
+// TemplateSource is the part of *templates.Library this package needs.
 //
-// Two spellings for one thing, mapped in one place. The path form is
-// what the tree uses because a ":" in a path component breaks Windows
-// clients mirroring remote names onto local files, and is awkward in
-// every shell; the identifier form is what everything else uses because
-// it is one string.
-
-// Namespaces.
-const (
-	// NamespaceSystem holds templates the access point publishes.
-	NamespaceSystem = "system"
-	// NamespaceUser holds an account's own.
-	NamespaceUser = "user"
-)
-
-// TemplateRef names a template.
-type TemplateRef struct {
-	// Namespace is NamespaceSystem or NamespaceUser.
-	Namespace string
-	// Owner is the account a user template belongs to, and is empty for
-	// a system template.
-	Owner string
-	// Name is the template's own name.
-	Name string
-}
-
-// ID is the identifier form: "system:blast", "user:alice:myjob".
-func (r TemplateRef) ID() string {
-	if r.Namespace == NamespaceUser {
-		return NamespaceUser + ":" + r.Owner + ":" + r.Name
-	}
-	return r.Namespace + ":" + r.Name
-}
-
-func (r TemplateRef) String() string { return r.ID() }
-
-// Valid reports whether the ref is one this package will act on.
-func (r TemplateRef) Valid() error {
-	switch r.Namespace {
-	case NamespaceSystem:
-		if r.Owner != "" {
-			return fmt.Errorf("a %s template has no owner, but this one names %q",
-				NamespaceSystem, r.Owner)
-		}
-	case NamespaceUser:
-		if err := checkTemplateName(r.Owner); err != nil {
-			return fmt.Errorf("owner %q: %w", r.Owner, err)
-		}
-	default:
-		return fmt.Errorf("%q is not a template namespace; use %q or %q",
-			r.Namespace, NamespaceSystem, NamespaceUser)
-	}
-	return checkTemplateName(r.Name)
-}
-
-// checkTemplateName accepts a name that is one safe path component and
-// one usable identifier piece.
-//
-// Refused rather than mapped to something safe: a name is how somebody
-// addresses their template, and two names folding onto one would let one
-// template answer for another.
-func checkTemplateName(name string) error {
-	if name == "" {
-		return errors.New("the name is empty")
-	}
-	if len(name) > 64 {
-		return errors.New("the name is longer than 64 characters")
-	}
-	if name == "." || name == ".." {
-		return fmt.Errorf("%q is not a name", name)
-	}
-	for _, r := range name {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9',
-			r == '.', r == '_', r == '-':
-		default:
-			return fmt.Errorf("%q contains %q; use letters, digits, '.', '_' or '-'", name, r)
-		}
-	}
-	if strings.HasPrefix(name, "-") {
-		// A leading dash reaches a command line as an option.
-		return fmt.Errorf("%q starts with a dash", name)
-	}
-	return nil
-}
-
-// Template is a submit description and what goes with it.
-type Template struct {
-	Ref TemplateRef
-	// Submit is the submit description's text. It is expected to end in
-	// a `queue <vars> from` statement whose variables a dropped CSV's
-	// header names.
-	Submit string
-	// Readme, when the template has one, is served beside it so somebody
-	// can read what the CSV's columns are meant to be before guessing.
-	Readme string
-	// Limits bound a CSV dropped on this template. The zero value takes
-	// the package defaults.
-	Limits CSVLimits
-}
-
-// TemplateSource lists and reads templates.
-//
-// A hook, because where templates live is a deployment's choice: a
-// directory the operator stages, a table, a git checkout. The account is
-// passed so a source can answer "what may this person use" rather than
-// "what exists", which is the question the tree asks.
+// An interface only so a test can stand in a small catalog without a
+// SQLite store; *templates.Library satisfies it as written, and nothing
+// else is expected to implement it.
 type TemplateSource interface {
-	// Templates lists what account may use: the system templates plus
-	// that account's own.
-	Templates(ctx context.Context, account string) ([]TemplateRef, error)
-	// Template reads one. A ref naming a template the account may not
-	// use returns an error wrapping fs.ErrNotExist, so the tree reports
-	// a missing path rather than a refusal -- which is also all a
-	// listing would have shown them.
-	Template(ctx context.Context, account string, ref TemplateRef) (Template, error)
+	// All lists the templates account may use: their own, any another
+	// user shared, the operator's catalog and the built-ins.
+	All(owner string) []templates.Template
+	// Get resolves one id for account. The library's precedence applies:
+	// the caller's own first, then operator and built-in, then another
+	// user's shared template.
+	Get(id, owner string) (templates.Template, bool)
 }
 
 // Submitter turns a template and a CSV into one cluster of jobs.
 type Submitter interface {
 	// SubmitRows submits sub against t on account's behalf and returns
 	// the cluster id.
-	SubmitRows(ctx context.Context, account string, t Template, sub *Submission) (int, error)
+	SubmitRows(ctx context.Context, account string, t templates.Template, sub *Submission) (int, error)
 }
 
-// ErrNoTemplate is what a source returns for a template an account
+// ErrNoTemplate is what a lookup returns for a template an account
 // cannot use, whether or not it exists.
+//
+// One error for both cases on purpose: a listing would not have shown
+// them the template either, so "no such path" is the whole truth
+// available to them.
 var ErrNoTemplate = fmt.Errorf("sftpjobs: no such template: %w", fs.ErrNotExist)
 
-// refForAccount narrows a ref to what the caller may name.
+// visibleTemplates is what the tree lists: one id per entry.
 //
-// A user template is only ever the CALLER's own: the tree shows
-// /templates/user/<account>/ and nothing else, so a path naming another
-// account is not a refusal to explain but a path that does not exist.
-// Enforced here rather than in the source, so a source cannot forget.
-func refForAccount(account string, ref TemplateRef) error {
-	if err := ref.Valid(); err != nil {
-		return err
+// All concatenates its sources rather than resolving them, so one id can
+// appear twice -- a user's own template and another user's shared one of
+// the same name, or a legacy row shadowing a built-in. A directory
+// cannot hold two entries of one name, so the duplicates are dropped
+// here.
+//
+// Only the id is used, which is why nothing is resolved at this point:
+// WHICH template an id names is Get's business, and the tree asks it
+// when somebody opens the directory rather than when it lists the level
+// above. Resolving here as well would be a lookup per entry whose answer
+// is thrown away.
+func visibleTemplates(src TemplateSource, account string) []templates.Template {
+	all := src.All(account)
+	out := make([]templates.Template, 0, len(all))
+	seen := make(map[string]struct{}, len(all))
+	for _, t := range all {
+		if t.ID == "" {
+			continue
+		}
+		if _, dup := seen[t.ID]; dup {
+			continue
+		}
+		seen[t.ID] = struct{}{}
+		out = append(out, t)
 	}
-	if ref.Namespace == NamespaceUser && ref.Owner != account {
-		return fmt.Errorf("%w: %s", ErrNoTemplate, ref)
+	return out
+}
+
+// lookupTemplate resolves one id, or reports a path that is not there.
+func lookupTemplate(src TemplateSource, account, id string) (templates.Template, error) {
+	if src == nil {
+		return templates.Template{}, ErrNoTemplate
 	}
-	return nil
+	t, ok := src.Get(id, account)
+	if !ok {
+		return templates.Template{}, fmt.Errorf("%w: %s", ErrNoTemplate, id)
+	}
+	return t, nil
 }

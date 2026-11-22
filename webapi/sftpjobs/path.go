@@ -69,11 +69,10 @@ const (
 	kindJobFile
 	kindJobTar
 
-	// The templates tree.
+	// The templates tree. kindTemplates stays first: fs.go dispatches
+	// on `kind >= kindTemplates`.
 	kindTemplates    // /templates
-	kindNamespace    // /templates/system, /templates/user
-	kindUserOwner    // /templates/user/<account>
-	kindTemplate     // a template's own directory
+	kindTemplate     // /templates/<id>
 	kindTemplateFile // job.sub or README inside it
 	kindSubmitDir    // .../submit
 	kindSubmitFile   // .../submit/<name>
@@ -89,8 +88,9 @@ type ref struct {
 	// name is the sandbox-relative path for kindJobFile, and the file
 	// name for kindTemplateFile, kindSubmitFile and kindStatusFile.
 	name string
-	// tref is set for every templates-tree kind below kindNamespace.
-	tref TemplateRef
+	// tid is the template's library id, set for every templates-tree
+	// kind below kindTemplates.
+	tid string
 }
 
 // parsePath reads a request path.
@@ -153,43 +153,22 @@ func parseTemplatePath(p string, rest []string) (ref, error) {
 	if len(rest) == 0 {
 		return ref{kind: kindTemplates}, nil
 	}
-	ns := rest[0]
-	if ns != NamespaceSystem && ns != NamespaceUser {
-		return missing()
-	}
-	if len(rest) == 1 {
-		return ref{kind: kindNamespace, tref: TemplateRef{Namespace: ns}}, nil
-	}
-
-	tref := TemplateRef{Namespace: ns}
-	var tail []string
-	if ns == NamespaceUser {
-		tref.Owner = rest[1]
-		if len(rest) == 2 {
-			if checkTemplateName(tref.Owner) != nil {
-				return missing()
-			}
-			return ref{kind: kindUserOwner, tref: tref}, nil
-		}
-		tref.Name, tail = rest[2], rest[3:]
-	} else {
-		tref.Name, tail = rest[1], rest[2:]
-	}
-	if tref.Valid() != nil {
+	id, tail := rest[0], rest[1:]
+	if !plausibleTemplateID(id) {
 		return missing()
 	}
 
 	switch len(tail) {
 	case 0:
-		return ref{kind: kindTemplate, tref: tref}, nil
+		return ref{kind: kindTemplate, tid: id}, nil
 	case 1:
 		switch tail[0] {
 		case SubmitFileName, ReadmeFileName:
-			return ref{kind: kindTemplateFile, tref: tref, name: tail[0]}, nil
+			return ref{kind: kindTemplateFile, tid: id, name: tail[0]}, nil
 		case submitDirName:
-			return ref{kind: kindSubmitDir, tref: tref}, nil
+			return ref{kind: kindSubmitDir, tid: id}, nil
 		case statusDirName:
-			return ref{kind: kindStatusDir, tref: tref}, nil
+			return ref{kind: kindStatusDir, tid: id}, nil
 		}
 		return missing()
 	case 2:
@@ -200,12 +179,23 @@ func parseTemplatePath(p string, rest []string) (ref, error) {
 		}
 		switch tail[0] {
 		case submitDirName:
-			return ref{kind: kindSubmitFile, tref: tref, name: tail[1]}, nil
+			return ref{kind: kindSubmitFile, tid: id, name: tail[1]}, nil
 		case statusDirName:
-			return ref{kind: kindStatusFile, tref: tref, name: tail[1]}, nil
+			return ref{kind: kindStatusFile, tid: id, name: tail[1]}, nil
 		}
 	}
 	return missing()
+}
+
+// plausibleTemplateID bounds a component before it becomes a lookup key.
+//
+// Deliberately not a copy of the library's id rule: whether a template
+// exists is the library's answer, and a second spelling of the pattern
+// here could refuse an id the library would accept. This only keeps an
+// absurd component from being carried around as a map key, and rules out
+// the two names that are never an id.
+func plausibleTemplateID(id string) bool {
+	return id != "" && len(id) <= 64 && id != "." && id != ".."
 }
 
 // checkUploadName accepts a name for a dropped file.

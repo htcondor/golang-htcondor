@@ -22,6 +22,7 @@ import (
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
+	"github.com/htcondor/golang-htcondor/webapi/templates"
 )
 
 // templateSubmitter submits a CSV's rows against a template.
@@ -41,7 +42,7 @@ type templateSubmitter struct{ h *Handler }
 // a template before any of this runs, which is the only reason this is
 // safe to call.
 func (s templateSubmitter) SubmitRows(ctx context.Context, account string,
-	t sftpjobs.Template, sub *sftpjobs.Submission) (int, error) {
+	t templates.Template, sub *sftpjobs.Submission) (int, error) {
 	// First, and before anything is built or dialed. The context is the
 	// SSH channel's: it carries the caller's credential, so the schedd
 	// attributes the jobs to whoever that is. Submitting as somebody
@@ -65,7 +66,7 @@ func (s templateSubmitter) SubmitRows(ctx context.Context, account string,
 		return 0, err
 	}
 	s.h.logger.Info(logging.DestinationHTTP, "Submitted a job template",
-		"account", account, "template", t.Ref.ID(),
+		"account", account, "template", t.ID,
 		"cluster", cluster, "rows", len(sub.Rows), "procs", len(procs))
 	return cluster, nil
 }

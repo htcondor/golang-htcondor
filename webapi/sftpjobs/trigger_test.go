@@ -27,18 +27,19 @@ import (
 
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/webapi/sandboxfs"
+	"github.com/htcondor/golang-htcondor/webapi/templates"
 )
 
 // recordingSubmitter stands in for the schedd.
 type recordingSubmitter struct {
 	mu      sync.Mutex
 	calls   []*Submission
-	tmpls   []Template
+	tmpls   []templates.Template
 	next    int
 	failErr error
 }
 
-func (s *recordingSubmitter) SubmitRows(_ context.Context, _ string, t Template, sub *Submission) (int, error) {
+func (s *recordingSubmitter) SubmitRows(_ context.Context, _ string, t templates.Template, sub *Submission) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failErr != nil {
@@ -56,32 +57,13 @@ func (s *recordingSubmitter) count() int {
 	return len(s.calls)
 }
 
-func (s *recordingSubmitter) last() (*Submission, Template) {
+func (s *recordingSubmitter) last() (*Submission, templates.Template) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.calls) == 0 {
-		return nil, Template{}
+		return nil, templates.Template{}
 	}
 	return s.calls[len(s.calls)-1], s.tmpls[len(s.tmpls)-1]
-}
-
-// fixedTemplates is a TemplateSource holding one system template.
-type fixedTemplates struct {
-	t Template
-}
-
-func (f fixedTemplates) Templates(context.Context, string) ([]TemplateRef, error) {
-	return []TemplateRef{f.t.Ref}, nil
-}
-
-func (f fixedTemplates) Template(_ context.Context, account string, ref TemplateRef) (Template, error) {
-	if err := refForAccount(account, ref); err != nil {
-		return Template{}, err
-	}
-	if ref != f.t.Ref {
-		return Template{}, ErrNoTemplate
-	}
-	return f.t, nil
 }
 
 type triggerFS struct {
@@ -96,16 +78,11 @@ func newTriggerFS(t *testing.T) *triggerFS {
 		t.Fatalf("sandboxfs.New: %v", err)
 	}
 	sub := &recordingSubmitter{}
-	tmpl := Template{
-		Ref:    TemplateRef{Namespace: NamespaceSystem, Name: "blast"},
-		Submit: "executable = /usr/bin/blastn\nqueue sample, reads from\n",
-		Readme: "columns: sample, reads\n",
-	}
 	f, err := New(Config{
 		Store:     store,
 		Account:   testAccount,
 		Context:   htcondor.WithAuthenticatedUser(context.Background(), testAccount),
-		Templates: fixedTemplates{t: tmpl},
+		Templates: fakeCatalog{public: []templates.Template{blastTemplate()}},
 		Submitter: sub,
 		Logf:      t.Logf,
 	})
@@ -115,7 +92,7 @@ func newTriggerFS(t *testing.T) *triggerFS {
 	return &triggerFS{FS: f, sub: sub}
 }
 
-const blastDir = "/templates/system/blast"
+const blastDir = "/templates/blast"
 
 // TestTemplateTreeShape walks the tree a client sees.
 func TestTemplateTreeShape(t *testing.T) {
@@ -124,16 +101,10 @@ func TestTemplateTreeShape(t *testing.T) {
 	if got := listNames(t, f.FS, "/"); len(got) != 2 {
 		t.Errorf("/ = %v, want outputs and templates", got)
 	}
-	if got := listNames(t, f.FS, "/templates"); len(got) != 2 ||
-		got[0] != "system/" || got[1] != "user/" {
-		t.Errorf("/templates = %v, want [system/ user/]", got)
-	}
-	if got := listNames(t, f.FS, "/templates/system"); len(got) != 1 || got[0] != "blast/" {
-		t.Errorf("/templates/system = %v, want [blast/]", got)
-	}
-	// Only ever your own account below user/.
-	if got := listNames(t, f.FS, "/templates/user"); len(got) != 1 || got[0] != testAccount+"/" {
-		t.Errorf("/templates/user = %v, want just your own account", got)
+	// One directory per template, named by its library id -- the same id
+	// the web submit page and /api/v1/templates use.
+	if got := listNames(t, f.FS, "/templates"); len(got) != 1 || got[0] != "blast/" {
+		t.Errorf("/templates = %v, want [blast/]", got)
 	}
 	want := []string{"README", "job.sub", "status/", "submit/"}
 	got := listNames(t, f.FS, blastDir)
@@ -155,7 +126,7 @@ func TestTemplateFilesAreReadable(t *testing.T) {
 	f := newTriggerFS(t)
 	for _, tc := range []struct{ name, wants string }{
 		{"job.sub", "blastn"},
-		{"README", "columns"},
+		{"README", "sample"},
 	} {
 		fi, err := statOne(t, f.FS, blastDir+"/"+tc.name)
 		if err != nil {
@@ -208,8 +179,8 @@ func TestCSVTriggerSubmits(t *testing.T) {
 		t.Fatalf("submitted %d times, want 1", f.sub.count())
 	}
 	sub, tmpl := f.sub.last()
-	if tmpl.Ref.ID() != "system:blast" {
-		t.Errorf("submitted against %q", tmpl.Ref.ID())
+	if tmpl.ID != "blast" {
+		t.Errorf("submitted against %q", tmpl.ID)
 	}
 	if len(sub.Vars) != 2 || sub.Vars[0] != "sample" {
 		t.Errorf("vars = %v", sub.Vars)
@@ -220,7 +191,7 @@ func TestCSVTriggerSubmits(t *testing.T) {
 
 	// And the outcome is readable.
 	st := readStatus(t, f.FS, blastDir+"/status/run1.csv")
-	for _, want := range []string{"state: submitted", "rows: 3", "cluster: 100", "system:blast"} {
+	for _, want := range []string{"state: submitted", "rows: 3", "cluster: 100", "template: blast"} {
 		if !strings.Contains(st, want) {
 			t.Errorf("status %q does not contain %q", st, want)
 		}
@@ -368,9 +339,8 @@ func TestUploadsOnlyIntoSubmit(t *testing.T) {
 		blastDir + "/README",
 		blastDir + "/status/x.csv",
 		blastDir,
-		"/templates/system/nope/submit/x.csv",
-		"/templates/user/someone-else/t/submit/x.csv",
-		"/templates/system/blast/submit/../../job.sub",
+		"/templates/nope/submit/x.csv",
+		"/templates/blast/submit/../../job.sub",
 	} {
 		if _, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: p}); err == nil {
 			t.Errorf("Filewrite(%q) was accepted", p)

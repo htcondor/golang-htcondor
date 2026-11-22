@@ -138,12 +138,19 @@ clients read forwards.
 
 ## Job templates
 
-With `HTTP_API_JOB_TEMPLATE_DIR` set, the file service also offers
-templates: drop a CSV into one and it becomes a cluster of jobs, one per row.
+Where this access point offers job templates, the file service offers them
+too: drop a CSV into one and it becomes a cluster of jobs, one per row.
+
+These are the same templates the web **Submit** page and
+`/api/v1/templates` offer — built-in ones, whatever
+`HTTP_API_TEMPLATE_GLOBAL_PATH` adds, and the ones users save for
+themselves. Nothing is configured separately for the file service, and a
+template authored once is offered everywhere. An access point with the
+templates feature disabled has no `templates/` directory here either.
 
 ```sh
 sftp -P 2222 +jobs@ap.example.edu
-# sftp> cd templates/system/blast
+# sftp> cd templates/blast
 # sftp> get README              # what the columns are
 # sftp> put runs.csv submit/    # one job per row
 # sftp> get status/runs.csv     # what happened
@@ -151,16 +158,25 @@ sftp -P 2222 +jobs@ap.example.edu
 
 | Path | What it is |
 | --- | --- |
-| `templates/system/<name>/` | published by this access point, read-only |
-| `templates/user/<you>/<name>/` | your own (not yet writable over SFTP) |
+| `templates/<id>/` | one directory per template you can use, named by its template id |
 | `.../job.sub` | the submit description |
-| `.../README` | what the CSV's columns mean, if the author wrote one |
+| `.../README` | generated: the template's name, description and columns |
 | `.../submit/` | drop a CSV here; write-only |
 | `.../status/` | one entry per upload |
 
-**The CSV's header names the submit variables.** A template whose `job.sub`
-uses `$(sample)` and `$(reads)` is driven by a CSV headed `sample,reads`.
-There is no separate mapping file to keep in step.
+Which templates appear is the library's answer, not this service's: the
+built-ins, the operator's catalog, your own saved templates, and any another
+user shared. Somebody else's private template is not listed and is not
+reachable by naming it.
+
+**The CSV's header names the template's columns.** A template whose columns
+are `sample` and `reads` — the same `$(sample)` and `$(reads)` its body
+expands — is driven by a CSV headed `sample,reads`, in any order. A header
+that misspells a column, omits one or adds one is refused naming the
+difference, because the alternative is a submission in which `$(sample)`
+expands to nothing: the right number of jobs, doing the wrong work. The
+`README` lists the columns, so there is no separate mapping file to keep in
+step.
 
 The upload is submitted when your client closes the file cleanly. An
 interrupted transfer is recorded as `incomplete` and submits nothing, and the
@@ -174,25 +190,38 @@ a line break, or a row that is blank or starts with `#` is rejected naming the
 row and the column. Each of those would otherwise make the submit parser do
 something other than what the spreadsheet says.
 
-### Writing a template
+### Which templates can be used here
 
-Two rules, both enforced:
+A template is shared with the web submit page, which can do things this
+surface cannot, so a template that works there may be refused here. The
+`README` says so, and so does `status/` if you drop a file anyway. Three
+requirements, all enforced before an upload is accepted:
 
+- **Columns are required.** The CSV's header names them and its rows fill
+  them. A template with none has nothing for a CSV to vary; the submit page's
+  answer for that case — "run N copies" — is not something a dropped file
+  expresses.
 - **No `queue` statement.** The CSV's columns supply one; two would submit the
-  template's own idea of the work alongside the CSV's.
+  template's own idea of the work alongside the CSV's. The submit page appends
+  one too, so a template in the library should not carry one anyway.
 - **`transfer_executable = false` is required.** Output is read from the
   schedd's spool, so the submission spools — which is also what keeps the job
   in the queue long enough to fetch. But a spooling job whose executable needs
   transferring waits on `HoldReasonCode 16` for an upload a CSV never carries,
   and waits forever. Put the executable on the execute node or in a container.
 
-The same reasoning applies to inputs: a CSV carries no files, so anything in
-`transfer_input_files` has to be reachable from the execute node — a URL, an
-`osdf://` path, or shared storage. This is not enforced, because a URL there is
-both legitimate and common.
+A template's **input files** cannot be delivered here, and such a template is
+refused. The submit page posts them after submitting; an SFTP drop has no
+second call, and a job whose script never arrived fails in a way that looks
+like the script is wrong. Use the web page for those.
 
-Every job carries `SFTPJobTemplate = "system:<name>"`, so `condor_q -af
-SFTPJobTemplate` says where a cluster came from.
+The same reasoning applies to inputs named in the body: a CSV carries no
+files, so anything in `transfer_input_files` has to be reachable from the
+execute node — a URL, an `osdf://` path, or shared storage. This is not
+enforced, because a URL there is both legitimate and common.
+
+Every job carries `SFTPJobTemplate = "<id>"`, so `condor_q -af
+SFTPJobTemplate` says which template a cluster came from.
 
 ## The approval screen
 
@@ -269,7 +298,6 @@ belongs to one database, so replicas would present different host keys.
 | `HTTP_API_SSH_GATEWAY_SESSION_CPUS` | CPUs a session created on demand requests. Default 1. |
 | `HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB` | Memory for the same. Default 1024. |
 | `HTTP_API_SSH_GATEWAY_SESSION_DISK_MB` | Disk for the same. Default 8192 — a VS Code Remote server does not fit in less. |
-| `HTTP_API_JOB_TEMPLATE_DIR` | Holds one subdirectory per system template, each with a `job.sub` and optionally a `README`. Unset disables the templates tree, leaving the file service to serve job output only. A subdirectory without a `job.sub` is skipped, so staging one in place is safe. |
 | `HTTP_API_SANDBOX_CACHE_DIR` | Where `+jobs` keeps output it has already fetched. Unset means no cache: every read fetches the sandbox again. Must be real local storage with room for the budget below — on `tmpfs` the "cache" is memory the kernel cannot reclaim. Its contents are discarded at every start and may be deleted by hand while the server runs. |
 | `HTTP_API_SANDBOX_CACHE_MB` | That cache's budget in megabytes. Default 4096. Negative disables the cache. |
 | `HTTP_API_SANDBOX_MAX_GB` | Largest job sandbox `+jobs` will serve. Default 8. Negative means no limit. |
