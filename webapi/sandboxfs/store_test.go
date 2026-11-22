@@ -50,6 +50,8 @@ type fakeFetcher struct {
 	block   chan struct{}
 	entered chan struct{}
 	once    sync.Once
+
+	mu sync.Mutex
 }
 
 func newFakeFetcher(files map[string][]byte, dirs ...string) *fakeFetcher {
@@ -69,11 +71,18 @@ func (f *fakeFetcher) FetchSandbox(_ context.Context, _, _ int, w io.Writer,
 	if f.block != nil {
 		<-f.block
 	}
+	f.mu.Lock()
+	advertise, advertiseKnown := f.advertise, f.advertiseKnown
+	f.mu.Unlock()
 	if onPreamble != nil {
-		if err := onPreamble(f.advertise, f.advertiseKnown); err != nil {
+		if err := onPreamble(advertise, advertiseKnown); err != nil {
 			return err
 		}
 	}
+	f.mu.Lock()
+	files := f.files
+	f.mu.Unlock()
+
 	tw := tar.NewWriter(w)
 	for _, d := range f.dirs {
 		if err := tw.WriteHeader(&tar.Header{
@@ -82,8 +91,8 @@ func (f *fakeFetcher) FetchSandbox(_ context.Context, _, _ int, w io.Writer,
 			return err
 		}
 	}
-	for _, name := range sortedKeys(f.files) {
-		body := f.files[name]
+	for _, name := range sortedKeys(files) {
+		body := files[name]
 		if err := tw.WriteHeader(&tar.Header{
 			Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body)),
 		}); err != nil {
@@ -95,6 +104,18 @@ func (f *fakeFetcher) FetchSandbox(_ context.Context, _, _ int, w io.Writer,
 		f.bytesSent.Add(int64(len(body)))
 	}
 	return tw.Close()
+}
+
+// setFiles replaces the sandbox between passes, so a test can make the
+// wire disagree with a layout already built.
+func (f *fakeFetcher) setFiles(files map[string][]byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files = files
+	f.advertise = 0
+	for _, b := range files {
+		f.advertise += int64(len(b))
+	}
 }
 
 func sortedKeys(m map[string][]byte) []string {
@@ -114,6 +135,20 @@ func sortedKeys(m map[string][]byte) []string {
 	return out
 }
 
+// newStore builds a Store, failing the test rather than returning an
+// error at every call site.
+func newStore(t *testing.T, f Fetcher, cfg Config) *Store {
+	t.Helper()
+	if cfg.Logf == nil {
+		cfg.Logf = t.Logf
+	}
+	s, err := New(f, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return s
+}
+
 func sandbox(n int) map[string][]byte {
 	m := map[string][]byte{}
 	for i := 0; i < n; i++ {
@@ -129,7 +164,7 @@ func TestLayoutRecordsNamesAndSizes(t *testing.T) {
 		"out.txt":     []byte("hello"),
 		"sub/big.dat": bytes.Repeat([]byte("ab"), 1000),
 	}, "sub")
-	s := New(f, Config{Logf: t.Logf})
+	s := newStore(t, f, Config{Logf: t.Logf})
 
 	l, err := s.Layout(context.Background(), 12, 0)
 	if err != nil {
@@ -161,7 +196,7 @@ func TestLayoutRecordsNamesAndSizes(t *testing.T) {
 // whole thing this exists to avoid.
 func TestLayoutIsCached(t *testing.T) {
 	f := newFakeFetcher(sandbox(3))
-	s := New(f, Config{Logf: t.Logf})
+	s := newStore(t, f, Config{Logf: t.Logf})
 
 	for i := 0; i < 4; i++ {
 		if _, err := s.Layout(context.Background(), 7, 1); err != nil {
@@ -186,7 +221,7 @@ func TestLayoutSharesOnePass(t *testing.T) {
 	f := newFakeFetcher(sandbox(5))
 	f.block = make(chan struct{})
 	f.entered = make(chan struct{})
-	s := New(f, Config{Logf: t.Logf})
+	s := newStore(t, f, Config{Logf: t.Logf})
 
 	const callers = 8
 	var wg sync.WaitGroup
@@ -227,7 +262,7 @@ func TestLayoutSharesOnePass(t *testing.T) {
 func TestOversizedSandboxRefusedBeforeAnyBytes(t *testing.T) {
 	f := newFakeFetcher(sandbox(4))
 	f.advertise = 1 << 20
-	s := New(f, Config{MaxSandboxBytes: 1024, Logf: t.Logf})
+	s := newStore(t, f, Config{MaxSandboxBytes: 1024, Logf: t.Logf})
 
 	_, err := s.Layout(context.Background(), 3, 2)
 	var tooLarge *TooLargeError
@@ -263,7 +298,7 @@ func TestUnadvertisedSizeRefusedUnlessAllowed(t *testing.T) {
 			f := newFakeFetcher(sandbox(2))
 			f.advertiseKnown = false
 			f.advertise = 0
-			s := New(f, Config{MaxSandboxBytes: 1 << 20, ServeUnadvertisedSize: tc.serve, Logf: t.Logf})
+			s := newStore(t, f, Config{MaxSandboxBytes: 1 << 20, ServeUnadvertisedSize: tc.serve, Logf: t.Logf})
 
 			l, err := s.Layout(context.Background(), 1, 0)
 			var unknown *SizeUnknownError
@@ -296,7 +331,7 @@ func TestUnadvertisedSizeRefusedUnlessAllowed(t *testing.T) {
 func TestNoLimitServesAnySize(t *testing.T) {
 	f := newFakeFetcher(sandbox(2))
 	f.advertise = 1 << 50
-	s := New(f, Config{MaxSandboxBytes: -1, Logf: t.Logf})
+	s := newStore(t, f, Config{MaxSandboxBytes: -1, Logf: t.Logf})
 	if _, err := s.Layout(context.Background(), 1, 0); err != nil {
 		t.Fatalf("Layout: %v", err)
 	}
@@ -306,7 +341,7 @@ func TestNoLimitServesAnySize(t *testing.T) {
 // whose size is fine but whose name count is not.
 func TestTooManyEntriesRefused(t *testing.T) {
 	f := newFakeFetcher(sandbox(50))
-	s := New(f, Config{MaxEntriesPerJob: 10, Logf: t.Logf})
+	s := newStore(t, f, Config{MaxEntriesPerJob: 10, Logf: t.Logf})
 
 	_, err := s.Layout(context.Background(), 1, 0)
 	if !errors.Is(err, ErrTooManyEntries) {
@@ -321,7 +356,7 @@ func TestTooManyEntriesRefused(t *testing.T) {
 // entries across jobs, and that the least recently used job goes first.
 func TestLayoutCacheEvictsByEntryCount(t *testing.T) {
 	f := newFakeFetcher(sandbox(4))
-	s := New(f, Config{MaxCachedEntries: 10, Logf: t.Logf})
+	s := newStore(t, f, Config{MaxCachedEntries: 10, Logf: t.Logf})
 	ctx := context.Background()
 
 	// Three jobs of four entries each is twelve, over the ten budget.
@@ -353,7 +388,7 @@ func TestLayoutCacheEvictsByEntryCount(t *testing.T) {
 // guarantee. Evicting everything and remaining over it helps nobody.
 func TestOneOversizedLayoutIsStillCached(t *testing.T) {
 	f := newFakeFetcher(sandbox(20))
-	s := New(f, Config{MaxCachedEntries: 5, Logf: t.Logf})
+	s := newStore(t, f, Config{MaxCachedEntries: 5, Logf: t.Logf})
 
 	if _, err := s.Layout(context.Background(), 1, 0); err != nil {
 		t.Fatalf("Layout: %v", err)
@@ -437,7 +472,7 @@ func TestSkippedEntryTypes(t *testing.T) {
 // TestFetchErrorPropagates: a transport failure is not an empty sandbox.
 func TestFetchErrorPropagates(t *testing.T) {
 	boom := errors.New("schedd went away")
-	s := New(errFetcher{boom}, Config{Logf: t.Logf})
+	s := newStore(t, errFetcher{boom}, Config{Logf: t.Logf})
 	if _, err := s.Layout(context.Background(), 1, 0); !errors.Is(err, boom) {
 		t.Fatalf("Layout error = %v, want %v", err, boom)
 	}

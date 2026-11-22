@@ -81,6 +81,15 @@ type Config struct {
 	// is the cost the limit exists to avoid.
 	ServeUnadvertisedSize bool
 
+	// CacheDir is where the byte cache keeps files. Required when
+	// CacheBytes is positive; its contents are discarded at startup.
+	CacheDir string
+
+	// CacheBytes is the byte cache's budget. Zero or less disables it, so
+	// every read streams. See dataCache: the count is a target, not a
+	// guarantee.
+	CacheBytes int64
+
 	// Logf, if set, receives debug logging.
 	Logf func(format string, args ...any)
 }
@@ -153,7 +162,14 @@ type Store struct {
 	fetcher Fetcher
 	cfg     Config
 
+	data *dataCache
+
+	// group shares a layout pass; fill shares a cache-filling pass. Kept
+	// apart because one is cheap to repeat and the other is not: two
+	// layout passes waste a drain whose result is a few kilobytes, while
+	// a second fill would re-stage files the first already published.
 	group singleflight.Group
+	fill  singleflight.Group
 
 	mu      sync.Mutex
 	index   map[jobKey]*list.Element
@@ -171,13 +187,22 @@ type cacheEntry struct {
 }
 
 // New returns a Store that reads sandboxes through f.
-func New(f Fetcher, cfg Config) *Store {
+//
+// Returns an error only for the byte cache's directory, which has to be
+// usable before anything is served; with CacheBytes at zero there is no
+// directory and no error.
+func New(f Fetcher, cfg Config) (*Store, error) {
+	data, err := newDataCache(cfg.CacheDir, cfg.CacheBytes, cfg.Logf)
+	if err != nil {
+		return nil, err
+	}
 	return &Store{
 		fetcher: f,
 		cfg:     cfg,
+		data:    data,
 		index:   map[jobKey]*list.Element{},
 		lru:     list.New(),
-	}
+	}, nil
 }
 
 // Layout returns job cluster.proc's sandbox layout, building it from one
@@ -212,13 +237,17 @@ func (s *Store) Layout(ctx context.Context, cluster, proc int) (*Layout, error) 
 	return v.(*Layout), nil
 }
 
-// Forget drops a cached layout.
+// Forget drops everything cached for a job: its layout and its bytes.
 func (s *Store) Forget(cluster, proc int) {
 	key := jobKey{cluster, proc}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.removeLocked(key)
+	s.mu.Unlock()
+	s.data.EvictJob(key)
 }
+
+// CachedBytes is what the byte cache believes it holds.
+func (s *Store) CachedBytes() int64 { return s.data.Bytes() }
 
 // CachedEntries reports how many entries the layout cache holds, for
 // tests and for a metric.
@@ -276,22 +305,10 @@ func (s *Store) build(ctx context.Context, key jobKey) (*Layout, error) {
 		advertised int64
 		known      bool
 	)
+	enforce := s.gate(key)
 	gate := func(size int64, sizeKnown bool) error {
 		advertised, known = size, sizeKnown
-		limit := s.cfg.maxSandboxBytes()
-		if limit <= 0 {
-			return nil
-		}
-		if !sizeKnown {
-			if s.cfg.ServeUnadvertisedSize {
-				return nil
-			}
-			return &SizeUnknownError{Cluster: key.cluster, Proc: key.proc}
-		}
-		if size > limit {
-			return &TooLargeError{Cluster: key.cluster, Proc: key.proc, Size: size, Limit: limit}
-		}
-		return nil
+		return enforce(size, sizeKnown)
 	}
 
 	pr, pw := io.Pipe()

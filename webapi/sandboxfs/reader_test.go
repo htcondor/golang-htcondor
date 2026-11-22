@@ -1,0 +1,395 @@
+// Copyright 2026 Morgridge Institute for Research
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package sandboxfs
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"strings"
+	"testing"
+)
+
+// awkward is a sandbox shaped to catch tar-sizing mistakes: an empty
+// file, one exactly a block long, one a byte over, and a name far too
+// long for a plain ustar header.
+func awkward() map[string][]byte {
+	return map[string][]byte{
+		"empty":          {},
+		"exact":          bytes.Repeat([]byte("x"), tarBlock),
+		"over":           bytes.Repeat([]byte("y"), tarBlock+1),
+		"short":          []byte("hi"),
+		"sub/nested.dat": bytes.Repeat([]byte("z"), 3000),
+		strings.Repeat("long-name-", 15) + ".dat": []byte("pax"),
+	}
+}
+
+// TestTarSizeIsExact is the oracle for the sizing approach: measure each
+// header through a real tar.Writer, then account the body's padding.
+// A client is told this number before it reads, and both a number too
+// small and one too large break real clients, so "close" is no use.
+func TestTarSizeIsExact(t *testing.T) {
+	files := awkward()
+	s := newStore(t, newFakeFetcher(files, "sub"), Config{})
+	ctx := context.Background()
+
+	want, err := s.TarSize(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("TarSize: %v", err)
+	}
+	r, size, err := s.OpenTar(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("OpenTar: %v", err)
+	}
+	defer r.Close()
+	if size != want {
+		t.Errorf("OpenTar reported %d, TarSize said %d", size, want)
+	}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading the tar: %v", err)
+	}
+	if int64(len(body)) != want {
+		t.Fatalf("streamed %d bytes, declared %d", len(body), want)
+	}
+
+	// And it is a real tar carrying the real sandbox.
+	got := map[string][]byte{}
+	tr := tar.NewReader(bytes.NewReader(body))
+	dirs := 0
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading back the tar: %v", err)
+		}
+		if h.Typeflag == tar.TypeDir {
+			dirs++
+			continue
+		}
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("reading %q: %v", h.Name, err)
+		}
+		got[h.Name] = b
+	}
+	if dirs != 1 {
+		t.Errorf("tar carried %d directories, want 1", dirs)
+	}
+	if len(got) != len(files) {
+		t.Errorf("tar carried %d files, want %d", len(got), len(files))
+	}
+	for name, want := range files {
+		if !bytes.Equal(got[name], want) {
+			t.Errorf("%q: got %d bytes, want %d", name, len(got[name]), len(want))
+		}
+	}
+}
+
+// TestTarSizeIsStableAcrossCalls: the size is computed from the cached
+// layout, so asking twice must not produce two answers.
+func TestTarSizeIsStableAcrossCalls(t *testing.T) {
+	s := newStore(t, newFakeFetcher(awkward(), "sub"), Config{})
+	ctx := context.Background()
+	first, err := s.TarSize(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("TarSize: %v", err)
+	}
+	second, err := s.TarSize(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("TarSize again: %v", err)
+	}
+	if first != second {
+		t.Errorf("TarSize = %d then %d", first, second)
+	}
+}
+
+// TestOpenCachedFileSupportsRandomAccess: a cache hit has to seek, or
+// every client that reads a file out of order is back to streaming it.
+func TestOpenCachedFileSupportsRandomAccess(t *testing.T) {
+	body := []byte("0123456789abcdef")
+	s := newStore(t, newFakeFetcher(map[string][]byte{"f.dat": body}), Config{
+		CacheDir:   t.TempDir(),
+		CacheBytes: 1 << 20,
+	})
+
+	r, err := s.Open(context.Background(), 1, 0, "f.dat")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close()
+
+	ra, ok := r.(io.ReaderAt)
+	if !ok {
+		t.Fatalf("a cached file came back as %T, which is not an io.ReaderAt", r)
+	}
+	buf := make([]byte, 4)
+	if _, err := ra.ReadAt(buf, 10); err != nil {
+		t.Fatalf("ReadAt: %v", err)
+	}
+	if string(buf) != "abcd" {
+		t.Errorf("ReadAt(10) = %q, want \"abcd\"", buf)
+	}
+}
+
+// TestOpenFillsTheCacheOnce is the reason a miss spills the whole job: a
+// spooled sandbox has no ranged read, so a client walking it file by
+// file would otherwise pay a full pass per file.
+func TestOpenFillsTheCacheOnce(t *testing.T) {
+	files := map[string][]byte{
+		"a.dat": []byte("aaa"),
+		"b.dat": []byte("bbbb"),
+		"c.dat": []byte("ccccc"),
+	}
+	f := newFakeFetcher(files)
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+	ctx := context.Background()
+
+	// One pass builds the layout; one more fills the cache.
+	r, err := s.Open(ctx, 1, 0, "a.dat")
+	if err != nil {
+		t.Fatalf("Open a: %v", err)
+	}
+	mustRead(t, r, files["a.dat"])
+	after := f.calls.Load()
+	if after != 2 {
+		t.Fatalf("first Open cost %d passes, want 2 (layout, then fill)", after)
+	}
+
+	for _, name := range []string{"a.dat", "b.dat", "c.dat"} {
+		r, err := s.Open(ctx, 1, 0, name)
+		if err != nil {
+			t.Fatalf("Open %s: %v", name, err)
+		}
+		mustRead(t, r, files[name])
+	}
+	if got := f.calls.Load(); got != after {
+		t.Errorf("reading three cached files cost %d more passes, want 0", got-after)
+	}
+}
+
+// TestOpenStreamsWithoutACache asserts the miss path alone is correct,
+// which is what everything else is allowed to rely on.
+func TestOpenStreamsWithoutACache(t *testing.T) {
+	files := map[string][]byte{"a.dat": bytes.Repeat([]byte("a"), 5000), "b.dat": []byte("b")}
+	f := newFakeFetcher(files)
+	s := newStore(t, f, Config{}) // no CacheBytes
+	ctx := context.Background()
+
+	for _, name := range []string{"b.dat", "a.dat", "b.dat"} {
+		r, err := s.Open(ctx, 1, 0, name)
+		if err != nil {
+			t.Fatalf("Open %s: %v", name, err)
+		}
+		mustRead(t, r, files[name])
+		if _, ok := r.(io.ReaderAt); ok {
+			t.Errorf("%s: a streamed read claims random access", name)
+		}
+	}
+}
+
+// TestOpenStreamsWhatTheCacheWillNotHold: a file bigger than the budget
+// is served without being cached, rather than refused.
+func TestOpenStreamsWhatTheCacheWillNotHold(t *testing.T) {
+	big := bytes.Repeat([]byte("B"), 4096)
+	f := newFakeFetcher(map[string][]byte{"big.dat": big, "small.dat": []byte("s")})
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1024})
+	ctx := context.Background()
+
+	r, err := s.Open(ctx, 1, 0, "big.dat")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	mustRead(t, r, big)
+	if got := s.CachedBytes(); got > 1024 {
+		t.Errorf("cache holds %d bytes, over the 1024 budget", got)
+	}
+}
+
+func TestOpenMissingAndNotRegular(t *testing.T) {
+	s := newStore(t, newFakeFetcher(map[string][]byte{"a.dat": []byte("a")}, "sub"), Config{})
+	ctx := context.Background()
+
+	if _, err := s.Open(ctx, 1, 0, "nope.dat"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Open of a missing name = %v, want fs.ErrNotExist", err)
+	}
+	if _, err := s.Open(ctx, 1, 0, "sub"); !errors.Is(err, ErrNotRegular) {
+		t.Errorf("Open of a directory = %v, want ErrNotRegular", err)
+	}
+}
+
+// TestOpenRefusesASizeThatChanged: the size has already been reported to
+// the client by every stat, and serving a different length quietly is
+// the silent-truncation bug this exists to avoid.
+func TestOpenRefusesASizeThatChanged(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"f.dat": []byte("original")})
+	s := newStore(t, f, Config{}) // no cache, so the read streams
+	ctx := context.Background()
+
+	// Build the layout, then change the sandbox underneath it.
+	if _, err := s.Layout(ctx, 1, 0); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	f.setFiles(map[string][]byte{"f.dat": []byte("a different length entirely")})
+
+	if _, err := s.Open(ctx, 1, 0, "f.dat"); err == nil {
+		t.Fatal("Open served a file whose size no longer matched the layout")
+	} else if !strings.Contains(err.Error(), "layout") {
+		t.Errorf("error = %v, want it to name the disagreement with the layout", err)
+	}
+}
+
+// TestOpenTarRefusesASizeThatChanged is the same hazard one layer up:
+// the archive's length is declared before any byte is written and cannot
+// be revised, so a mismatch has to end the transfer.
+func TestOpenTarRefusesASizeThatChanged(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"f.dat": []byte("original")})
+	s := newStore(t, f, Config{})
+	ctx := context.Background()
+
+	size, err := s.TarSize(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("TarSize: %v", err)
+	}
+	f.setFiles(map[string][]byte{"f.dat": []byte("a different length entirely")})
+
+	r, declared, err := s.OpenTar(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("OpenTar: %v", err)
+	}
+	defer r.Close()
+	if declared != size {
+		t.Errorf("OpenTar declared %d, TarSize said %d", declared, size)
+	}
+	if _, err := io.ReadAll(r); err == nil {
+		t.Fatal("the tar streamed to completion despite a size change")
+	}
+}
+
+// TestMaterializeFillsTheCache covers the explicit one-pass fill a caller
+// does when a client is about to read a whole sandbox.
+func TestMaterializeFillsTheCache(t *testing.T) {
+	files := map[string][]byte{"a": []byte("aa"), "b": []byte("bbb")}
+	f := newFakeFetcher(files)
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+	ctx := context.Background()
+
+	if err := s.Materialize(ctx, 1, 0); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if want := int64(5); s.CachedBytes() != want {
+		t.Errorf("cache holds %d bytes, want %d", s.CachedBytes(), want)
+	}
+	passes := f.calls.Load()
+	for name, body := range files {
+		r, err := s.Open(ctx, 1, 0, name)
+		if err != nil {
+			t.Fatalf("Open %s: %v", name, err)
+		}
+		mustRead(t, r, body)
+		if _, ok := r.(*os.File); !ok {
+			t.Errorf("%s came back as %T, want a cached file", name, r)
+		}
+	}
+	if got := f.calls.Load(); got != passes {
+		t.Errorf("reading a materialized sandbox cost %d passes", got-passes)
+	}
+}
+
+// TestForgetDropsBytesToo: a job forgotten has to be forgotten in both
+// caches, or a stale byte would outlive the layout that described it.
+func TestForgetDropsBytesToo(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"a": []byte("aa")})
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+	ctx := context.Background()
+
+	if err := s.Materialize(ctx, 1, 0); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if s.CachedBytes() == 0 || s.CachedEntries() == 0 {
+		t.Fatal("nothing was cached")
+	}
+	s.Forget(1, 0)
+	if s.CachedBytes() != 0 {
+		t.Errorf("byte cache holds %d bytes after Forget", s.CachedBytes())
+	}
+	if s.CachedEntries() != 0 {
+		t.Errorf("layout cache holds %d entries after Forget", s.CachedEntries())
+	}
+}
+
+// TestOversizedSandboxRefusesEveryRead: the gate guards every pass, not
+// just the layout one, so a limit cannot be walked around by asking for
+// a file instead of a listing.
+func TestOversizedSandboxRefusesEveryRead(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"a": []byte("aa")})
+	f.advertise = 1 << 30
+	s := newStore(t, f, Config{MaxSandboxBytes: 1024})
+	ctx := context.Background()
+
+	var tooLarge *TooLargeError
+	if _, err := s.Open(ctx, 1, 0, "a"); !errors.As(err, &tooLarge) {
+		t.Errorf("Open = %v, want a TooLargeError", err)
+	}
+	if _, _, err := s.OpenTar(ctx, 1, 0); !errors.As(err, &tooLarge) {
+		t.Errorf("OpenTar = %v, want a TooLargeError", err)
+	}
+	if err := s.Materialize(ctx, 1, 0); !errors.As(err, &tooLarge) {
+		t.Errorf("Materialize = %v, want a TooLargeError", err)
+	}
+}
+
+// TestCloseEndsTheTransferEarly: a client that stops reading must not
+// leave a sandbox transfer running behind it.
+func TestCloseEndsTheTransferEarly(t *testing.T) {
+	big := bytes.Repeat([]byte("B"), 1<<20)
+	f := newFakeFetcher(map[string][]byte{"big.dat": big})
+	s := newStore(t, f, Config{})
+	ctx := context.Background()
+
+	r, _, err := s.OpenTar(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("OpenTar: %v", err)
+	}
+	head := make([]byte, 512)
+	if _, err := io.ReadFull(r, head); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	// Reading after Close reports the teardown rather than hanging.
+	if _, err := r.Read(head); err == nil {
+		t.Error("reading after Close succeeded")
+	}
+}
+
+func mustRead(t *testing.T, r io.ReadCloser, want []byte) {
+	t.Helper()
+	defer r.Close()
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("read %d bytes, want %d", len(got), len(want))
+	}
+}
