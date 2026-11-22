@@ -325,6 +325,10 @@ type Config struct {
 	SSHGatewayPublicHost string
 	// SandboxCacheDir, SandboxCacheMB and SandboxMaxGB tune the +jobs
 	// file service's reads. See httpserver.Config.
+	// JobTemplateDir holds the system job templates. See
+	// httpserver.Config.
+	JobTemplateDir string
+
 	SandboxCacheDir string
 	SandboxCacheMB  int
 	SandboxMaxGB    int
@@ -651,6 +655,7 @@ func NewServer(cfg Config) (*Server, error) {
 		SSHHostKeyFile:              cfg.SSHHostKeyFile,
 		SSHCAKeyFile:                cfg.SSHCAKeyFile,
 		SSHGatewayPublicHost:        cfg.SSHGatewayPublicHost,
+		JobTemplateDir:              cfg.JobTemplateDir,
 		SandboxCacheDir:             cfg.SandboxCacheDir,
 		SandboxCacheMB:              cfg.SandboxCacheMB,
 		SandboxMaxGB:                cfg.SandboxMaxGB,

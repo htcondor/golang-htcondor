@@ -126,6 +126,10 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 		Account: req.Account,
 		Context: ctx,
 		Jobs:    mirrorJobLister{h: h, account: req.Account},
+		// Both or neither: without a submitter the tree would offer a
+		// drop point that cannot submit.
+		Templates: h.jobTemplates(),
+		Submitter: h.jobTemplateSubmitter(),
 		Logf: func(format string, args ...any) {
 			h.logger.Debug(logging.DestinationHTTP, fmt.Sprintf(format, args...))
 		},
@@ -143,6 +147,23 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 		return err
 	}
 	return nil
+}
+
+// jobTemplates is the template source, or nil when none is configured.
+func (h *Handler) jobTemplates() sftpjobs.TemplateSource {
+	if h.jobTemplateDir == "" {
+		return nil
+	}
+	return sftpjobs.DirTemplates{Dir: h.jobTemplateDir}
+}
+
+// jobTemplateSubmitter pairs with it. Returned nil together with the
+// source, so the tree is absent rather than half-present.
+func (h *Handler) jobTemplateSubmitter() sftpjobs.Submitter {
+	if h.jobTemplateDir == "" {
+		return nil
+	}
+	return templateSubmitter{h: h}
 }
 
 // fmtSandboxScope is the constraint for one account's own job.

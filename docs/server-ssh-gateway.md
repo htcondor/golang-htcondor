@@ -90,6 +90,7 @@ The tree is small:
 | `outputs/` | one directory per completed job still in the queue (see below) |
 | `outputs/12345.0/` | that job's sandbox, as files |
 | `outputs/12345.0.tar` | the same sandbox as one archive |
+| `templates/` | submit descriptions to drop a CSV on (see [Job templates](#job-templates)) |
 
 The archive is reachable by name but does **not** appear in a listing of
 `outputs/`, on purpose. Listing it would mean knowing its length, and that
@@ -134,6 +135,64 @@ A download that streams — an archive, or any read without a cache — must be
 read **forwards**. A client that seeks backwards more than a few megabytes is
 told so rather than quietly triggering a second full transfer. Ordinary
 clients read forwards.
+
+## Job templates
+
+With `HTTP_API_JOB_TEMPLATE_DIR` set, the file service also offers
+templates: drop a CSV into one and it becomes a cluster of jobs, one per row.
+
+```sh
+sftp -P 2222 +jobs@ap.example.edu
+# sftp> cd templates/system/blast
+# sftp> get README              # what the columns are
+# sftp> put runs.csv submit/    # one job per row
+# sftp> get status/runs.csv     # what happened
+```
+
+| Path | What it is |
+| --- | --- |
+| `templates/system/<name>/` | published by this access point, read-only |
+| `templates/user/<you>/<name>/` | your own (not yet writable over SFTP) |
+| `.../job.sub` | the submit description |
+| `.../README` | what the CSV's columns mean, if the author wrote one |
+| `.../submit/` | drop a CSV here; write-only |
+| `.../status/` | one entry per upload |
+
+**The CSV's header names the submit variables.** A template whose `job.sub`
+uses `$(sample)` and `$(reads)` is driven by a CSV headed `sample,reads`.
+There is no separate mapping file to keep in step.
+
+The upload is submitted when your client closes the file cleanly. An
+interrupted transfer is recorded as `incomplete` and submits nothing, and the
+same bytes dropped twice are one submission — so a retry does not double your
+jobs. Every outcome, including every refusal, is written to `status/`, because
+the one error string a close reply carries is rendered by most clients as
+"could not close file" and nothing more.
+
+Values are refused rather than altered: a value containing `$`, `))`, a comma,
+a line break, or a row that is blank or starts with `#` is rejected naming the
+row and the column. Each of those would otherwise make the submit parser do
+something other than what the spreadsheet says.
+
+### Writing a template
+
+Two rules, both enforced:
+
+- **No `queue` statement.** The CSV's columns supply one; two would submit the
+  template's own idea of the work alongside the CSV's.
+- **`transfer_executable = false` is required.** Output is read from the
+  schedd's spool, so the submission spools — which is also what keeps the job
+  in the queue long enough to fetch. But a spooling job whose executable needs
+  transferring waits on `HoldReasonCode 16` for an upload a CSV never carries,
+  and waits forever. Put the executable on the execute node or in a container.
+
+The same reasoning applies to inputs: a CSV carries no files, so anything in
+`transfer_input_files` has to be reachable from the execute node — a URL, an
+`osdf://` path, or shared storage. This is not enforced, because a URL there is
+both legitimate and common.
+
+Every job carries `SFTPJobTemplate = "system:<name>"`, so `condor_q -af
+SFTPJobTemplate` says where a cluster came from.
 
 ## The approval screen
 
@@ -210,6 +269,7 @@ belongs to one database, so replicas would present different host keys.
 | `HTTP_API_SSH_GATEWAY_SESSION_CPUS` | CPUs a session created on demand requests. Default 1. |
 | `HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB` | Memory for the same. Default 1024. |
 | `HTTP_API_SSH_GATEWAY_SESSION_DISK_MB` | Disk for the same. Default 8192 — a VS Code Remote server does not fit in less. |
+| `HTTP_API_JOB_TEMPLATE_DIR` | Holds one subdirectory per system template, each with a `job.sub` and optionally a `README`. Unset disables the templates tree, leaving the file service to serve job output only. A subdirectory without a `job.sub` is skipped, so staging one in place is safe. |
 | `HTTP_API_SANDBOX_CACHE_DIR` | Where `+jobs` keeps output it has already fetched. Unset means no cache: every read fetches the sandbox again. Must be real local storage with room for the budget below — on `tmpfs` the "cache" is memory the kernel cannot reclaim. Its contents are discarded at every start and may be deleted by hand while the server runs. |
 | `HTTP_API_SANDBOX_CACHE_MB` | That cache's budget in megabytes. Default 4096. Negative disables the cache. |
 | `HTTP_API_SANDBOX_MAX_GB` | Largest job sandbox `+jobs` will serve. Default 8. Negative means no limit. |

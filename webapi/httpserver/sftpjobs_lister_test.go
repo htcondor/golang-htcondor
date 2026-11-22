@@ -18,6 +18,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	htcondor "github.com/htcondor/golang-htcondor"
+	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
 )
 
 // TestSFTPJobsConstraintIsTheQueuesCompletedJobs pins what this listing
@@ -90,5 +93,57 @@ func TestReadableJobsSaysWhyItCannotAnswer(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mirror") {
 		t.Errorf("error = %v, want it to name the mirror", err)
+	}
+}
+
+// TestJobTemplatesOffOrOnTogether: a template source without a
+// submitter would offer a drop point that cannot submit, which is worse
+// than offering nothing.
+func TestJobTemplatesOffOrOnTogether(t *testing.T) {
+	off := &Handler{logger: testLogger(t)}
+	if off.jobTemplates() != nil || off.jobTemplateSubmitter() != nil {
+		t.Error("templates are configured with no directory set")
+	}
+	on := &Handler{logger: testLogger(t), jobTemplateDir: t.TempDir()}
+	if on.jobTemplates() == nil || on.jobTemplateSubmitter() == nil {
+		t.Error("a configured directory did not produce both halves")
+	}
+}
+
+// TestTemplateSubmitterChecksTheAccount: the schedd attributes the jobs
+// to whoever the context authenticated, so submitting as somebody else
+// would charge them to the wrong person.
+func TestTemplateSubmitterChecksTheAccount(t *testing.T) {
+	s := templateSubmitter{h: &Handler{logger: testLogger(t)}}
+	tmpl := sftpjobs.Template{
+		Ref:    sftpjobs.TemplateRef{Namespace: sftpjobs.NamespaceSystem, Name: "t"},
+		Submit: "executable = /bin/true\ntransfer_executable = false\n",
+	}
+	sub := &sftpjobs.Submission{Vars: []string{"a"}, Rows: []string{"1"}}
+
+	ctx := htcondor.WithAuthenticatedUser(context.Background(), "alice")
+	if _, err := s.SubmitRows(ctx, "bob", tmpl, sub); err == nil {
+		t.Error("submitted as bob on a context authenticated as alice")
+	} else if !strings.Contains(err.Error(), "authenticated as") {
+		t.Errorf("error = %v, want it to name the mismatch", err)
+	}
+}
+
+// TestTemplateSubmitterRefusesABadTemplate: the validation runs before
+// anything reaches the schedd, which is what keeps a template that would
+// hold every job forever from being submitted once.
+func TestTemplateSubmitterRefusesABadTemplate(t *testing.T) {
+	s := templateSubmitter{h: &Handler{logger: testLogger(t)}}
+	tmpl := sftpjobs.Template{
+		Ref:    sftpjobs.TemplateRef{Namespace: sftpjobs.NamespaceSystem, Name: "t"},
+		Submit: "executable = /bin/true\n", // no transfer_executable = false
+	}
+	sub := &sftpjobs.Submission{Vars: []string{"a"}, Rows: []string{"1"}}
+	ctx := htcondor.WithAuthenticatedUser(context.Background(), "alice")
+
+	if _, err := s.SubmitRows(ctx, "alice", tmpl, sub); err == nil {
+		t.Error("a template that would hold every job was submitted")
+	} else if !strings.Contains(err.Error(), "transfer_executable") {
+		t.Errorf("error = %v, want the template contract", err)
 	}
 }

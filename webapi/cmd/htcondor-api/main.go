@@ -220,6 +220,7 @@ type mcpConfig struct {
 	sshHostKeyFile    string
 	sshCAKeyFile      string
 	sshGatewayHost    string
+	jobTemplateDir    string
 	sandboxCacheDir   string
 	sandboxCacheMB    int
 	sandboxMaxGB      int
@@ -1402,6 +1403,7 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 	mcpCfg.sshHostKeyFile, _ = cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
 	mcpCfg.sshCAKeyFile, _ = cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
 	mcpCfg.sshGatewayHost, _ = cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
+	mcpCfg.jobTemplateDir, _ = cfg.Get("HTTP_API_JOB_TEMPLATE_DIR")
 	mcpCfg.sandboxCacheDir, _ = cfg.Get("HTTP_API_SANDBOX_CACHE_DIR")
 	mcpCfg.sandboxCacheMB = intParam(cfg, "HTTP_API_SANDBOX_CACHE_MB")
 	mcpCfg.sandboxMaxGB = intParam(cfg, "HTTP_API_SANDBOX_MAX_GB")
@@ -2683,6 +2685,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		SSHHostKeyFile:             mcpCfg.sshHostKeyFile,
 		SSHCAKeyFile:               mcpCfg.sshCAKeyFile,
 		SSHGatewayPublicHost:       mcpCfg.sshGatewayHost,
+		JobTemplateDir:             mcpCfg.jobTemplateDir,
 		SandboxCacheDir:            mcpCfg.sandboxCacheDir,
 		SandboxCacheMB:             mcpCfg.sandboxCacheMB,
 		SandboxMaxGB:               mcpCfg.sandboxMaxGB,
