@@ -157,6 +157,14 @@ type Hook struct {
 	LastTestStatus int        `json:"last_test_status,omitempty"`
 	LastTestError  string     `json:"last_test_error,omitempty"`
 
+	// Tracked is every job this hook has ever selected. It is the hook's
+	// memory and it is load-bearing, not a cache: a job gone from a
+	// complete queue read with nothing to explain it has finished, and
+	// that is the only evidence there is for a job whose history row never
+	// arrives. Not serialized: it is the evaluator's working state, and a
+	// 100k-job cluster is not a thing to put in an API response.
+	Tracked []jobwatch.JobID `json:"-"`
+
 	// HasDestination says a destination is stored, without being one --
 	// the same shape connectors.Stored uses for a client secret, and for
 	// the same reason: a struct with the value in it ends up in a JSON

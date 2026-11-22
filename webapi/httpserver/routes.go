@@ -224,6 +224,14 @@ func (h *Handler) setupRoutes() {
 	mux.Handle("/api/v1/integrations", cors(http.HandlerFunc(h.handleIntegrations)))
 	mux.Handle("/api/v1/integrations/", cors(http.HandlerFunc(h.handleIntegrationItem)))
 
+	// Outbound webhooks -- the other direction: this server posts to a
+	// service when something happens to the caller's jobs. Session-gated
+	// inside the handlers for a reason of their own: a destination is a
+	// capability URL, so a token that could read one back would be enough
+	// to post there itself. See handlers_webhooks.go.
+	mux.Handle("/api/v1/webhooks", cors(http.HandlerFunc(h.handleWebhooks)))
+	mux.Handle("/api/v1/webhooks/", cors(http.HandlerFunc(h.handleWebhookItem)))
+
 	// Web UI session endpoints (browser-session aware; cookie-only)
 	mux.Handle("/api/v1/auth/me", cors(http.HandlerFunc(h.handleAuthMe)))
 	mux.Handle("/api/v1/auth/logout", cors(http.HandlerFunc(h.handleAuthLogout)))

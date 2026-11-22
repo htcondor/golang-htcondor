@@ -44,6 +44,14 @@ var ErrNoKEK = errors.New("the stored webhook destination is sealed but no KEK i
 // abandoned one stops.
 const DefaultOwnerTTL = 90 * 24 * time.Hour
 
+// TerminableBackstopTTL is the outer bound on a job or batch hook.
+//
+// Such a hook normally ends when its subject does, which the evaluator
+// decides. This is for the ones whose subject never shows up -- a hook on a
+// cluster that was never submitted, or on a batch name nobody used -- which
+// would otherwise be swept through on every pass for ever.
+const TerminableBackstopTTL = 30 * 24 * time.Hour
+
 // MaxHooksPerOwner bounds how many one person may hold.
 const MaxHooksPerOwner = 25
 
@@ -138,13 +146,17 @@ func (s *Store) Create(ctx context.Context, h *Hook, destination string) (*Hook,
 	}
 
 	now := s.now().UTC()
-	var expires *time.Time
-	if !h.Scope.Terminable() {
-		// An owner hook gets a deadline now. A job or batch hook gets one
-		// when its subject ends, which the evaluator decides.
-		t := now.Add(DefaultOwnerTTL)
-		expires = &t
+	// Every hook gets a deadline at creation. For an owner hook it is the
+	// only one it will have. For a job or batch hook it is a BACKSTOP: the
+	// evaluator moves it earlier once the subject has ended, and the
+	// backstop is what stops a hook naming a job that is never submitted
+	// from being evaluated for ever.
+	ttl := DefaultOwnerTTL
+	if h.Scope.Terminable() {
+		ttl = TerminableBackstopTTL
 	}
+	expiresAt := now.Add(ttl)
+	expires := &expiresAt
 
 	var cluster, proc any
 	if h.Scope == ScopeJob {
@@ -183,7 +195,7 @@ const hookColumns = `id, owner, label, scope, job_cluster, job_proc, schedd,
 	capped_at, capped_jobs,
 	last_delivery_at, last_status, last_error,
 	last_test_at, last_test_status, last_test_error,
-	url_data, url_dek`
+	tracked_json, url_data, url_dek`
 
 // scanHook reads one row. The destination is read only far enough to say
 // whether there is one and what host it names; the value itself is handed
@@ -201,6 +213,7 @@ func (s *Store) scanHook(sc interface{ Scan(...any) error }) (*Hook, error) {
 		lastStatus     sql.NullInt64
 		lastTestAt     sql.NullTime
 		lastTestStatus sql.NullInt64
+		trackedJSON    string
 		urlData        []byte
 		urlDEK         []byte
 	)
@@ -210,8 +223,18 @@ func (s *Store) scanHook(sc interface{ Scan(...any) error }) (*Hook, error) {
 		&cappedAt, &h.CappedJobs,
 		&lastDelivery, &lastStatus, &h.LastError,
 		&lastTestAt, &lastTestStatus, &h.LastTestError,
-		&urlData, &urlDEK); err != nil {
+		&trackedJSON, &urlData, &urlDEK); err != nil {
 		return nil, err
+	}
+	if trackedJSON != "" {
+		tracked, err := jobwatch.DecodeTracked(trackedJSON)
+		if err != nil {
+			// A tracked set that no longer decodes is a load error. Reading
+			// it as empty would make every job the hook already knows about
+			// look new, and re-deliver the lot.
+			return nil, fmt.Errorf("webhook %s has a malformed tracked set: %w", h.ID, err)
+		}
+		h.Tracked = tracked
 	}
 	h.Scope = Scope(scope)
 	if cluster.Valid {
@@ -448,11 +471,32 @@ func (s *Store) Enable(ctx context.Context, owner, id string) error {
 	return nil
 }
 
-// Expire sets a terminable hook's deadline, which is how a job or batch hook
+// Expire brings a hook's deadline forward, which is how a job or batch hook
 // ends: its subject can no longer produce an event.
+//
+// Forward only. A hook already due to expire sooner keeps the sooner date --
+// an evaluator pass should not be able to extend a hook's life, only to end
+// it early.
 func (s *Store) Expire(ctx context.Context, id string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE webhooks SET expires_at = ? WHERE id = ? AND expires_at IS NULL`, at, id)
+		`UPDATE webhooks SET expires_at = ?
+		  WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)`, at, id, at)
+	return err
+}
+
+// SaveTracked stores a hook's tracked job set, range-encoded.
+//
+// Skipped when the set has not changed, which is the common case: the
+// interesting passes are the ones where a job appeared or finished, and those
+// are rare next to the passes that confirm nothing moved.
+func (s *Store) SaveTracked(ctx context.Context, id string, ids []jobwatch.JobID) error {
+	blob, err := jobwatch.EncodeTracked(ids)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE webhooks SET tracked_json = ? WHERE id = ? AND tracked_json != ?`,
+		blob, id, blob)
 	return err
 }
 

@@ -132,10 +132,49 @@ type Payload struct {
 
 	Job *JobPayload `json:"job,omitempty"`
 
+	// Capped is set on the one rolled-up delivery a hook sends when its
+	// selection exceeded the fan-out ceiling. It is the only delivery with
+	// no job: there were too many to name, which is what it says.
+	Capped *CappedSummary `json:"capped,omitempty"`
+
 	// Scope and Subject describe what the hook watches, so a receiver
 	// serving several can route without holding its own table.
 	Scope   string `json:"scope"`
 	Subject string `json:"subject,omitempty"`
+}
+
+// CappedSummary tells a receiver that deliveries were withheld, and how many.
+//
+// Sent rather than silently dropping them: a delivery that never arrives
+// looks exactly like an event that never happened, and the whole reason the
+// ceiling exists is that the alternative was posting to the receiver tens of
+// thousands of times.
+type CappedSummary struct {
+	Jobs  int    `json:"jobs"`
+	Limit int    `json:"limit"`
+	Note  string `json:"note"`
+}
+
+// RenderCappedPayload builds the rolled-up body for a hook over the ceiling.
+func RenderCappedPayload(h *Hook, e jobwatch.Event, jobs, limit int, key string, at time.Time) ([]byte, error) {
+	p := Payload{
+		IdempotencyKey:    key,
+		DeliverySemantics: "at-least-once",
+		WebhookID:         h.ID,
+		WebhookLabel:      h.Label,
+		Event:             string(e),
+		OccurredAt:        at.UTC(),
+		Scope:             string(h.Scope),
+		Subject:           h.subject(),
+		Capped: &CappedSummary{
+			Jobs:  jobs,
+			Limit: limit,
+			Note: fmt.Sprintf("%d jobs reached %q at once, over this server's per-webhook limit of %d. "+
+				"No per-job deliveries were sent for them and the webhook has been disabled.",
+				jobs, string(e), limit),
+		},
+	}
+	return json.Marshal(p)
 }
 
 // Delivery is one enqueued POST.

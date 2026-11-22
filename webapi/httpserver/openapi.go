@@ -849,6 +849,48 @@ const openAPISchema = `{
           "created_at": {"type": "string", "format": "date-time"}
         }
       },
+      "Webhook": {
+        "type": "object",
+        "description": "One outbound webhook: this server posts to a URL when the owner's jobs change state. The opposite direction to an Integration, which lets a service act as the owner here. There is no url field: the destination is a capability URL -- for most providers possession is the authorization to post -- so no endpoint returns it.",
+        "properties": {
+          "id": {"type": "string"},
+          "label": {"type": "string", "description": "The owner's own name for it."},
+          "scope": {"type": "string", "enum": ["job", "batch", "owner"], "description": "What it watches. A job or batch webhook ends when its subject does; an owner webhook carries a TTL and is renewed by being edited."},
+          "job": {"type": "object", "description": "The subject, for scope \"job\".", "properties": {"cluster_id": {"type": "integer"}, "proc_id": {"type": "integer"}, "schedd": {"type": "string"}}},
+          "batch_id": {"type": "string"},
+          "batch_name": {"type": "string"},
+          "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time", "description": "When it stops being evaluated. For a job or batch webhook this is brought forward once the subject has ended."},
+          "disabled_at": {"type": "string", "format": "date-time", "description": "Set when delivery was given up on. A webhook is disabled rather than left failing quietly, because silence reads as \"nothing has happened yet\"."},
+          "disabled_reason": {"type": "string", "description": "Shown to the owner, who otherwise cannot tell a misconfigured URL from an endpoint that was down."},
+          "consecutive_failures": {"type": "integer"},
+          "capped_at": {"type": "string", "format": "date-time", "description": "When the selection last exceeded the fan-out ceiling. Surfaced because the deliveries that did not happen would otherwise look like events that did not happen."},
+          "capped_jobs": {"type": "integer"},
+          "last_delivery_at": {"type": "string", "format": "date-time"},
+          "last_status": {"type": "integer"},
+          "last_error": {"type": "string"},
+          "last_test_at": {"type": "string", "format": "date-time", "description": "Kept apart from real traffic, so a test does not overwrite the record of the deliveries that matter, nor the reverse."},
+          "last_test_status": {"type": "integer"},
+          "last_test_error": {"type": "string"},
+          "has_destination": {"type": "boolean", "description": "Whether a destination is stored, without being one."},
+          "destination_hint": {"type": "string", "description": "The destination's scheme and host, and how long the rest was. Never a prefix of the path: for a Slack or Zapier hook the path IS the secret."}
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "description": "One delivery attempt, for the owner's \"is this working\" panel.",
+        "properties": {
+          "id": {"type": "string", "description": "The idempotency key, which is also this row's primary key."},
+          "event": {"type": "string"},
+          "job": {"type": "string", "description": "cluster.proc, absent on a summary delivery."},
+          "state": {"type": "string", "enum": ["pending", "delivered", "abandoned"], "description": "\"abandoned\" means we stopped trying, which is deliberately distinct from \"delivered\"."},
+          "attempts": {"type": "integer"},
+          "status": {"type": "integer", "description": "The receiver's last HTTP status, 0 if it was never reached."},
+          "error": {"type": "string"}
+        }
+      },
       "IntegrationEndpoints": {
         "type": "object",
         "description": "The URLs an outside service's setup form asks for. Served rather than built by the client: the OAuth2 endpoints sit under /mcp/oauth2/ or /oauth2/ depending on whether MCP is enabled, so a guess would 404 on half the deployments.",
@@ -1315,6 +1357,125 @@ const openAPISchema = `{
           "403": {"description": "A grant type that acts with no user present, or none of the requested scopes are available to your account", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "409": {"description": "You already hold the maximum number of integrations", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "415": {"description": "Not application/json. The content type is required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "summary": "List your outbound webhooks",
+        "description": "The webhooks you have set up, newest first, with the event vocabulary this server implements -- so a page offers exactly what exists rather than a list somebody remembered to keep in step. No destination is ever returned. SESSION ONLY: a destination is a capability URL, so a token that could read one back would be enough to post there itself.",
+        "operationId": "listWebhooks",
+        "responses": {
+          "200": {"description": "Your webhooks", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhooks": {"type": "array", "items": {"$ref": "#/components/schemas/Webhook"}}, "events": {"type": "array", "items": {"type": "string"}}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server (HTTP_API_WEBHOOKS)", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "summary": "Set up an outbound webhook",
+        "description": "Subscribes a URL to events on one job, one batch, or all of your jobs. The destination must be https and is stored sealed; it is never returned by any endpoint. The signing secret comes back in THIS response and nowhere else -- a receiver needs it to verify the X-HTCondor-Signature header, and nothing can recover it afterwards. The event vocabulary is fixed and is the same one the job-watch tools use: notably there is no way to say \"JobStatus == 4\", which is the obvious way to ask for \"finished\" and would never fire, because the schedd deletes a completed job from the queue rather than leaving it in that state.",
+        "operationId": "createWebhook",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["label", "url", "scope", "events"], "properties": {
+          "label": {"type": "string", "maxLength": 128, "description": "Required, so you can tell your webhooks apart."},
+          "url": {"type": "string", "maxLength": 2048, "description": "https only, with no credentials in it. Checked for reachability at delivery time, not here: only routable public addresses are dialled."},
+          "scope": {"type": "string", "enum": ["job", "batch", "owner"]},
+          "cluster_id": {"type": "integer", "description": "With scope \"job\"."},
+          "proc_id": {"type": "integer", "description": "With scope \"job\"."},
+          "schedd": {"type": "string", "description": "The access point, on a server fronting several."},
+          "batch_id": {"type": "string", "description": "With scope \"batch\": a cluster number, for a batch with no name."},
+          "batch_name": {"type": "string", "description": "With scope \"batch\": the batch name from the jobs page."},
+          "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created. signing_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "webhook": {"$ref": "#/components/schemas/Webhook"},
+            "signing_secret": {"type": "string", "description": "Hex. HMAC-SHA256 key over \"<timestamp>.<idempotency key>.<body>\". Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "signature_header": {"type": "string"},
+            "idempotency_header": {"type": "string"}
+          }}}}},
+          "400": {"description": "Malformed body, no name, an http destination, credentials in the URL, an unsupported event, or a scope with no subject", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json. Required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "get": {
+        "summary": "One of your webhooks",
+        "operationId": "getWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The webhook", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
+          "404": {"description": "No such webhook of yours. Somebody else's answers 404 rather than 403, because a 403 would confirm the id exists.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "patch": {
+        "summary": "Change a webhook",
+        "description": "The name, the events and the destination. Replacing the destination clears the failure count and re-enables a disabled webhook: deliveries that failed were to a URL that is no longer configured. Any edit renews an owner-scoped webhook's deadline, since editing one is the clearest statement that somebody still wants it.",
+        "operationId": "updateWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "label": {"type": "string"},
+          "url": {"type": "string", "description": "A new destination. Write-only, as at creation."},
+          "events": {"type": "array", "items": {"type": "string"}}
+        }}}}},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
+          "400": {"description": "Malformed body or a destination that is not usable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "delete": {
+        "summary": "Delete a webhook",
+        "description": "Removes it and everything queued for it, so whatever was listening stops immediately.",
+        "operationId": "deleteWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/test": {
+      "post": {
+        "summary": "Test a webhook",
+        "description": "Sends ONE REAL delivery -- the same signature, the same headers, the same connection policy -- with \"test\": true in the body, and reports what the receiver answered. It is not retried, because somebody is watching the result. Answers 200 whatever the receiver said: the test RAN, and its outcome is the body. An HTTP error here would claim this server failed.",
+        "operationId": "testWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The test ran. ok=false with a cause is a normal response, not an error.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "ok": {"type": "boolean"},
+            "status": {"type": "integer", "description": "The receiver's HTTP status, 0 if it was never reached."},
+            "error": {"type": "string", "description": "What went wrong, including the start of the receiver's own message."}
+          }}}}},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The destination could not be read at all -- the row is gone, or it is sealed and this server has no KEK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/enable": {
+      "post": {
+        "summary": "Re-enable a disabled webhook",
+        "description": "For a webhook disabled after repeated give-ups, once the destination has been fixed. Clears the failure count.",
+        "operationId": "enableWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Enabled"},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries": {
+      "get": {
+        "summary": "Recent delivery attempts",
+        "description": "The last 50 attempts for one webhook, newest first, so an owner can see whether it is working without reading a server log.",
+        "operationId": "listWebhookDeliveries",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Attempts, empty rather than null for a webhook that has sent nothing", "content": {"application/json": {"schema": {"type": "object", "properties": {"deliveries": {"type": "array", "items": {"$ref": "#/components/schemas/WebhookDelivery"}}}}}}},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
