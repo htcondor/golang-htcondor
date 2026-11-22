@@ -407,6 +407,13 @@ type Config struct {
 	SiteAppsDir string
 	// SiteAppsReloadInterval is how often that directory is rescanned.
 	SiteAppsReloadInterval time.Duration
+	// WebhooksDisabled turns outbound webhooks off entirely
+	// (HTTP_API_WEBHOOKS = false). Negated so the zero value leaves them
+	// on, as every other user-facing feature here does.
+	WebhooksDisabled bool
+	// WebhookFanoutLimit caps how many jobs one webhook may deliver for
+	// before it rolls up and is disabled. Zero selects the default.
+	WebhookFanoutLimit int
 	// SiteAppsUpload is whether administrators may publish a bundle
 	// through the web interface (HTTP_API_SITE_APPS_UPLOAD).
 	SiteAppsUpload bool
@@ -671,6 +678,8 @@ func NewServer(cfg Config) (*Server, error) {
 		WebUIAppOnlyGroup:           cfg.WebUIAppOnlyGroup,
 		SiteAppsDir:                 cfg.SiteAppsDir,
 		SiteAppsReloadInterval:      cfg.SiteAppsReloadInterval,
+		WebhooksDisabled:            cfg.WebhooksDisabled,
+		WebhookFanoutLimit:          cfg.WebhookFanoutLimit,
 		SiteAppsUpload:              cfg.SiteAppsUpload,
 		SiteAppsGitHub:              cfg.SiteAppsGitHub,
 		MCPSkillsReloadInterval:     cfg.MCPSkillsReloadInterval,

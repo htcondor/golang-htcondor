@@ -4,18 +4,18 @@ import (
 	"container/list"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ory/fosite"
 	"golang.org/x/time/rate"
+
+	"github.com/htcondor/golang-htcondor/webapi/internal/publicdial"
 )
 
 // CIMD (Client ID Metadata Document) lets an MCP client identify itself by an
@@ -166,53 +166,26 @@ func (r *cimdResolver) storeLocked(e *cimdCacheEntry, now time.Time) {
 // cimdHTTPClient is the production HTTP client for CIMD fetches: it refuses to
 // dial a disallowed IP (checked on the resolved address, so DNS rebinding cannot
 // slip an internal host past), follows no redirects, and bounds the fetch time.
-func cimdHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout: cimdFetchTimeout,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return fmt.Errorf("cimd: bad dial address %q: %w", address, err)
-			}
-			ip := net.ParseIP(host)
-			if ip == nil || isDisallowedIP(ip) {
-				return fmt.Errorf("cimd: refusing to connect to non-public address %q", host)
-			}
-			return nil
-		},
-	}
-	return &http.Client{
-		Timeout: cimdFetchTimeout,
-		Transport: &http.Transport{
-			DialContext:           dialer.DialContext,
-			TLSHandshakeTimeout:   cimdFetchTimeout,
-			ResponseHeaderTimeout: cimdFetchTimeout,
-			DisableKeepAlives:     true,
-		},
-		// A CIMD document must live at its own URL; a redirect to somewhere else
-		// would break the client_id==URL binding and is a classic SSRF pivot.
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return fmt.Errorf("cimd: redirects are not allowed")
-		},
-	}
-}
+//
+// The policy itself lives in internal/publicdial, shared with the JWKS fetch
+// next door and with the webhook deliveries. Every one of them is a request
+// this daemon makes to a URL somebody else chose, which is the whole of what
+// the guard is for; a second construction of it would be the copy that falls
+// behind when the blocked ranges change.
+//
+// Callers wrap the resulting error with their own context -- resolve() turns
+// it into "could not fetch CIMD document: ..." -- so nothing depends on the
+// refusal naming CIMD itself.
+func cimdHTTPClient() *http.Client { return publicdial.Client(cimdFetchTimeout) }
 
 // isDisallowedIP reports whether an IP must not be dialed for a CIMD fetch: any
-// address that is not a routable public host. Pure, so it is unit-tested
-// directly (the happy-path fetch test cannot go through the guarded dialer,
-// since httptest binds loopback).
-func isDisallowedIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() ||
-		ip.IsInterfaceLocalMulticast() {
-		return true
-	}
-	// 100.64.0.0/10 (RFC 6598 carrier-grade NAT) is not covered by IsPrivate.
-	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 0x40 {
-		return true
-	}
-	return false
-}
+// address that is not a routable public host.
+//
+// One implementation, in internal/publicdial, shared with the webhook
+// deliveries -- which make the same kind of request for the same kind of
+// reason, to a URL somebody else chose. Two copies of this list would mean
+// the one that is not being looked at falls behind.
+func isDisallowedIP(ip net.IP) bool { return publicdial.DisallowedIP(ip) }
 
 // hostAllowed applies the optional allowlist.
 func (r *cimdResolver) hostAllowed(host string) bool {

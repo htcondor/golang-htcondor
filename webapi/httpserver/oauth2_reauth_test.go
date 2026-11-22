@@ -29,6 +29,7 @@ func TestSessionCloneDeepPreservesFields(t *testing.T) {
 	authTime := time.Now().UTC().Add(-3 * time.Hour).Round(time.Second)
 	orig := DefaultOpenIDConnectSession("alice").WithGroups([]string{"condor-writers"})
 	orig.AuthTime = authTime
+	orig.LastUsed = authTime.Add(2 * time.Hour)
 	orig.AuthorizedScopes = []string{"mcp:read", "mcp:write"}
 
 	cloned, ok := orig.Clone().(*Session)
@@ -37,6 +38,14 @@ func TestSessionCloneDeepPreservesFields(t *testing.T) {
 	}
 	if cloned.AuthTime != authTime {
 		t.Errorf("AuthTime lost through Clone: got %v want %v", cloned.AuthTime, authTime)
+	}
+	// The clock the idle cap is measured from. Lost through Clone, every
+	// refresh would reset it to zero and the cap would fall back to
+	// AuthTime forever -- so a grant in continuous use would be revoked
+	// for the age of its consent, which is what the idle cap exists to
+	// stop doing.
+	if cloned.LastUsed != orig.LastUsed {
+		t.Errorf("LastUsed lost through Clone: got %v want %v", cloned.LastUsed, orig.LastUsed)
 	}
 	if len(cloned.Groups) != 1 || cloned.Groups[0] != "condor-writers" {
 		t.Errorf("Groups lost through Clone: got %v", cloned.Groups)
@@ -324,9 +333,10 @@ func TestRefreshRevokedWhenAccessGroupLost(t *testing.T) {
 	}
 }
 
-// TestRefreshRevokedPastLifetimeCap covers the backstop that applies even
-// when no policy changed and no oracle objected.
-func TestRefreshRevokedPastLifetimeCap(t *testing.T) {
+// TestRefreshRevokedPastIdleCap covers the backstop that applies even when no
+// policy changed and no oracle objected: a grant nobody has exercised for
+// longer than the cap has to be consented again.
+func TestRefreshRevokedPastIdleCap(t *testing.T) {
 	f := newReauthFixture(t, Config{OAuth2MaxGrantLifetime: time.Hour})
 
 	_, refreshToken, _ := f.grant(t, "alice", []string{"condor-users"})
@@ -338,25 +348,86 @@ func TestRefreshRevokedPastLifetimeCap(t *testing.T) {
 	}
 	refreshToken, _ = body["refresh_token"].(string)
 
-	// Age the grant past the cap. AuthTime rides in the stored session, so
-	// rewriting it is how the passage of time is simulated.
-	backdateAuthTime(t, f, -2*time.Hour)
+	// Age the whole grant past the cap. Both clocks ride in the stored
+	// session, so rewriting them is how the passage of time is simulated.
+	backdateBothClocks(t, f, -2*time.Hour)
 
 	status, body = f.refresh(t, refreshToken)
 	if status == http.StatusOK {
-		t.Fatalf("refresh past the lifetime cap should have been denied: %v", body)
+		t.Fatalf("refresh past the idle cap should have been denied: %v", body)
 	}
 	if got, _ := body["error"].(string); got != "invalid_grant" {
 		t.Errorf("error = %q, want invalid_grant", got)
 	}
-	if desc, _ := body["error_description"].(string); !strings.Contains(desc, "maximum lifetime") {
-		t.Errorf("error_description = %q, want it to name the lifetime cap", desc)
+	if desc, _ := body["error_description"].(string); !strings.Contains(desc, "unused for longer") {
+		t.Errorf("error_description = %q, want it to name the idle cap", desc)
 	}
 }
 
-// backdateAuthTime rewrites the persisted AuthTime on every live refresh row,
+// TestRefreshInUseOutlivesConsentAge is the point of measuring the cap from
+// last use: an unattended integration that keeps refreshing is not logged out
+// on a fixed schedule, because there is nobody to re-consent it.
+//
+// The grant's consent is aged far past the cap while its last use is left
+// alone, which is exactly the state a client refreshing on a timer is in.
+func TestRefreshInUseOutlivesConsentAge(t *testing.T) {
+	f := newReauthFixture(t, Config{OAuth2MaxGrantLifetime: time.Hour})
+
+	_, refreshToken, _ := f.grant(t, "alice", []string{"condor-users"})
+
+	// One refresh, so the grant has a recorded use that is not its consent.
+	status, body := f.refresh(t, refreshToken)
+	if status != http.StatusOK {
+		t.Fatalf("first refresh should succeed, got %d: %v", status, body)
+	}
+	refreshToken, _ = body["refresh_token"].(string)
+
+	backdateConsentOnly(t, f, -200*time.Hour)
+
+	status, body = f.refresh(t, refreshToken)
+	if status != http.StatusOK {
+		t.Fatalf("a grant still in use must not be revoked for the age of its consent, got %d: %v", status, body)
+	}
+}
+
+// TestRefreshRevokedWhenNeverUsed covers the fallback: a grant consented long
+// ago and never refreshed has no LastUsed, and its consent is then the only
+// use it has. Without the fallback such a grant would be exempt from the cap
+// forever, which is the opposite of what an abandoned grant should get.
+func TestRefreshRevokedWhenNeverUsed(t *testing.T) {
+	f := newReauthFixture(t, Config{OAuth2MaxGrantLifetime: time.Hour})
+
+	_, refreshToken, _ := f.grant(t, "alice", []string{"condor-users"})
+
+	// No refresh at all, so the stored session carries no LastUsed.
+	backdateConsentOnly(t, f, -2*time.Hour)
+
+	status, body := f.refresh(t, refreshToken)
+	if status == http.StatusOK {
+		t.Fatalf("a grant unused since consent should have been denied: %v", body)
+	}
+	if desc, _ := body["error_description"].(string); !strings.Contains(desc, "unused for longer") {
+		t.Errorf("error_description = %q, want it to name the idle cap", desc)
+	}
+}
+
+// backdateBothClocks ages a grant by shifting both of its clocks, which is what
+// time actually passing looks like to a grant nobody is using.
+func backdateBothClocks(t *testing.T, f *reauthFixture, delta time.Duration) {
+	t.Helper()
+	backdateReauthSessions(t, f, delta, true)
+}
+
+// backdateConsentOnly shifts consent back and leaves the last use where it
+// is: a grant that has been held a long time and is still being exercised.
+func backdateConsentOnly(t *testing.T, f *reauthFixture, delta time.Duration) {
+	t.Helper()
+	backdateReauthSessions(t, f, delta, false)
+}
+
+// backdateReauthSessions rewrites the persisted clocks on every live refresh row,
 // simulating the passage of time without a clock injection point.
-func backdateAuthTime(t *testing.T, f *reauthFixture, delta time.Duration) {
+func backdateReauthSessions(t *testing.T, f *reauthFixture, delta time.Duration, alsoLastUsed bool) {
 	t.Helper()
 	ctx := context.Background()
 	rows, err := f.server.db.QueryContext(ctx,
@@ -386,6 +457,9 @@ func backdateAuthTime(t *testing.T, f *reauthFixture, delta time.Duration) {
 			t.Fatalf("stored session has no AuthTime; the consent path is not recording it")
 		}
 		sess.AuthTime = sess.AuthTime.Add(delta)
+		if alsoLastUsed && !sess.LastUsed.IsZero() {
+			sess.LastUsed = sess.LastUsed.Add(delta)
+		}
 		blob, err := json.Marshal(sess)
 		if err != nil {
 			t.Fatalf("marshal session: %v", err)

@@ -80,15 +80,18 @@ func wantInvalidGrant(t *testing.T, status int, body map[string]any, what string
 	}
 }
 
-// adminRequest builds a request carrying an administrator's web session.
-func adminRequest(t *testing.T, server *Server, method, target, body string) *http.Request {
+// adminPostRequest builds a POST carrying an administrator's web session.
+//
+// POST only: every admin endpoint these tests drive takes one, and a method
+// parameter that is always the same value is generality nothing uses.
+func adminPostRequest(t *testing.T, server *Server, target, body string) *http.Request {
 	t.Helper()
 	server.webuiAdminGroups = newGroupSet("condor-admins")
 	sid, _, err := server.sessionStore.Create("root", []string{"condor-admins"})
 	if err != nil {
 		t.Fatalf("session create: %v", err)
 	}
-	r := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, target, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid}) //nolint:gosec // test cookie
 	return r
@@ -150,7 +153,7 @@ func TestExchangedTokenIsRevokedWithItsSubjectGrant(t *testing.T) {
 
 	sig := f.server.oauth2Provider.GetStrategy().AccessTokenSignature(context.Background(), aliceAccess)
 	rec := httptest.NewRecorder()
-	f.server.handleAdminRevokeToken(rec, adminRequest(t, f.server, http.MethodPost,
+	f.server.handleAdminRevokeToken(rec, adminPostRequest(t, f.server,
 		"/api/v1/admin/oauth2/tokens/revoke", `{"kind":"access","fingerprint":"`+sig+`"}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin revoke status %d: %s", rec.Code, rec.Body.String())

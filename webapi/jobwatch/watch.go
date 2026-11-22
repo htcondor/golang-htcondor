@@ -509,7 +509,7 @@ func (f *Fold) Queued(ad *classad.ClassAd) {
 	// from Finished() (the history read) would never fire for such a job even
 	// though the queue plainly shows it done. Resolve it here, and mark it
 	// accounted-for (not inQueue) so Done() does not count it as still running.
-	if isTerminalStatus(statusOf(ad)) {
+	if TerminalAd(ad) {
 		p.inHistory = true
 		p.ended = true
 		f.seen[id] = p
@@ -522,19 +522,17 @@ func (f *Fold) Queued(ad *classad.ClassAd) {
 
 	// Decide the live events here, while the ad is in hand: keeping it
 	// until Done would be keeping the queue.
-	switch f.w.Event {
-	case EventHeld:
-		if statusOf(ad) == statusHeld {
-			f.hit(id, ad)
-		}
-	case EventRunning:
-		if statusOf(ad) == statusRunning {
-			f.hit(id, ad)
-		}
-	case EventCustom:
+	//
+	// Custom is the one this cannot delegate: the condition is a compiled
+	// matcher belonging to this watch, not something an ad answers for.
+	if f.w.Event == EventCustom {
 		if f.w.matchCondition != nil && f.w.matchCondition.Matches(ad) {
 			f.hit(id, ad)
 		}
+		return
+	}
+	if Satisfies(f.w.Event, ad, InQueue) {
+		f.hit(id, ad)
 	}
 }
 
@@ -567,27 +565,11 @@ func (f *Fold) Finished(ad *classad.ClassAd) {
 // job observed in a terminal state, whether that observation is a history row
 // (Finished) or a terminal ad still in the queue (Queued).
 func (f *Fold) resolveTerminal(id JobID, ad *classad.ClassAd) {
-	switch f.w.Event {
-	case EventDone:
+	// Shared with the webhook evaluator, which asks the same question per
+	// job; see Satisfies for why "running" is answered from a terminal ad
+	// at all.
+	if Satisfies(f.w.Event, ad, AsTerminal) {
 		f.hit(id, ad)
-	case EventSucceeded, EventFailed:
-		if succeeded(ad) == (f.w.Event == EventSucceeded) {
-			f.hit(id, ad)
-		}
-	case EventRunning:
-		// "Running" is a state, and a state is only observable while it
-		// lasts. The evaluator samples the queue every few seconds, so a
-		// job that starts and finishes between two passes was never seen
-		// running -- and a watch that decided this on the live sample
-		// alone would wait out its whole timeout for a job that ran to
-		// completion minutes ago. That is not a rare shape: it is what a
-		// short job on an idle pool does every time.
-		//
-		// The terminal ad still carries the evidence, so ask it whether
-		// the job ever started rather than whether it is running now.
-		if everRan(ad) {
-			f.hit(id, ad)
-		}
 	}
 }
 

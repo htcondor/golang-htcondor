@@ -470,6 +470,19 @@ func multiAPAllowed(method, path string) bool {
 		// never a schedd. The submit page reads and saves them.
 		return true
 	}
+	if path == "/api/v1/webhooks" || strings.HasPrefix(path, "/api/v1/webhooks/") {
+		// A user's own webhooks, in this server's database. The evaluator
+		// reads every access point through the hub, so a hook does not
+		// belong to one and is not routed to one.
+		return true
+	}
+	if path == "/api/v1/integrations" || strings.HasPrefix(path, "/api/v1/integrations/") {
+		// A user's own OAuth2 clients, in this server's database. There
+		// is one client table for the server however many access points
+		// it fronts, so these do not belong to an AP and are not routed
+		// to one.
+		return true
+	}
 	for _, p := range multiAPAdminPaths {
 		if path == p || strings.HasPrefix(path, strings.TrimSuffix(p, "/")+"/") {
 			return true
