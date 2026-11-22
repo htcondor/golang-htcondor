@@ -48,7 +48,7 @@ func seqOver(data []byte, window int) *SequentialReaderAt {
 func TestSeqReaderAtForwardReads(t *testing.T) {
 	data := pattern(300 * 1024)
 	s := seqOver(data, 64*1024)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	const chunk = 32 * 1024
 	got := make([]byte, 0, len(data))
@@ -74,7 +74,7 @@ func TestSeqReaderAtForwardReads(t *testing.T) {
 func TestSeqReaderAtOutOfOrderWithinWindow(t *testing.T) {
 	data := pattern(200 * 1024)
 	s := seqOver(data, 128*1024)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// Jump ahead first, then come back for what the stream passed.
 	for _, off := range []int64{96 * 1024, 32 * 1024, 64 * 1024, 0, 128 * 1024} {
@@ -94,7 +94,7 @@ func TestSeqReaderAtOutOfOrderWithinWindow(t *testing.T) {
 func TestSeqReaderAtConcurrentReads(t *testing.T) {
 	data := pattern(4 << 20)
 	s := seqOver(data, DefaultWindow)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	const (
 		workers = 8
@@ -145,7 +145,7 @@ func TestSeqReaderAtConcurrentReads(t *testing.T) {
 func TestSeqReaderAtRefusesReadBehind(t *testing.T) {
 	data := pattern(1 << 20)
 	s := seqOver(data, 64*1024)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	buf := make([]byte, 4096)
 	if _, err := s.ReadAt(buf, 900*1024); err != nil {
@@ -167,7 +167,7 @@ func TestSeqReaderAtWindowStaysBounded(t *testing.T) {
 	const window = 64 * 1024
 	data := pattern(8 << 20)
 	s := seqOver(data, window)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	buf := make([]byte, 32*1024)
 	for off := int64(0); off < int64(len(data)); off += int64(len(buf)) {
@@ -189,7 +189,7 @@ func TestSeqReaderAtWindowStaysBounded(t *testing.T) {
 func TestSeqReaderAtReadLargerThanWindow(t *testing.T) {
 	data := pattern(512 * 1024)
 	s := seqOver(data, 8*1024)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	buf := make([]byte, 256*1024)
 	n, err := s.ReadAt(buf, 0)
@@ -206,7 +206,7 @@ func TestSeqReaderAtReadLargerThanWindow(t *testing.T) {
 func TestSeqReaderAtEOF(t *testing.T) {
 	data := pattern(1000)
 	s := seqOver(data, 4096)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	buf := make([]byte, 400)
 	if n, err := s.ReadAt(buf, 800); n != 200 || !errors.Is(err, io.EOF) {
@@ -228,7 +228,7 @@ func TestSeqReaderAtStreamErrorIsSticky(t *testing.T) {
 	boom := errors.New("transfer died")
 	src := io.MultiReader(bytes.NewReader(pattern(100)), errReader{boom})
 	s := NewSequentialReaderAt(nopCloser{src}, 4096)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	buf := make([]byte, 400)
 	n, err := s.ReadAt(buf, 0)
@@ -302,6 +302,6 @@ func TestSeqReaderAtRandomForwardOffsets(t *testing.T) {
 			}
 			off += step
 		}
-		s.Close()
+		_ = s.Close()
 	}
 }

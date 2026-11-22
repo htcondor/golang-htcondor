@@ -45,7 +45,7 @@ func put(t *testing.T, c *dataCache, k entryKey, body []byte) {
 	if !ok {
 		t.Fatalf("Stage %s refused", k.name)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if _, err := s.Write(body); err != nil {
 		t.Fatalf("Write %s: %v", k.name, err)
 	}
@@ -73,7 +73,7 @@ func TestDataCacheRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("Open missed a committed entry")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if got := readAll(t, f); !bytes.Equal(got, body) {
 		t.Errorf("read %q, want %q", got, body)
 	}
@@ -85,7 +85,7 @@ func TestDataCacheRoundTrip(t *testing.T) {
 func TestDataCacheMissIsNotAnError(t *testing.T) {
 	c := testCache(t, 1<<20)
 	if f, ok := c.Open(key(1, 0, "nope")); ok {
-		f.Close()
+		_ = f.Close()
 		t.Fatal("Open hit an entry that was never cached")
 	}
 }
@@ -107,7 +107,7 @@ func TestDataCacheShortWriteIsNotPublished(t *testing.T) {
 		t.Fatal("Commit published a short write")
 	}
 	if f, ok := c.Open(k); ok {
-		f.Close()
+		_ = f.Close()
 		t.Error("a short write became visible anyway")
 	}
 	if c.Bytes() != 0 || c.Len() != 0 {
@@ -136,7 +136,7 @@ func TestDataCacheAbandonedStageLeavesNothing(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	if f, ok := c.Open(key(6, 0, "gone.dat")); ok {
-		f.Close()
+		_ = f.Close()
 		t.Error("an abandoned stage became visible")
 	}
 	// Close after Close is a no-op, so `defer Close()` beside a Commit
@@ -161,7 +161,7 @@ func TestDataCacheEvictionKeepsOpenReaders(t *testing.T) {
 	if !ok {
 		t.Fatal("Open missed a committed entry")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read a little, then evict out from under the reader.
 	head := make([]byte, 16)
@@ -172,12 +172,15 @@ func TestDataCacheEvictionKeepsOpenReaders(t *testing.T) {
 
 	// The name is gone...
 	if f2, ok := c.Open(k); ok {
-		f2.Close()
+		_ = f2.Close()
 		t.Error("Open hit an evicted entry")
 	}
 	// ...and the open reader still finishes the whole file.
 	rest := readAll(t, f)
-	if got := append(head, rest...); !bytes.Equal(got, body) {
+	got := make([]byte, 0, len(head)+len(rest))
+	got = append(got, head...)
+	got = append(got, rest...)
+	if !bytes.Equal(got, body) {
 		t.Errorf("reader got %d bytes after eviction, want %d", len(got), len(body))
 	}
 	if c.Bytes() != 0 {
@@ -202,7 +205,7 @@ func TestDataCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	if !ok {
 		t.Fatal("Open missed a")
 	}
-	f.Close()
+	_ = f.Close()
 
 	put(t, c, d, body)
 	put(t, c, key(1, 0, "e"), body) // one over the budget
@@ -229,7 +232,7 @@ func TestDataCacheRefusesWhatCannotFit(t *testing.T) {
 		t.Fatalf("Stage: %v", err)
 	}
 	if ok {
-		s.Close()
+		_ = s.Close()
 		t.Fatal("Stage accepted a file larger than the budget")
 	}
 	if s != nil {
@@ -292,7 +295,7 @@ func TestDataCacheSurvivesDirectoryRemoval(t *testing.T) {
 	}
 
 	if f, ok := c.Open(k); ok {
-		f.Close()
+		_ = f.Close()
 		t.Error("Open hit an entry whose file an operator deleted")
 	}
 
@@ -303,7 +306,7 @@ func TestDataCacheSurvivesDirectoryRemoval(t *testing.T) {
 	if !ok {
 		t.Fatal("the cache did not recover from having its directory removed")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if got := readAll(t, f); string(got) != "after" {
 		t.Errorf("read %q, want \"after\"", got)
 	}
@@ -320,7 +323,7 @@ func TestDataCacheEvictJob(t *testing.T) {
 
 	for _, k := range []entryKey{key(1, 0, "a"), key(1, 0, "sub/b")} {
 		if f, ok := c.Open(k); ok {
-			f.Close()
+			_ = f.Close()
 			t.Errorf("1.0/%s survived EvictJob", k.name)
 		}
 	}
@@ -361,7 +364,7 @@ func TestDataCacheReplacesAnEntry(t *testing.T) {
 	if !ok {
 		t.Fatal("Open missed the replaced entry")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if got := readAll(t, f); string(got) != "second" {
 		t.Errorf("read %q, want \"second\"", got)
 	}
@@ -463,7 +466,7 @@ func TestCacheIsUsableBeforeTheDeleteFinishes(t *testing.T) {
 	if !ok {
 		t.Fatal("the cache was not usable before the background delete finished")
 	}
-	f.Close()
+	_ = f.Close()
 
 	c.waitSwept()
 	if _, err := os.Stat(filepath.Join(dir, "alice")); err == nil {

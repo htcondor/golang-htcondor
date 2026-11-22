@@ -92,16 +92,16 @@ func TestRefForAccountKeepsUserTemplatesPrivate(t *testing.T) {
 func stageTemplate(t *testing.T, dir, name, submit, readme string) {
 	t.Helper()
 	d := filepath.Join(dir, name)
-	if err := os.MkdirAll(d, 0o755); err != nil {
+	if err := os.MkdirAll(d, 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if submit != "" {
-		if err := os.WriteFile(filepath.Join(d, SubmitFileName), []byte(submit), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(d, SubmitFileName), []byte(submit), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
 	}
 	if readme != "" {
-		if err := os.WriteFile(filepath.Join(d, ReadmeFileName), []byte(readme), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(d, ReadmeFileName), []byte(readme), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
 	}
@@ -114,7 +114,7 @@ func TestDirTemplatesListsAndReads(t *testing.T) {
 	// Skipped: no job.sub.
 	stageTemplate(t, dir, "halfdone", "", "just a readme\n")
 	// Skipped: not a directory.
-	if err := os.WriteFile(filepath.Join(dir, "loose.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "loose.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 

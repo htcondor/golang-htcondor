@@ -158,9 +158,10 @@ func (f *FS) statTemplates(r ref, p string) (listerAt, error) {
 			return nil, err
 		}
 		name := r.tref.Name
-		if r.kind == kindSubmitDir {
+		switch r.kind {
+		case kindSubmitDir:
 			name = submitDirName
-		} else if r.kind == kindStatusDir {
+		case kindStatusDir:
 			name = statusDirName
 		}
 		return listerAt{dirInfo(name, time.Time{})}, nil

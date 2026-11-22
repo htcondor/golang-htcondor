@@ -57,7 +57,7 @@ func TestTarSizeIsExact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenTar: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if size != want {
 		t.Errorf("OpenTar reported %d, TarSize said %d", size, want)
 	}
@@ -135,7 +135,7 @@ func TestOpenCachedFileSupportsRandomAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	ra, ok := r.(io.ReaderAt)
 	if !ok {
@@ -275,7 +275,7 @@ func TestOpenTarRefusesASizeThatChanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenTar: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if declared != size {
 		t.Errorf("OpenTar declared %d, TarSize said %d", declared, size)
 	}
@@ -384,7 +384,7 @@ func TestCloseEndsTheTransferEarly(t *testing.T) {
 
 func mustRead(t *testing.T, r io.ReadCloser, want []byte) {
 	t.Helper()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	got, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("read: %v", err)

@@ -106,7 +106,7 @@ func TestServiceSubsystemGetsTheChannel(t *testing.T) {
 
 	c := gatewayClient(t, gatewayWithServer(t, srv), "+jobs")
 	ch, reqs := openSubsystem(t, c, "sftp")
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	if _, err := io.WriteString(ch, "hello\n"); err != nil {
 		t.Fatalf("write: %v", err)
@@ -170,7 +170,7 @@ func TestServiceRefusesAShellWithAnExplanation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewSession: %v", err)
 			}
-			defer sess.Close()
+			defer func() { _ = sess.Close() }()
 
 			var stderr strings.Builder
 			sess.Stderr = &stderr
@@ -207,7 +207,7 @@ func TestServiceHookErrorEndsTheChannel(t *testing.T) {
 
 	c := gatewayClient(t, gatewayWithServer(t, srv), "+jobs")
 	ch, reqs := openSubsystem(t, c, "sftp")
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	msg, err := io.ReadAll(ch.Stderr())
 	if err != nil {
@@ -252,7 +252,7 @@ func TestServiceToleratesHarmlessRequests(t *testing.T) {
 
 	// And the subsystem still works on a fresh channel.
 	ch, _ := openSubsystem(t, c, "sftp")
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 	line, err := bufio.NewReader(ch).ReadString('\n')
 	if err != nil {
 		t.Fatalf("read: %v", err)

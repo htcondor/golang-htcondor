@@ -144,7 +144,7 @@ func TestClientDownloadsAStreamedArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rf.Close()
+	defer func() { _ = rf.Close() }()
 
 	// WriteTo is the concurrent path; io.ReadAll would be sequential and
 	// would not exercise it.
@@ -174,7 +174,7 @@ func TestClientDownloadsALargeStreamedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rf.Close()
+	defer func() { _ = rf.Close() }()
 
 	var buf bytes.Buffer
 	if _, err := rf.WriteTo(&buf); err != nil && !errors.Is(err, io.EOF) {
@@ -202,7 +202,7 @@ func TestStreamingWindowHasHeadroom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rf.Close()
+	defer func() { _ = rf.Close() }()
 	var buf bytes.Buffer
 	if _, err := rf.WriteTo(&buf); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("a quarter of DefaultWindow could not serve a real client: %v", err)

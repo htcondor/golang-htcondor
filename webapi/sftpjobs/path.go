@@ -101,8 +101,7 @@ type ref struct {
 // rather than repaired.
 func parsePath(p string) (ref, error) {
 	parts := splitPath(p)
-	switch len(parts) {
-	case 0:
+	if len(parts) == 0 {
 		return ref{kind: kindRoot}, nil
 	}
 	switch parts[0] {

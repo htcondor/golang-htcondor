@@ -273,7 +273,7 @@ func (f *FS) listLayout(l *sandboxfs.Layout, dir string) listerAt {
 		case e.Dir:
 			out = append(out, dirInfo(name, time.Time{}))
 		default:
-			out = append(out, fileInfo{name: name, size: e.Size, mode: fs.FileMode(e.Mode).Perm()})
+			out = append(out, fileInfo{name: name, size: e.Size, mode: permBits(e.Mode)})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
@@ -321,7 +321,7 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 			return listerAt{fileInfo{
 				name: path.Base(e.Name),
 				size: e.Size,
-				mode: fs.FileMode(e.Mode).Perm(),
+				mode: permBits(e.Mode),
 			}}, nil
 		}
 		// An implied directory: something in the layout lives under it.
@@ -447,6 +447,15 @@ type fileInfo struct {
 
 func dirInfo(name string, mod time.Time) fileInfo {
 	return fileInfo{name: name, mode: fs.ModeDir | 0o555, mod: mod}
+}
+
+// permBits is a layout entry's permission bits.
+//
+// The mask comes before the conversion, not after: Mode arrives from the
+// wire as an int64, and a value wider than fs.FileMode would wrap on the
+// way in rather than be narrowed by a later .Perm().
+func permBits(mode int64) fs.FileMode {
+	return fs.FileMode(mode & 0o777)
 }
 
 func (f fileInfo) Name() string       { return f.name }

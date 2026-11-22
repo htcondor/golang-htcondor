@@ -337,8 +337,8 @@ func (s *Store) store(key Job, l *Layout) {
 	// Evict while over budget, but never to empty: one layout larger than
 	// the whole budget stays, because dropping everything else and still
 	// being over helps nobody.
-	max := s.cfg.maxCachedEntries()
-	for max > 0 && s.entries > max && s.lru.Len() > 1 {
+	limit := s.cfg.maxCachedEntries()
+	for limit > 0 && s.entries > limit && s.lru.Len() > 1 {
 		back := s.lru.Back()
 		if back == nil {
 			break
