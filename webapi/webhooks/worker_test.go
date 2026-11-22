@@ -48,7 +48,7 @@ func (r *receiver) handler() http.HandlerFunc {
 			Key:       req.Header.Get(IdempotencyHeader),
 			Signature: req.Header.Get(SignatureHeader),
 			Event:     req.Header.Get(EventHeader),
-			Hook:      req.Header.Get(HookHeader),
+			Hook:      req.Header.Get(EndpointHeader),
 		})
 		status, msg := r.status, r.body
 		r.mu.Unlock()
@@ -68,11 +68,12 @@ func (r *receiver) seen() []recorded {
 	return append([]recorded(nil), r.requests...)
 }
 
-// fixture is a store, a hook pointed at a TLS receiver, and a dispatcher
-// whose sender trusts it.
+// fixture is a store, an endpoint pointed at a TLS receiver with one
+// subscription feeding it, and a dispatcher whose sender trusts it.
 type fixture struct {
 	store *Store
-	hook  *Hook
+	ep    *Endpoint
+	sub   *Subscription
 	disp  *Dispatcher
 	recv  *receiver
 	srv   *httptest.Server
@@ -88,16 +89,21 @@ func newFixture(t *testing.T, scope Scope, events ...jobwatch.Event) *fixture {
 	t.Cleanup(srv.Close)
 
 	store := newStore(t)
-	h := &Hook{Owner: "alice", Label: "Receiver", Scope: scope, Events: events}
+	ep, _, err := store.CreateEndpoint(context.Background(),
+		&Endpoint{Owner: "alice", Label: "Receiver"}, srv.URL)
+	if err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+	s := &Subscription{EndpointID: ep.ID, Owner: "alice", Label: "watch", Scope: scope, Events: events}
 	if scope == ScopeJob {
-		h.Job = jobwatch.JobID{Cluster: 42, Proc: 1}
+		s.Job = jobwatch.JobID{Cluster: 42, Proc: 1}
 	}
 	if scope == ScopeBatch {
-		h.BatchID, h.BatchName = "42", "nightly"
+		s.BatchID, s.BatchName = "42", "nightly"
 	}
-	hook, _, err := store.Create(context.Background(), h, srv.URL)
+	sub, err := store.CreateSubscription(context.Background(), s)
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("CreateSubscription: %v", err)
 	}
 
 	sender := NewSender()
@@ -106,38 +112,54 @@ func newFixture(t *testing.T, scope Scope, events ...jobwatch.Event) *fixture {
 	sender.client = srv.Client()
 
 	disp := NewDispatcher(store, sender, func(string, ...any) {})
-	return &fixture{store: store, hook: hook, disp: disp, recv: recv, srv: srv}
+	return &fixture{store: store, ep: ep, sub: sub, disp: disp, recv: recv, srv: srv}
 }
 
 // enqueue puts one delivery on the queue for cluster.0.
 //
 // The event is the fixture's own first one rather than an argument: every
-// caller wants the event its hook was created for, and passing it again only
-// gave two places to disagree.
+// caller wants the event its subscription was created for, and passing it
+// again only gave two places to disagree.
 func (f *fixture) enqueue(t *testing.T, cluster int64) string {
 	t.Helper()
-	e := f.hook.Events[0]
+	e := f.sub.Events[0]
 	job := jobwatch.JobID{Cluster: cluster, Proc: 0}
-	key := DeliveryKey(f.hook.ID, e, job)
-	payload, err := RenderPayload(f.hook, e,
-		&JobPayload{Cluster: cluster, ID: "x", Owner: "alice"}, key, time.Now(), false)
+	key := DeliveryKey(f.ep.ID, e, job)
+	payload, err := RenderPayload(f.ep, f.sub, e,
+		&JobPayload{Cluster: cluster, ID: "x", Owner: "alice"}, nil, key, time.Now(), false)
 	if err != nil {
 		t.Fatalf("RenderPayload: %v", err)
 	}
-	if _, err := f.store.Enqueue(context.Background(), f.hook.ID, "alice", e, &job, payload, key); err != nil {
+	if _, err := f.store.Enqueue(context.Background(), f.ep.ID, "alice", e, &job, payload, key); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	return key
 }
 
-// reread returns the hook as stored.
-func (f *fixture) reread(t *testing.T) *Hook {
+// reread returns the endpoint as stored.
+func (f *fixture) reread(t *testing.T) *Endpoint {
 	t.Helper()
-	h, err := f.store.Get(context.Background(), "alice", f.hook.ID)
+	ep, err := f.store.GetEndpoint(context.Background(), "alice", f.ep.ID)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("GetEndpoint: %v", err)
 	}
-	return h
+	return ep
+}
+
+// clearBackoff lets the next pass claim, without pretending a delivery
+// succeeded. Tests that want several attempts in a row need this because a
+// failing endpoint is deliberately not claimable again for minutes.
+func (f *fixture) clearBackoff(t *testing.T) {
+	t.Helper()
+	if _, err := f.store.db.ExecContext(context.Background(),
+		`UPDATE webhook_endpoints SET backoff_until = NULL WHERE id = ?`, f.ep.ID); err != nil {
+		t.Fatalf("clear backoff: %v", err)
+	}
+	if _, err := f.store.db.ExecContext(context.Background(),
+		`UPDATE webhook_deliveries SET next_attempt_at = ? WHERE endpoint_id = ?`,
+		time.Now().UTC().Add(-time.Minute), f.ep.ID); err != nil {
+		t.Fatalf("make due: %v", err)
+	}
 }
 
 // deliveryRow returns one delivery's state.
@@ -179,12 +201,12 @@ func TestDeliverySucceeds(t *testing.T) {
 	if got.Event != "failed" {
 		t.Errorf("X-HTCondor-Event = %q, want failed", got.Event)
 	}
-	if got.Hook != f.hook.ID {
-		t.Errorf("X-HTCondor-Webhook = %q, want %q", got.Hook, f.hook.ID)
+	if got.Hook != f.ep.ID {
+		t.Errorf("X-HTCondor-Webhook = %q, want %q", got.Hook, f.ep.ID)
 	}
 	// The signature has to verify at the receiver with the secret the
 	// creation handed out -- that is the whole point of sending one.
-	_, secret, err := f.store.Destination(context.Background(), f.hook.ID)
+	_, secret, err := f.store.Destination(context.Background(), f.ep.ID)
 	if err != nil {
 		t.Fatalf("Destination: %v", err)
 	}
@@ -227,10 +249,22 @@ func TestDeliveryRetriesOnServerError(t *testing.T) {
 	}
 	h := f.reread(t)
 	if h.LastStatus != http.StatusBadGateway {
-		t.Errorf("hook last_status = %d, want 502", h.LastStatus)
+		t.Errorf("endpoint last_status = %d, want 502", h.LastStatus)
 	}
-	if h.DisabledAt != nil {
-		t.Error("a hook was disabled for one retryable failure")
+	if h.ConsecutiveFailures != 1 {
+		t.Errorf("consecutive_failures = %d, want 1", h.ConsecutiveFailures)
+	}
+	// The backoff is on the ENDPOINT, and the delivery's next attempt is
+	// that backoff rather than a schedule of its own.
+	if h.BackoffUntil == nil {
+		t.Fatal("a failing endpoint recorded no backoff")
+	}
+	if !h.Failing(time.Now()) {
+		t.Error("the endpoint does not report itself as backing off")
+	}
+	if next.Sub(*h.BackoffUntil).Abs() > time.Second {
+		t.Errorf("the delivery's next attempt (%s) is not the endpoint's backoff (%s)",
+			next, *h.BackoffUntil)
 	}
 }
 
@@ -271,94 +305,153 @@ func TestDeliveryAbandonsPermanentRefusal(t *testing.T) {
 	}
 }
 
-// TestHookDisabledAfterRepeatedGiveUps: a hook is disabled rather than left
-// failing quietly, because silence reads as "nothing has happened yet".
-func TestHookDisabledAfterRepeatedGiveUps(t *testing.T) {
+// TestEndpointIsNeverDisabled is the policy, stated as a test: a
+// destination that keeps failing backs off and keeps its place in the queue.
+// It is not switched off, because a switched-off hook comes back only if
+// somebody happens to revisit a page they have no reason to look at.
+func TestEndpointIsNeverDisabled(t *testing.T) {
 	f := newFixture(t, ScopeOwner)
-	f.recv.mu.Lock()
-	f.recv.status = http.StatusNotFound
-	f.recv.mu.Unlock()
-
-	for i := 0; i < MaxConsecutiveFailures; i++ {
-		f.enqueue(t, int64(100+i))
-	}
-	st, err := f.disp.Pass(context.Background())
-	if err != nil {
-		t.Fatalf("Pass: %v", err)
-	}
-	if st.Abandoned != MaxConsecutiveFailures {
-		t.Fatalf("abandoned %d, want %d", st.Abandoned, MaxConsecutiveFailures)
-	}
-	if st.Disabled != 1 {
-		t.Errorf("disabled %d hooks, want 1", st.Disabled)
-	}
-	h := f.reread(t)
-	if h.DisabledAt == nil {
-		t.Fatal("the hook was not disabled after repeated give-ups")
-	}
-	if h.DisabledReason == "" {
-		t.Error("the hook was disabled with no reason to show the user")
-	}
-	// A disabled hook is no longer evaluated.
-	live, err := f.store.Live(context.Background())
-	if err != nil {
-		t.Fatalf("Live: %v", err)
-	}
-	for _, l := range live {
-		if l.ID == h.ID {
-			t.Error("a disabled hook is still live")
-		}
-	}
-
-	// And the user can put it back once they have fixed the destination.
-	if err := f.store.Enable(context.Background(), "alice", h.ID); err != nil {
-		t.Fatalf("Enable: %v", err)
-	}
-	again := f.reread(t)
-	if again.DisabledAt != nil || again.ConsecutiveFailures != 0 {
-		t.Errorf("Enable left the hook disabled or still counting failures: %+v", again)
-	}
-}
-
-// TestDeliveryGivesUpAfterMaxAttempts covers the budget, as distinct from a
-// permanent refusal: the receiver is broken rather than refusing, and the
-// retries do eventually stop.
-func TestDeliveryGivesUpAfterMaxAttempts(t *testing.T) {
-	f := newFixture(t, ScopeJob)
 	f.recv.mu.Lock()
 	f.recv.status = http.StatusServiceUnavailable
 	f.recv.mu.Unlock()
-	key := f.enqueue(t, 42)
+	key := f.enqueue(t, 100)
 
 	ctx := context.Background()
-	for i := 0; i < MaxAttempts+2; i++ {
-		// The backoff is a stored timestamp, so make the row due again
-		// rather than waiting out a real delay.
-		if _, err := f.store.db.ExecContext(ctx,
-			`UPDATE webhook_deliveries SET next_attempt_at = ? WHERE id = ? AND state = ?`,
-			time.Now().UTC().Add(-time.Second), key, StatePending); err != nil {
-			t.Fatalf("make due: %v", err)
-		}
+	var last time.Duration
+	for i := 0; i < 12; i++ {
+		f.clearBackoff(t)
 		if _, err := f.disp.Pass(ctx); err != nil {
 			t.Fatalf("Pass %d: %v", i, err)
 		}
+		ep := f.reread(t)
+		if ep.BackoffUntil == nil {
+			t.Fatalf("pass %d: no backoff recorded", i)
+		}
+		last = time.Until(*ep.BackoffUntil)
 	}
+
+	// Still pending after a dozen failures. Nothing gave up on it.
 	state, attempts, _ := f.deliveryRow(t, key)
-	if state != StateAbandoned {
-		t.Fatalf("delivery is %s after %d attempts, want it abandoned", state, attempts)
+	if state != StatePending {
+		t.Errorf("delivery is %s after %d attempts, want it still %s", state, attempts, StatePending)
 	}
-	if attempts != MaxAttempts {
-		t.Errorf("attempts = %d, want exactly MaxAttempts (%d)", attempts, MaxAttempts)
+	if attempts < 12 {
+		t.Errorf("attempts = %d, want at least 12; the retries stopped early", attempts)
+	}
+
+	// And the wait has grown to the ceiling and stayed there, rather than
+	// growing without bound or staying at the floor. Jitter is +/-20%, so
+	// the band is generous on purpose.
+	if last < time.Duration(float64(MaxBackoff)*0.7) || last > time.Duration(float64(MaxBackoff)*1.3) {
+		t.Errorf("settled backoff is %s, want about %s", last.Round(time.Second), MaxBackoff)
+	}
+
+	// The subscription is still live: an outage must not lose the events
+	// that happen during it.
+	live, err := f.store.LiveSubscriptions(ctx)
+	if err != nil {
+		t.Fatalf("LiveSubscriptions: %v", err)
+	}
+	if len(live) != 1 {
+		t.Errorf("%d live subscriptions after a long outage, want 1", len(live))
+	}
+
+	// One success clears the whole thing.
+	f.recv.status200()
+	f.clearBackoff(t)
+	if _, err := f.disp.Pass(ctx); err != nil {
+		t.Fatalf("Pass after recovery: %v", err)
+	}
+	ep := f.reread(t)
+	if ep.ConsecutiveFailures != 0 || ep.BackoffUntil != nil {
+		t.Errorf("a success did not clear the backoff: %+v", ep)
+	}
+	if state, _, _ := f.deliveryRow(t, key); state != StateDelivered {
+		t.Errorf("delivery is %s after the receiver came back, want %s", state, StateDelivered)
 	}
 }
 
-// TestSendTestGoesThroughTheRealPath: the button has to exercise the signing,
-// the dial policy and the receiver's own handler, or it tests the wrong code.
+// TestFailingEndpointProbesWithOneDelivery is what makes "never give up"
+// affordable. A receiver that has been down for a day must not be hit once
+// per queued event when its backoff expires, nor handed its whole backlog
+// the instant it answers.
+func TestFailingEndpointProbesWithOneDelivery(t *testing.T) {
+	f := newFixture(t, ScopeOwner)
+	f.recv.mu.Lock()
+	f.recv.status = http.StatusServiceUnavailable
+	f.recv.mu.Unlock()
+	for i := int64(0); i < 5; i++ {
+		f.enqueue(t, 200+i)
+	}
+
+	ctx := context.Background()
+	// First pass: the endpoint has no failures yet, so everything due is
+	// fair game and they are posted serially to the one destination.
+	st, err := f.disp.Pass(ctx)
+	if err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	if st.Claimed != 5 {
+		t.Fatalf("first pass claimed %d, want all 5", st.Claimed)
+	}
+
+	// Now the endpoint is failing. Every later pass may try exactly one,
+	// however many are queued.
+	for i := 0; i < 3; i++ {
+		f.clearBackoff(t)
+		st, err := f.disp.Pass(ctx)
+		if err != nil {
+			t.Fatalf("Pass %d: %v", i, err)
+		}
+		if st.Claimed != 1 {
+			t.Errorf("pass %d claimed %d deliveries from a failing endpoint, want 1", i, st.Claimed)
+		}
+	}
+}
+
+// TestStaleDeliveryIsAbandoned is the one remaining bound. Nothing is
+// disabled and no attempt budget runs out, so without this a destination
+// that never comes back queues rows for ever.
+func TestStaleDeliveryIsAbandoned(t *testing.T) {
+	f := newFixture(t, ScopeJob)
+	key := f.enqueue(t, 42)
+	ctx := context.Background()
+
+	// Not yet: a delivery inside the window is left alone.
+	n, err := f.store.ExpireStale(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ExpireStale: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expired %d fresh deliveries, want 0", n)
+	}
+
+	n, err = f.store.ExpireStale(ctx, time.Now().UTC().Add(MaxDeliveryAge+time.Hour))
+	if err != nil {
+		t.Fatalf("ExpireStale: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expired %d, want 1", n)
+	}
+	state, _, _ := f.deliveryRow(t, key)
+	if state != StateAbandoned {
+		t.Errorf("a delivery older than %s is %s, want %s", MaxDeliveryAge, state, StateAbandoned)
+	}
+	var reason string
+	if err := f.store.db.QueryRowContext(ctx,
+		`SELECT abandoned_reason FROM webhook_deliveries WHERE id = ?`, key).Scan(&reason); err != nil {
+		t.Fatalf("read reason: %v", err)
+	}
+	if reason == "" {
+		t.Error("a delivery was abandoned with no reason to show the user")
+	}
+}
+
 func TestSendTestGoesThroughTheRealPath(t *testing.T) {
 	f := newFixture(t, ScopeJob, jobwatch.EventHeld)
 	f.recv.status200()
 
-	a, err := SendTest(context.Background(), f.store, f.disp.sender, f.hook)
+	a, err := SendTest(context.Background(), f.store, f.disp.sender, f.ep)
 	if err != nil {
 		t.Fatalf("SendTest: %v", err)
 	}
@@ -377,15 +470,29 @@ func TestSendTestGoesThroughTheRealPath(t *testing.T) {
 	if !p.Test {
 		t.Error("the test payload is not marked as a test")
 	}
-	// It names an event the hook actually subscribes to, because a receiver
-	// routes on one.
-	if p.Event != string(jobwatch.EventHeld) {
-		t.Errorf("test event = %q, want held", p.Event)
+	// It names one fixed event, because a test belongs to the
+	// DESTINATION and a destination may have several subscriptions or
+	// none. A receiver routes on the event, so it has to be one.
+	if p.Event != string(TestEvent) {
+		t.Errorf("test event = %q, want %q", p.Event, TestEvent)
 	}
 	// A receiver's handler almost always reads the job, so a test payload
 	// without one tests only that the handler can be reached.
 	if p.Job == nil {
-		t.Error("the test payload carries no job")
+		t.Fatal("the test payload carries no job")
+	}
+	// And the job it describes must be CONSISTENT with the event it
+	// names. The old test payload said "failed" beside an exit code of 0
+	// and a status of Completed, which is a shape a receiver author maps
+	// fields from and then cannot reproduce in production.
+	if p.Job.Status != "Running" {
+		t.Errorf("a %q test describes a job in state %q", p.Event, p.Job.Status)
+	}
+	if p.Job.ExitCode != nil {
+		t.Errorf("a running job was given exit code %d", *p.Job.ExitCode)
+	}
+	if p.Job.HoldReason != "" {
+		t.Errorf("a running job was given a hold reason: %q", p.Job.HoldReason)
 	}
 	// Recorded apart from real traffic, so neither overwrites the other.
 	h := f.reread(t)
@@ -398,7 +505,7 @@ func TestSendTestGoesThroughTheRealPath(t *testing.T) {
 	// A test is not retried and leaves nothing on the queue.
 	var pending int
 	if err := f.store.db.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = ?`, f.hook.ID).Scan(&pending); err != nil {
+		`SELECT COUNT(*) FROM webhook_deliveries WHERE endpoint_id = ?`, f.ep.ID).Scan(&pending); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if pending != 0 {
@@ -412,7 +519,7 @@ func TestSendTestReportsARefusal(t *testing.T) {
 	f.recv.status, f.recv.body = http.StatusForbidden, "bad token"
 	f.recv.mu.Unlock()
 
-	a, err := SendTest(context.Background(), f.store, f.disp.sender, f.hook)
+	a, err := SendTest(context.Background(), f.store, f.disp.sender, f.ep)
 	if err != nil {
 		t.Fatalf("SendTest: %v", err)
 	}

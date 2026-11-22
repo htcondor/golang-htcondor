@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -112,12 +113,15 @@ func NewEvaluator(store *Store, src jobwatch.Source, logf func(string, ...any)) 
 
 // EvalStats is what one pass did.
 type EvalStats struct {
-	Hooks    int
-	Owners   int
-	Enqueued int
-	Expired  int
-	Capped   int
-	Errors   int
+	Subscriptions int
+	Owners        int
+	Enqueued      int
+	Expired       int
+	Capped        int
+	// Backlogged counts subscriptions whose events were dropped because
+	// their destination's queue was already at MaxPendingPerEndpoint.
+	Backlogged int
+	Errors     int
 }
 
 // Run sweeps until ctx is done.
@@ -130,9 +134,10 @@ func (e *Evaluator) Run(ctx context.Context) {
 				return
 			}
 			e.logf("webhook evaluation pass failed", "error", err)
-		} else if st.Enqueued > 0 || st.Errors > 0 || st.Capped > 0 {
-			e.logf("webhook events found", "hooks", st.Hooks, "enqueued", st.Enqueued,
-				"expired", st.Expired, "capped", st.Capped, "errors", st.Errors)
+		} else if st.Enqueued > 0 || st.Errors > 0 || st.Capped > 0 || st.Backlogged > 0 {
+			e.logf("webhook events found", "subscriptions", st.Subscriptions,
+				"enqueued", st.Enqueued, "expired", st.Expired, "capped", st.Capped,
+				"backlogged", st.Backlogged, "errors", st.Errors)
 		}
 		select {
 		case <-ctx.Done():
@@ -142,37 +147,39 @@ func (e *Evaluator) Run(ctx context.Context) {
 	}
 }
 
-// Pass reads every live hook, groups by owner, and evaluates each owner once.
+// Pass reads every live subscription, groups by owner, and evaluates each
+// owner once.
 //
-// One owner's failure does not abandon the pass. Hooks are independent, and
-// the likeliest cause of a failure is a per-owner authorization problem
-// rather than a systemic one -- which is no reason to stop answering
-// everybody else's.
+// One owner's failure does not abandon the pass. Subscriptions are
+// independent, and the likeliest cause of a failure is a per-owner
+// authorization problem rather than a systemic one -- which is no reason to
+// stop answering everybody else's.
 func (e *Evaluator) Pass(ctx context.Context) (EvalStats, error) {
 	var st EvalStats
-	live, err := e.store.Live(ctx)
+	live, err := e.store.LiveSubscriptions(ctx)
 	if err != nil {
-		return st, fmt.Errorf("listing live webhooks: %w", err)
+		return st, fmt.Errorf("listing live webhook subscriptions: %w", err)
 	}
-	st.Hooks = len(live)
+	st.Subscriptions = len(live)
 	if len(live) == 0 {
 		return st, nil
 	}
 
-	byOwner := make(map[string][]*Hook, 4)
-	for _, h := range live {
-		byOwner[h.Owner] = append(byOwner[h.Owner], h)
+	byOwner := make(map[string][]*Subscription, 4)
+	for _, sub := range live {
+		byOwner[sub.Owner] = append(byOwner[sub.Owner], sub)
 	}
 	st.Owners = len(byOwner)
 
-	for owner, hooks := range byOwner {
+	for owner, subs := range byOwner {
 		if ctx.Err() != nil {
 			return st, ctx.Err()
 		}
-		got, err := e.passOwner(ctx, owner, hooks)
+		got, err := e.passOwner(ctx, owner, subs)
 		st.Enqueued += got.Enqueued
 		st.Expired += got.Expired
 		st.Capped += got.Capped
+		st.Backlogged += got.Backlogged
 		if err != nil {
 			st.Errors++
 			e.logf("evaluating webhooks failed for one owner", "owner", owner, "error", err)
@@ -181,16 +188,17 @@ func (e *Evaluator) Pass(ctx context.Context) (EvalStats, error) {
 	return st, nil
 }
 
-// CheckOwner evaluates one owner's hooks now, for the change-stream nudge.
+// CheckOwner evaluates one owner's subscriptions now, for the change-stream
+// nudge.
 func (e *Evaluator) CheckOwner(ctx context.Context, owner string) (int, error) {
-	hooks, err := e.store.Live(ctx)
+	subs, err := e.store.LiveSubscriptions(ctx)
 	if err != nil {
 		return 0, err
 	}
-	var mine []*Hook
-	for _, h := range hooks {
-		if h.Owner == owner {
-			mine = append(mine, h)
+	var mine []*Subscription
+	for _, sub := range subs {
+		if sub.Owner == owner {
+			mine = append(mine, sub)
 		}
 	}
 	if len(mine) == 0 {
@@ -200,19 +208,24 @@ func (e *Evaluator) CheckOwner(ctx context.Context, owner string) (int, error) {
 	return st.Enqueued, err
 }
 
-// hookState is what one pass learns about one hook.
-type hookState struct {
-	hook *Hook
-	// inScope is every job this hook selects, seen this pass or remembered
-	// from a previous one.
+// subState is what one pass learns about one subscription.
+type subState struct {
+	sub *Subscription
+	// endpoint is where this subscription posts. Carried here because
+	// the delivery's identity, its payload shape and its backlog ceiling
+	// are all the endpoint's, and looking it up per firing would be the
+	// same read many times.
+	endpoint *Endpoint
+	// inScope is every job this subscription selects, seen this pass or
+	// remembered from a previous one.
 	inScope map[jobwatch.JobID]bool
-	// ended is the subset known to have finished: a terminal ad, a history
-	// row, or absence from a complete read.
+	// ended is the subset known to have finished: a terminal ad, a
+	// history row, or absence from a complete read.
 	ended map[jobwatch.JobID]bool
-	// fire is the deliveries this pass decided on. Whether the hook went
-	// over the fan-out cap is len(fire) against it, decided in commit --
-	// there is no flag, because a flag would be a second answer to a
-	// question the slice already answers.
+	// fire is the deliveries this pass decided on. Whether it went over
+	// the fan-out cap is len(fire) against it, decided in commit -- there
+	// is no flag, because a flag would be a second answer to a question
+	// the slice already answers.
 	fire []pending
 }
 
@@ -223,10 +236,15 @@ type pending struct {
 	// payload is the job as the delivery will describe it. Rendered while
 	// the ad is in hand, because the ad is not kept.
 	payload *JobPayload
+	// ad is the whole job ad, present only when some endpoint in this
+	// pass asked for one. Rendered from the same ad at the same moment,
+	// for the same reason.
+	ad map[string]any
 }
 
-// passOwner evaluates one owner's hooks against one read of their jobs.
-func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) (EvalStats, error) {
+// passOwner evaluates one owner's subscriptions against one read of their
+// jobs.
+func (e *Evaluator) passOwner(ctx context.Context, owner string, subs []*Subscription) (EvalStats, error) {
 	// One pass per owner at a time. A sweep and a change-stream nudge can
 	// both decide to look at the same owner, and two passes would read the
 	// same jobs and race to save the tracked set -- the loser's write
@@ -238,20 +256,20 @@ func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) 
 	var st EvalStats
 	now := e.now().UTC()
 
-	states := make([]*hookState, 0, len(hooks))
-	for _, h := range hooks {
-		s := &hookState{
-			hook:    h,
-			inScope: make(map[jobwatch.JobID]bool, len(h.Tracked)+8),
-			ended:   make(map[jobwatch.JobID]bool, 8),
-		}
-		// The remembered set is in scope before anything arrives: a cluster
-		// that has fully drained would otherwise look like an empty
-		// selection, and absence would have nothing to be the absence of.
-		for _, id := range h.Tracked {
-			s.inScope[id] = true
-		}
-		states = append(states, s)
+	states, wantFullAd := e.resolve(ctx, subs)
+	if len(states) == 0 {
+		return st, nil
+	}
+
+	// What to read. EvalAttrs is a projection of the twenty-odd
+	// attributes the evaluator itself needs; a nil projection means EVERY
+	// attribute, on both the mirror and the schedd. Asking for everything
+	// is strictly more expensive, so it is done only when one of this
+	// owner's endpoints is actually set to send whole ads -- the cost
+	// follows the feature rather than falling on everybody.
+	attrs := EvalAttrs
+	if wantFullAd {
+		attrs = nil
 	}
 
 	// seen is every job observed in this pass's queue read, and endedNow
@@ -273,31 +291,45 @@ func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) 
 		}
 
 		var payload *JobPayload
+		var adMap map[string]any
+		adRendered := false
 		for _, s := range states {
-			if !selects(s.hook, &fields, id) {
+			if !selects(s.sub, &fields, id) {
 				continue
 			}
 			s.inScope[id] = true
 			if obs == jobwatch.AsTerminal {
 				s.ended[id] = true
 			}
-			for _, ev := range s.hook.Events {
+			for _, ev := range s.sub.Events {
 				if !jobwatch.Satisfies(ev, ad, obs) {
 					continue
 				}
 				if payload == nil {
-					// Rendered once per ad and shared by every hook that
-					// wants it: the ad is not kept past this call, and
-					// rendering per hook would read the same attributes
-					// again for the same answer.
+					// Rendered once per ad and shared by every
+					// subscription that wants it: the ad is not kept past
+					// this call, and rendering per subscription would read
+					// the same attributes again for the same answer.
 					payload = jobPayload(ad, &fields, id)
 				}
-				s.fire = append(s.fire, pending{event: ev, job: id, payload: payload})
+				if s.endpoint.Payload == PayloadFull && !adRendered {
+					// Likewise once, and only if somebody asked. The
+					// flag rather than a nil check because an ad that
+					// does not render is a legitimate nil we should not
+					// retry per subscription.
+					adMap = renderAd(ad)
+					adRendered = true
+				}
+				p := pending{event: ev, job: id, payload: payload}
+				if s.endpoint.Payload == PayloadFull {
+					p.ad = adMap
+				}
+				s.fire = append(s.fire, p)
 			}
 		}
 	}
 
-	truncated, err := e.src.Queue(ctx, owner, EvalAttrs, jobwatch.QueueLimit, func(ad *classad.ClassAd) {
+	truncated, err := e.src.Queue(ctx, owner, attrs, jobwatch.QueueLimit, func(ad *classad.ClassAd) {
 		obs := jobwatch.InQueue
 		if jobwatch.TerminalAd(ad) {
 			// A terminal ad still in the queue is as authoritative as a
@@ -319,14 +351,14 @@ func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) 
 	// the queue and from absence, which is the same degradation jobwatch
 	// accepts when the mirror is down.
 	since := now.Add(-e.HistoryWindow)
-	if err := e.src.History(ctx, owner, EvalAttrs, since, jobwatch.HistoryLimit,
+	if err := e.src.History(ctx, owner, attrs, since, jobwatch.HistoryLimit,
 		func(ad *classad.ClassAd) { fold(ad, jobwatch.AsTerminal) }); err != nil {
 		e.logf("reading finished jobs for webhooks failed; terminal events will come from the queue and from absence",
 			"owner", owner, "error", err)
 	}
 
 	for _, s := range states {
-		// Absence. A job this hook has seen before, missing from a COMPLETE
+		// Absence. A job this subscription has seen before, missing from a COMPLETE
 		// queue read and not explained by a terminal record, has left the
 		// queue -- which is the only evidence there is for a job whose
 		// history row never arrives. A truncated read proves nothing: the
@@ -341,7 +373,7 @@ func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) 
 				// succeeded or failed is in the ad that is no longer there,
 				// and inventing an answer is worse than not having one --
 				// a wrongly reported failure is acted on.
-				if slices.Contains(s.hook.Events, jobwatch.EventDone) {
+				if slices.Contains(s.sub.Events, jobwatch.EventDone) {
 					s.fire = append(s.fire, pending{event: jobwatch.EventDone, job: id})
 				}
 			}
@@ -351,6 +383,7 @@ func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) 
 		st.Enqueued += got.Enqueued
 		st.Expired += got.Expired
 		st.Capped += got.Capped
+		st.Backlogged += got.Backlogged
 		if err != nil {
 			return st, err
 		}
@@ -358,42 +391,111 @@ func (e *Evaluator) passOwner(ctx context.Context, owner string, hooks []*Hook) 
 	return st, nil
 }
 
-// commit enqueues what a hook's pass decided, applies the fan-out cap, saves
-// the tracked set and ends the hook if its subject has.
-func (e *Evaluator) commit(ctx context.Context, s *hookState, now time.Time) (EvalStats, error) {
+// resolve pairs each subscription with its destination, and reports whether
+// any of them wants whole job ads.
+//
+// The endpoints are cached across the owner's subscriptions because several
+// of them usually point at the same receiver, and the endpoint decides both
+// the payload shape and -- through that -- which attributes this pass has to
+// read.
+func (e *Evaluator) resolve(ctx context.Context, subs []*Subscription) (states []*subState, wantFullAd bool) {
+	endpoints := make(map[string]*Endpoint, len(subs))
+	states = make([]*subState, 0, len(subs))
+	for _, sub := range subs {
+		ep, ok := endpoints[sub.EndpointID]
+		if !ok {
+			var err error
+			ep, err = e.store.endpointByID(ctx, sub.EndpointID)
+			if err != nil {
+				// A subscription whose endpoint has gone is a row the
+				// delete should have taken. Skip it rather than failing
+				// the owner's whole pass for one dangling reference.
+				e.logf("skipping a webhook subscription whose destination is missing",
+					"subscription", sub.ID, "endpoint", sub.EndpointID, "error", err)
+				continue
+			}
+			endpoints[sub.EndpointID] = ep
+		}
+		if ep.Payload == PayloadFull {
+			wantFullAd = true
+		}
+		s := &subState{
+			sub:      sub,
+			endpoint: ep,
+			inScope:  make(map[jobwatch.JobID]bool, len(sub.Tracked)+8),
+			ended:    make(map[jobwatch.JobID]bool, 8),
+		}
+		// The remembered set is in scope before anything arrives: a
+		// cluster that has fully drained would otherwise look like an
+		// empty selection, and absence would have nothing to be the
+		// absence of.
+		for _, id := range sub.Tracked {
+			s.inScope[id] = true
+		}
+		states = append(states, s)
+	}
+	return states, wantFullAd
+}
+
+// commit enqueues what a subscription's pass decided, applies the fan-out
+// cap and the endpoint's backlog ceiling, saves the tracked set, and ends the
+// subscription if its subject has.
+func (e *Evaluator) commit(ctx context.Context, s *subState, now time.Time) (EvalStats, error) {
 	var st EvalStats
-	h := s.hook
+	sub := s.sub
+	ep := s.endpoint
 
 	if len(s.fire) > e.FanoutCap {
-		// One rolled-up delivery saying what happened, then disabled. The
-		// alternative to saying something is deliveries that never arrive,
-		// which look exactly like events that never happened.
+		// One rolled-up delivery saying what happened, and the per-job
+		// ones withheld. The subscription is NOT switched off: nothing
+		// here is any more, and leaving it live means a selection that
+		// drops back under the ceiling resumes on its own. The rollup
+		// key is deduplicated per day, so a selection that stays over
+		// the cap says so once a day rather than every pass.
 		st.Capped++
-		if err := e.store.NoteCapped(ctx, h.ID, len(s.fire)); err != nil {
+		if err := e.store.NoteCapped(ctx, sub.ID, len(s.fire)); err != nil {
 			return st, err
 		}
-		n, err := e.enqueueRollup(ctx, h, s.fire, now)
+		n, err := e.enqueueRollup(ctx, ep, sub, s.fire, now)
 		if err != nil {
 			return st, err
 		}
 		st.Enqueued += n
-		why := fmt.Sprintf("disabled: %d jobs matched at once, over the limit of %d. "+
-			"Narrow this webhook to one job or one batch, or point it at a service that expects a summary.",
-			len(s.fire), e.FanoutCap)
-		if err := e.store.Disable(ctx, h.ID, why); err != nil {
+		return st, e.saveProgress(ctx, s, now)
+	}
+
+	if len(s.fire) > 0 {
+		// The endpoint's backlog, checked once for this subscription
+		// rather than per delivery. A destination that has been down for
+		// days would otherwise accumulate a row per event without bound,
+		// and the rows are not free: each carries its rendered body.
+		pending, err := e.store.PendingCount(ctx, ep.ID)
+		if err != nil {
 			return st, err
 		}
-		return st, nil
+		if pending >= MaxPendingPerEndpoint {
+			st.Backlogged++
+			if err := e.store.RecordBacklog(ctx, ep.ID, pending); err != nil {
+				return st, err
+			}
+			e.logf("webhook destination has too much queued; events are being dropped",
+				"endpoint", ep.ID, "pending", pending, "limit", MaxPendingPerEndpoint)
+			return st, e.saveProgress(ctx, s, now)
+		}
 	}
 
 	for _, p := range s.fire {
-		key := DeliveryKey(h.ID, p.event, p.job)
-		payload, err := RenderPayload(h, p.event, p.payload, key, now, false)
+		// Keyed on the ENDPOINT, so two subscriptions of this owner that
+		// both select this job and event produce one POST rather than
+		// two. The second Enqueue is a primary-key conflict and reports
+		// itself as not fresh.
+		key := DeliveryKey(ep.ID, p.event, p.job)
+		payload, err := RenderPayload(ep, sub, p.event, p.payload, p.ad, key, now, false)
 		if err != nil {
-			return st, fmt.Errorf("rendering a delivery for %s: %w", h.ID, err)
+			return st, fmt.Errorf("rendering a delivery for %s: %w", sub.ID, err)
 		}
 		job := p.job
-		fresh, err := e.store.Enqueue(ctx, h.ID, h.Owner, p.event, &job, payload, key)
+		fresh, err := e.store.Enqueue(ctx, ep.ID, sub.Owner, p.event, &job, payload, key)
 		if err != nil {
 			return st, err
 		}
@@ -402,6 +504,42 @@ func (e *Evaluator) commit(ctx context.Context, s *hookState, now time.Time) (Ev
 		}
 	}
 
+	if err := e.saveProgress(ctx, s, now); err != nil {
+		return st, err
+	}
+
+	// A job or batch subscription ends when its subject can no longer
+	// produce an event: every job it has ever seen has finished. Not from
+	// any archive or retention clock -- those measure when a record was
+	// written, which for EnteredHistoryTime means two different things
+	// depending on how the row arrived.
+	//
+	// One that has never seen a job is NOT finished. That is the normal
+	// state of a subscription created before the jobs were submitted, and
+	// expiring it would be expiring the common case. The backstop
+	// deadline set at creation covers the one whose subject never
+	// appears.
+	if sub.Scope.Terminable() && len(s.inScope) > 0 && len(s.ended) == len(s.inScope) {
+		// Not immediately: a succeeded/failed subscription is still
+		// waiting for the history row that says which, and that row lands
+		// seconds after the job goes in a healthy pool. The same grace
+		// jobwatch gives the same question.
+		if err := e.store.Expire(ctx, sub.ID, now.Add(jobwatch.UnresolvedOutcomeGrace)); err != nil {
+			return st, err
+		}
+		st.Expired++
+	}
+	return st, nil
+}
+
+// saveProgress stores what this subscription now knows about which jobs it
+// has seen.
+//
+// Separated out because every exit from commit has to do it, including the
+// ones that enqueued nothing: a pass that withheld deliveries still SAW
+// those jobs, and forgetting that would make every one of them look new next
+// pass -- which, once the backlog cleared, would deliver the lot.
+func (e *Evaluator) saveProgress(ctx context.Context, s *subState, _ time.Time) error {
 	tracked := make([]jobwatch.JobID, 0, len(s.inScope))
 	for id := range s.inScope {
 		tracked = append(tracked, id)
@@ -415,55 +553,33 @@ func (e *Evaluator) commit(ctx context.Context, s *hookState, now time.Time) (Ev
 		}
 		return tracked[i].Schedd < tracked[j].Schedd
 	})
-	if err := e.store.SaveTracked(ctx, h.ID, tracked); err != nil {
-		return st, err
-	}
-
-	// A job or batch hook ends when its subject can no longer produce an
-	// event: every job it has ever seen has finished. Not from any archive
-	// or retention clock -- those measure when a record was written, which
-	// for EnteredHistoryTime means two different things depending on how
-	// the row arrived.
-	//
-	// A hook that has never seen a job is NOT finished. That is the normal
-	// state of a hook created before the jobs were submitted, and expiring
-	// it would be expiring the common case. The backstop deadline set at
-	// creation covers the hook whose subject never appears.
-	if h.Scope.Terminable() && len(s.inScope) > 0 && len(s.ended) == len(s.inScope) {
-		// Not immediately: a succeeded/failed hook is still waiting for the
-		// history row that says which, and that row lands seconds after the
-		// job goes in a healthy pool. The same grace jobwatch gives the
-		// same question.
-		if err := e.store.Expire(ctx, h.ID, now.Add(jobwatch.UnresolvedOutcomeGrace)); err != nil {
-			return st, err
-		}
-		st.Expired++
-	}
-	return st, nil
+	return e.store.SaveTracked(ctx, s.sub.ID, tracked)
 }
 
-// enqueueRollup sends one delivery for a hook that fanned out too far.
+// enqueueRollup sends one delivery for a subscription that fanned out too
+// far.
 //
-// Keyed per (hook, event) with no job, so it is sent once: the hook is
-// disabled immediately afterwards, and a second rolled-up delivery for the
-// same event would be the same news.
-func (e *Evaluator) enqueueRollup(ctx context.Context, h *Hook, fire []pending, now time.Time) (int, error) {
+// Keyed per (endpoint, subscription, event, DAY) with no job. The day is in
+// the key because nothing disables a capped subscription any more: without
+// it, a selection that sits over the ceiling would say so once and then
+// never again, and a fresh episode months later would be silent.
+func (e *Evaluator) enqueueRollup(ctx context.Context, ep *Endpoint, sub *Subscription, fire []pending, now time.Time) (int, error) {
 	counts := map[jobwatch.Event]int{}
 	for _, p := range fire {
 		counts[p.event]++
 	}
 	var sent int
-	for _, ev := range h.Events {
+	for _, ev := range sub.Events {
 		n := counts[ev]
 		if n == 0 {
 			continue
 		}
-		key := h.ID + "." + string(ev) + ".capped"
-		payload, err := RenderCappedPayload(h, ev, n, e.FanoutCap, key, now)
+		key := ep.ID + "." + sub.ID + "." + string(ev) + ".capped." + now.Format("2006-01-02")
+		payload, err := RenderCappedPayload(ep, sub, ev, n, e.FanoutCap, key, now)
 		if err != nil {
 			return sent, err
 		}
-		fresh, err := e.store.Enqueue(ctx, h.ID, h.Owner, ev, nil, payload, key)
+		fresh, err := e.store.Enqueue(ctx, ep.ID, sub.Owner, ev, nil, payload, key)
 		if err != nil {
 			return sent, err
 		}
@@ -474,21 +590,21 @@ func (e *Evaluator) enqueueRollup(ctx context.Context, h *Hook, fire []pending, 
 	return sent, nil
 }
 
-// selects reports whether a hook covers this job.
+// selects reports whether a subscription covers this job.
 //
 // The owner is not re-checked: the queue read is already one owner's, which
 // is the property jobwatch.Source exists to guarantee -- a caller's selector
 // never reaches a backend query, so there is no expression to escape the
 // owner scoping.
-func selects(h *Hook, f *batches.Fields, id jobwatch.JobID) bool {
-	switch h.Scope {
+func selects(sub *Subscription, f *batches.Fields, id jobwatch.JobID) bool {
+	switch sub.Scope {
 	case ScopeOwner:
 		return true
 	case ScopeJob:
-		return id.Cluster == h.Job.Cluster && id.Proc == h.Job.Proc &&
-			strings.EqualFold(id.Schedd, h.Job.Schedd)
+		return id.Cluster == sub.Job.Cluster && id.Proc == sub.Job.Proc &&
+			strings.EqualFold(id.Schedd, sub.Job.Schedd)
 	case ScopeBatch:
-		want, ok := h.batchKey()
+		want, ok := sub.batchKey()
 		if !ok {
 			return false
 		}
@@ -498,15 +614,15 @@ func selects(h *Hook, f *batches.Fields, id jobwatch.JobID) bool {
 	return false
 }
 
-// batchKey is the grouping key of the batch this hook watches.
+// batchKey is the grouping key of the batch this subscription watches.
 //
 // Built by asking the batches package rather than by assembling the key here:
 // what makes two jobs the same batch is that package's rule (a DAG by its
 // name, any other name by owner and name, else by cluster), and a second
 // spelling of it would be the one that drifts when the rule changes.
-func (h *Hook) batchKey() (string, bool) {
-	cluster := parseCluster(h.BatchID)
-	f := batches.Fields{Owner: h.Owner, JobBatchName: h.BatchName}
+func (sub *Subscription) batchKey() (string, bool) {
+	cluster := parseCluster(sub.BatchID)
+	f := batches.Fields{Owner: sub.Owner, JobBatchName: sub.BatchName}
 	if cluster != nil {
 		f.ClusterID = cluster
 	} else {
@@ -517,6 +633,31 @@ func (h *Hook) batchKey() (string, bool) {
 		f.ClusterID = &zero
 	}
 	return batches.GroupKey(&f)
+}
+
+// renderAd turns a job ad into the object a full-payload delivery carries.
+//
+// Through the ad's own JSON marshalling, so the attribute names and value
+// shapes are exactly what GET /api/v1/jobs/{id} returns -- a receiver that
+// already reads this server's job JSON sees one encoding, not two. Case is
+// left as the ad stored it, which for HTCondor is the conventional
+// ClusterId/JobStatus spelling a receiver will be looking for.
+//
+// A nil result means the ad did not render; RenderPayload says so in the
+// body rather than leaving the field quietly absent.
+func renderAd(ad *classad.ClassAd) map[string]any {
+	if ad == nil {
+		return nil
+	}
+	b, err := json.Marshal(ad)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // jobPayload renders the part of a delivery that describes the job.

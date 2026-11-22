@@ -22,6 +22,17 @@
 // places, and means the evaluator can reuse the machinery that resolves
 // terminal events across the queue/history boundary.
 //
+// A DESTINATION AND A SUBSCRIPTION ARE SEPARATE THINGS. An Endpoint is
+// where deliveries go and the key that proves they came from here; a
+// Subscription is what is watched and which events. They were one row once,
+// which meant watching a second job required registering the destination
+// again -- pasting the capability URL a second time and copying a second
+// signing secret, for the same receiver. A secret shown exactly once makes
+// "set it up again" the most error-prone moment the feature has, so it is
+// now asked for once per receiver rather than once per subscription. The
+// split also puts delivery health where it belongs: a destination that is
+// down is down for everything pointed at it.
+//
 // DELIVERY IS AT LEAST ONCE, and the receiver is told so. Every delivery
 // carries an idempotency key that is stable across retries, and that key is
 // also the primary key of the row that records the delivery -- so the ledger
@@ -90,64 +101,88 @@ var SupportedEvents = []jobwatch.Event{
 	jobwatch.EventRunning,
 }
 
-// EventSupported reports whether a hook may subscribe to e.
+// EventSupported reports whether a subscription may ask for e.
 func EventSupported(e jobwatch.Event) bool { return slices.Contains(SupportedEvents, e) }
 
-// MaxEventsPerHook bounds one hook's subscription. There are only as many
+// MaxEventsPerSubscription bounds one subscription's event list. There are only as many
 // events as SupportedEvents holds, so this only rejects a list padded with
 // duplicates -- which Validate catches anyway, one name at a time.
-var MaxEventsPerHook = len(SupportedEvents)
+var MaxEventsPerSubscription = len(SupportedEvents)
 
 const (
-	// MaxLabelLen bounds the user's name for a hook.
+	// MaxLabelLen bounds the user's name for an endpoint or a
+	// subscription.
 	MaxLabelLen = 128
 	// MaxURLLen bounds a destination. Capability URLs are long; this is
 	// well past the longest any provider issues and short enough that the
 	// column cannot be used as a data store.
 	MaxURLLen = 2048
-	// SecretBytes is the entropy in a hook's signing key.
+	// SecretBytes is the entropy in an endpoint's signing key.
 	SecretBytes = 32
 )
 
-// Hook is one subscription.
+// PayloadMode says how much of the job a delivery carries.
+type PayloadMode string
+
+const (
+	// PayloadSummary is the small fixed projection: ids, owner, status,
+	// exit code, hold reason, command. The default, and for most
+	// receivers the whole of what they use.
+	PayloadSummary PayloadMode = "summary"
+	// PayloadFull adds the job's entire ClassAd beside that projection.
+	//
+	// Opt-in, and per endpoint, because it is a disclosure decision. A
+	// job ad carries hundreds of attributes -- arguments, environment
+	// names, file paths, whatever the submitter put in a custom
+	// attribute -- and sending all of it to a third party should be
+	// something somebody chose, not something that grew by one field
+	// every time the schedd learned a new one.
+	PayloadFull PayloadMode = "full"
+)
+
+// Valid reports whether m is a payload mode this server implements.
+func (m PayloadMode) Valid() bool {
+	return m == PayloadSummary || m == PayloadFull
+}
+
+// Endpoint is a destination: where deliveries go, and the key a receiver
+// verifies them with. Registered once per receiver, and pointed at by any
+// number of subscriptions.
 //
-// URL and Secret are present only in memory and only where they are needed:
-// a Hook read for a listing has neither, and there is no field combination
-// that produces them by accident. See Store.Destination.
-type Hook struct {
+// URL and Secret are not fields. They are present only in memory and only
+// where they are needed: an Endpoint read for a listing has neither, and
+// there is no field combination that produces them by accident. See
+// Store.Destination.
+type Endpoint struct {
 	ID    string `json:"id"`
 	Owner string `json:"owner"`
 	Label string `json:"label"`
 
-	Scope Scope `json:"scope"`
-	// Job is the subject for ScopeJob.
-	Job jobwatch.JobID `json:"job,omitempty"`
-	// BatchID and BatchName are the subject for ScopeBatch.
-	//
-	// Both, because a batch is derived from job ads rather than stored: the
-	// id is what a UI links to, and the name is what still selects the jobs
-	// once the id's cluster has left the queue.
-	BatchID   string `json:"batch_id,omitempty"`
-	BatchName string `json:"batch_name,omitempty"`
+	// Payload is how much of the job every delivery to this endpoint
+	// carries. On the endpoint rather than the subscription so that one
+	// receiver always sees one shape -- a Zap maps its fields once --
+	// and so two subscriptions that select the same job and event can
+	// collapse into a single POST, which they could not do if their
+	// bodies might differ.
+	Payload PayloadMode `json:"payload"`
 
-	Events []jobwatch.Event `json:"events"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-
-	DisabledAt     *time.Time `json:"disabled_at,omitempty"`
-	DisabledReason string     `json:"disabled_reason,omitempty"`
-	// ConsecutiveFailures counts deliveries given up on in a row. A
-	// success resets it.
+	// ConsecutiveFailures counts deliveries that failed in a row. Any
+	// success resets it. It drives BackoffUntil and nothing else: an
+	// endpoint is never disabled for failing.
 	ConsecutiveFailures int `json:"consecutive_failures"`
-
-	// CappedAt is when this hook's selection last exceeded the fan-out
-	// ceiling, and CappedJobs how many jobs were in scope then. Surfaced
-	// because the deliveries that did not happen would otherwise look like
-	// events that did not happen.
-	CappedAt   *time.Time `json:"capped_at,omitempty"`
-	CappedJobs int        `json:"capped_jobs,omitempty"`
+	// BackoffUntil is when this endpoint may next be posted to.
+	//
+	// A failing destination backs off; it is not switched off. The
+	// common failure is a receiver that is down for a while and comes
+	// back, and a disabled hook comes back only if somebody happens to
+	// revisit a page they have no reason to look at. While an endpoint
+	// is backing off, only its OLDEST pending delivery is attempted, so
+	// a week-long outage costs the receiver one request per ceiling
+	// interval rather than one per queued event.
+	BackoffUntil *time.Time `json:"backoff_until,omitempty"`
 
 	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
 	LastStatus     int        `json:"last_status,omitempty"`
@@ -157,13 +192,13 @@ type Hook struct {
 	LastTestStatus int        `json:"last_test_status,omitempty"`
 	LastTestError  string     `json:"last_test_error,omitempty"`
 
-	// Tracked is every job this hook has ever selected. It is the hook's
-	// memory and it is load-bearing, not a cache: a job gone from a
-	// complete queue read with nothing to explain it has finished, and
-	// that is the only evidence there is for a job whose history row never
-	// arrives. Not serialized: it is the evaluator's working state, and a
-	// 100k-job cluster is not a thing to put in an API response.
-	Tracked []jobwatch.JobID `json:"-"`
+	// BacklogAt is when this endpoint's pending queue last hit
+	// MaxPendingPerEndpoint, and BacklogDepth how deep it was. Surfaced
+	// because events dropped for a full queue are events the receiver
+	// will never hear about, and that is not something to discover from
+	// a gap.
+	BacklogAt    *time.Time `json:"backlog_at,omitempty"`
+	BacklogDepth int        `json:"backlog_depth,omitempty"`
 
 	// HasDestination says a destination is stored, without being one --
 	// the same shape connectors.Stored uses for a client secret, and for
@@ -171,20 +206,65 @@ type Hook struct {
 	// response the first time somebody adds an endpoint.
 	HasDestination bool `json:"has_destination"`
 	// DestinationHint is the destination with everything identifying
-	// removed but its host, so a user can tell two hooks apart without the
-	// page handing the capability back. See HintFor.
+	// removed but its host, so a user can tell two endpoints apart
+	// without the page handing the capability back. See HintFor.
 	DestinationHint string `json:"destination_hint,omitempty"`
 }
 
-// Live reports whether a hook should still be evaluated.
-func (h *Hook) Live(now time.Time) bool {
-	if h.DisabledAt != nil {
-		return false
-	}
-	if h.ExpiresAt != nil && !h.ExpiresAt.After(now) {
-		return false
-	}
-	return true
+// Failing reports whether this endpoint is in backoff at t.
+func (e *Endpoint) Failing(t time.Time) bool {
+	return e.BackoffUntil != nil && e.BackoffUntil.After(t)
+}
+
+// Subscription is what is watched and which events, posting to an Endpoint.
+type Subscription struct {
+	ID         string `json:"id"`
+	EndpointID string `json:"endpoint_id"`
+	Owner      string `json:"owner"`
+	Label      string `json:"label"`
+
+	Scope Scope `json:"scope"`
+	// Job is the subject for ScopeJob.
+	Job jobwatch.JobID `json:"job,omitempty"`
+	// BatchID and BatchName are the subject for ScopeBatch.
+	//
+	// Both, because a batch is derived from job ads rather than stored:
+	// the id is what a UI links to, and the name is what still selects
+	// the jobs once the id's cluster has left the queue.
+	BatchID   string `json:"batch_id,omitempty"`
+	BatchName string `json:"batch_name,omitempty"`
+
+	Events []jobwatch.Event `json:"events"`
+
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+
+	// CappedAt is when this subscription's selection last exceeded the
+	// fan-out ceiling, and CappedJobs how many jobs were in scope then.
+	// Surfaced because the deliveries that did not happen would
+	// otherwise look like events that did not happen.
+	CappedAt   *time.Time `json:"capped_at,omitempty"`
+	CappedJobs int        `json:"capped_jobs,omitempty"`
+
+	// Tracked is every job this subscription has ever selected. It is
+	// the subscription's memory and it is load-bearing, not a cache: a
+	// job gone from a complete queue read with nothing to explain it has
+	// finished, and that is the only evidence there is for a job whose
+	// history row never arrives. Not serialized: it is the evaluator's
+	// working state, and a 100k-job cluster is not a thing to put in an
+	// API response.
+	Tracked []jobwatch.JobID `json:"-"`
+}
+
+// Live reports whether a subscription should still be evaluated.
+//
+// There is no disabled state to consult. A subscription stops when its
+// subject can no longer produce an event, or when its TTL runs out --
+// never because its destination was unreachable, which is the endpoint's
+// business and is a reason to wait rather than to stop.
+func (s *Subscription) Live(now time.Time) bool {
+	return s.ExpiresAt == nil || s.ExpiresAt.After(now)
 }
 
 // HintFor renders a destination for display: scheme, host, and how long the
@@ -243,46 +323,69 @@ func ValidateURL(raw string) error {
 	return nil
 }
 
-// Validate checks a hook as the user described it, before any secret is
-// minted or anything is stored.
-func (h *Hook) Validate() error {
-	if h.Owner == "" {
-		return fmt.Errorf("a hook must have an owner")
+// Validate checks an endpoint as the user described it, before any secret
+// is minted or anything is stored.
+func (e *Endpoint) Validate() error {
+	if e.Owner == "" {
+		return fmt.Errorf("an endpoint must have an owner")
 	}
-	if strings.TrimSpace(h.Label) == "" {
-		return fmt.Errorf("a name is required, so you can tell your webhooks apart")
+	if strings.TrimSpace(e.Label) == "" {
+		return fmt.Errorf("a name is required, so you can tell your destinations apart")
 	}
-	if len(h.Label) > MaxLabelLen {
+	if len(e.Label) > MaxLabelLen {
 		return fmt.Errorf("the name must be at most %d characters", MaxLabelLen)
 	}
-	if !h.Scope.Valid() {
-		return fmt.Errorf("unknown scope %q", h.Scope)
+	if !e.Payload.Valid() {
+		return fmt.Errorf("unknown payload mode %q (%s, %s)",
+			e.Payload, PayloadSummary, PayloadFull)
 	}
-	switch h.Scope {
+	return nil
+}
+
+// Validate checks a subscription as the user described it.
+//
+// It does NOT check that EndpointID names a real endpoint, which is a
+// question for the store -- and one it has to answer under the owner
+// filter, since "is this a real id" and "is it yours" must not be
+// answerable apart.
+func (s *Subscription) Validate() error {
+	if s.Owner == "" {
+		return fmt.Errorf("a subscription must have an owner")
+	}
+	if s.EndpointID == "" {
+		return fmt.Errorf("a subscription must name the destination it posts to")
+	}
+	if len(s.Label) > MaxLabelLen {
+		return fmt.Errorf("the name must be at most %d characters", MaxLabelLen)
+	}
+	if !s.Scope.Valid() {
+		return fmt.Errorf("unknown scope %q", s.Scope)
+	}
+	switch s.Scope {
 	case ScopeJob:
-		if h.Job.Cluster <= 0 {
-			return fmt.Errorf("a job hook needs a cluster id")
+		if s.Job.Cluster <= 0 {
+			return fmt.Errorf("a job subscription needs a cluster id")
 		}
-		if h.Job.Proc < 0 {
-			return fmt.Errorf("a job hook needs a proc id")
+		if s.Job.Proc < 0 {
+			return fmt.Errorf("a job subscription needs a proc id")
 		}
 	case ScopeBatch:
-		if h.BatchID == "" && h.BatchName == "" {
-			return fmt.Errorf("a batch hook needs a batch")
+		if s.BatchID == "" && s.BatchName == "" {
+			return fmt.Errorf("a batch subscription needs a batch")
 		}
 	case ScopeOwner:
-		if h.Job.Cluster != 0 || h.BatchID != "" || h.BatchName != "" {
-			return fmt.Errorf("an owner hook names no job or batch")
+		if s.Job.Cluster != 0 || s.BatchID != "" || s.BatchName != "" {
+			return fmt.Errorf("an owner subscription names no job or batch")
 		}
 	}
-	if len(h.Events) == 0 {
+	if len(s.Events) == 0 {
 		return fmt.Errorf("at least one event is required")
 	}
-	if len(h.Events) > MaxEventsPerHook {
-		return fmt.Errorf("at most %d events", MaxEventsPerHook)
+	if len(s.Events) > MaxEventsPerSubscription {
+		return fmt.Errorf("at most %d events", MaxEventsPerSubscription)
 	}
-	seen := make(map[jobwatch.Event]bool, len(h.Events))
-	for _, e := range h.Events {
+	seen := make(map[jobwatch.Event]bool, len(s.Events))
+	for _, e := range s.Events {
 		if !EventSupported(e) {
 			return fmt.Errorf("unsupported event %q (%s)", e, EventNames())
 		}
@@ -303,7 +406,7 @@ func EventNames() string {
 	return strings.Join(names, ", ")
 }
 
-// NewSecret mints a hook's signing key.
+// NewSecret mints an endpoint's signing key.
 func NewSecret() ([]byte, error) {
 	b := make([]byte, SecretBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -312,7 +415,7 @@ func NewSecret() ([]byte, error) {
 	return b, nil
 }
 
-// newID mints a hook or delivery id.
+// newID mints an endpoint, subscription or delivery id.
 func newID(prefix string) (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -337,8 +440,10 @@ const (
 	// EventHeader names the event, so a receiver can route without
 	// parsing the body.
 	EventHeader = "X-HTCondor-Event"
-	// HookHeader names the hook, for a receiver serving several.
-	HookHeader = "X-HTCondor-Webhook"
+	// EndpointHeader names the endpoint, for a receiver serving
+	// several. The name is historical: the header is unchanged so
+	// receivers written against it keep working.
+	EndpointHeader = "X-HTCondor-Webhook"
 	// SignatureTolerance is how old a timestamp a receiver should accept.
 	// Documented here because the receiver is the one that enforces it,
 	// and a scheme whose tolerance is unstated gets implemented as

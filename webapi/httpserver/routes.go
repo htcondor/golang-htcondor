@@ -231,6 +231,8 @@ func (h *Handler) setupRoutes() {
 	// to post there itself. See handlers_webhooks.go.
 	mux.Handle("/api/v1/webhooks", cors(http.HandlerFunc(h.handleWebhooks)))
 	mux.Handle("/api/v1/webhooks/", cors(http.HandlerFunc(h.handleWebhookItem)))
+	mux.Handle("/api/v1/webhook-subscriptions", cors(http.HandlerFunc(h.handleWebhookSubscriptions)))
+	mux.Handle("/api/v1/webhook-subscriptions/", cors(http.HandlerFunc(h.handleWebhookSubscriptionItem)))
 
 	// Web UI session endpoints (browser-session aware; cookie-only)
 	mux.Handle("/api/v1/auth/me", cors(http.HandlerFunc(h.handleAuthMe)))

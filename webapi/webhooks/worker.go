@@ -65,7 +65,6 @@ type Stats struct {
 	Delivered int
 	Retrying  int
 	Abandoned int
-	Disabled  int
 }
 
 // Run sends due deliveries until ctx is done.
@@ -80,10 +79,10 @@ func (d *Dispatcher) Run(ctx context.Context) {
 				return
 			}
 			d.logf("webhook delivery pass failed", "error", err)
-		} else if st.Delivered > 0 || st.Abandoned > 0 || st.Disabled > 0 {
+		} else if st.Delivered > 0 || st.Abandoned > 0 {
 			d.logf("webhook deliveries sent",
 				"delivered", st.Delivered, "retrying", st.Retrying,
-				"abandoned", st.Abandoned, "disabled", st.Disabled)
+				"abandoned", st.Abandoned)
 		}
 		select {
 		case <-ctx.Done():
@@ -105,14 +104,14 @@ func (d *Dispatcher) Pass(ctx context.Context) (Stats, error) {
 		return st, nil
 	}
 
-	// Grouped by hook, so one destination is posted to serially.
-	byHook := make(map[string][]*Delivery, len(due))
+	// Grouped by endpoint, so one destination is posted to serially.
+	byEndpoint := make(map[string][]*Delivery, len(due))
 	order := make([]string, 0, len(due))
 	for _, dl := range due {
-		if _, seen := byHook[dl.HookID]; !seen {
-			order = append(order, dl.HookID)
+		if _, seen := byEndpoint[dl.EndpointID]; !seen {
+			order = append(order, dl.EndpointID)
 		}
-		byHook[dl.HookID] = append(byHook[dl.HookID], dl)
+		byEndpoint[dl.EndpointID] = append(byEndpoint[dl.EndpointID], dl)
 	}
 
 	var (
@@ -121,10 +120,10 @@ func (d *Dispatcher) Pass(ctx context.Context) (Stats, error) {
 		sem  = make(chan struct{}, d.Concurrency)
 		stat = &st
 	)
-	for _, hookID := range order {
-		deliveries := byHook[hookID]
+	for _, endpointID := range order {
+		deliveries := byEndpoint[endpointID]
 		wg.Add(1)
-		go func(hookID string, deliveries []*Delivery) {
+		go func(endpointID string, deliveries []*Delivery) {
 			defer wg.Done()
 			select {
 			case sem <- struct{}{}:
@@ -133,13 +132,13 @@ func (d *Dispatcher) Pass(ctx context.Context) (Stats, error) {
 			}
 			defer func() { <-sem }()
 
-			// One unseal per hook rather than per delivery: it is the
-			// same destination and the same key for all of them.
-			destination, secret, err := d.store.Destination(ctx, hookID)
+			// One unseal per endpoint rather than per delivery: it is
+			// the same destination and the same key for all of them.
+			destination, secret, err := d.store.Destination(ctx, endpointID)
 			if err != nil {
-				// A hook deleted between the claim and now, or one this
-				// server cannot unseal. Neither is the delivery's fault
-				// and neither is fixed by trying again soon.
+				// An endpoint deleted between the claim and now, or one
+				// this server cannot unseal. Neither is the delivery's
+				// fault and neither is fixed by trying again soon.
 				for _, dl := range deliveries {
 					d.finishUnsendable(ctx, dl, err, stat, &mu)
 				}
@@ -151,41 +150,40 @@ func (d *Dispatcher) Pass(ctx context.Context) (Stats, error) {
 				}
 				d.send(ctx, dl, destination, secret, stat, &mu)
 			}
-		}(hookID, deliveries)
+		}(endpointID, deliveries)
 	}
 	wg.Wait()
 	return st, nil
 }
 
-// finishUnsendable deals with a delivery whose hook cannot be read.
+// finishUnsendable deals with a delivery whose endpoint cannot be read.
 func (d *Dispatcher) finishUnsendable(ctx context.Context, dl *Delivery, cause error, st *Stats, mu *sync.Mutex) {
+	reason := cause.Error()
 	if errors.Is(cause, ErrNotFound) {
-		// The hook is gone; so should its pending deliveries be. Deleting
-		// the hook already removes them, so this is the race, not the
-		// normal path.
-		if _, err := d.store.Abandon(ctx, dl, 0, "the webhook was deleted before this could be delivered"); err != nil {
-			d.logf("could not abandon a delivery for a deleted webhook", "delivery", dl.ID, "error", err)
-		}
-		mu.Lock()
-		st.Abandoned++
-		mu.Unlock()
-		return
+		// The endpoint is gone; so should its pending deliveries be.
+		// Deleting the endpoint already removes them, so this is the
+		// race, not the normal path.
+		reason = "the destination was deleted before this could be delivered"
 	}
-	disabled, err := d.store.Abandon(ctx, dl, 0, cause.Error())
-	if err != nil {
+	// Not counted against the endpoint either way: there is no endpoint
+	// to count it against, or none this server can read, and neither is
+	// a statement about whether the receiver is up.
+	if err := d.store.Abandon(ctx, dl, 0, reason, false); err != nil {
 		d.logf("could not abandon an undeliverable delivery", "delivery", dl.ID, "error", err)
 	}
 	mu.Lock()
 	st.Abandoned++
-	if disabled {
-		st.Disabled++
-	}
 	mu.Unlock()
 }
 
 // send makes one attempt and records what it means.
+//
+// Three outcomes, where there used to be four. A delivery is no longer
+// abandoned for running out of attempts: a destination that keeps failing
+// backs off (see Store.Retry) and keeps its place in the queue until it
+// either lands or ages out of MaxDeliveryAge.
 func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string, secret []byte, st *Stats, mu *sync.Mutex) {
-	a := d.sender.Post(ctx, destination, secret, dl.ID, dl.Payload, dl.Event, dl.HookID)
+	a := d.sender.Post(ctx, destination, secret, dl.ID, dl.Payload, dl.Event, dl.EndpointID)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -197,26 +195,14 @@ func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string,
 		st.Delivered++
 	case !a.Retryable:
 		// A permanent refusal is the user's to fix, so stop now and say
-		// why. Spending the attempt budget on it would only delay the
-		// moment they are told.
-		disabled, err := d.store.Abandon(ctx, dl, a.Status, a.Cause)
-		if err != nil {
+		// why; the request will be identical next time. The ENDPOINT
+		// still backs off, because a URL answering 404 is a
+		// misconfigured destination and without it every delivery
+		// queued for one would be refused in a single burst.
+		if err := d.store.Abandon(ctx, dl, a.Status, a.Cause, true); err != nil {
 			d.logf("could not abandon a refused delivery", "delivery", dl.ID, "error", err)
 		}
 		st.Abandoned++
-		if disabled {
-			st.Disabled++
-		}
-	case dl.Attempts+1 >= MaxAttempts:
-		disabled, err := d.store.Abandon(ctx, dl, a.Status,
-			fmt.Sprintf("gave up after %d attempts; the last said: %s", MaxAttempts, a.Cause))
-		if err != nil {
-			d.logf("could not abandon an exhausted delivery", "delivery", dl.ID, "error", err)
-		}
-		st.Abandoned++
-		if disabled {
-			st.Disabled++
-		}
 	default:
 		if err := d.store.Retry(ctx, dl, a.Status, a.Cause); err != nil {
 			d.logf("could not reschedule a delivery", "delivery", dl.ID, "error", err)
@@ -225,7 +211,7 @@ func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string,
 	}
 }
 
-// SendTest posts a test delivery for a hook and records the outcome.
+// SendTest posts a test delivery to an endpoint and records the outcome.
 //
 // It goes through the real sender, the real signing and the real dial policy,
 // and differs from a genuine delivery in exactly two ways: the payload is
@@ -236,60 +222,82 @@ func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string,
 // failures worth catching here are a destination that refuses the signature,
 // a URL that resolves somewhere this daemon will not dial, and a receiver
 // that answers 404 -- none of which a simulated send would notice.
-func SendTest(ctx context.Context, store *Store, sender *Sender, h *Hook) (Attempt, error) {
-	destination, secret, err := store.Destination(ctx, h.ID)
+//
+// A test does NOT clear a backoff and does not count as a failure. It says
+// what the receiver answered right now; whether the queue may flow again is
+// decided by a real delivery.
+func SendTest(ctx context.Context, store *Store, sender *Sender, ep *Endpoint) (Attempt, error) {
+	destination, secret, err := store.Destination(ctx, ep.ID)
 	if err != nil {
 		return Attempt{}, err
 	}
-	key, err := newID(h.ID + ".test.")
+	key, err := newID(ep.ID + ".test.")
 	if err != nil {
 		return Attempt{}, err
 	}
-	// A test names an event because a receiver routes on one. The first
-	// the hook subscribes to is the honest choice: it is what this hook
-	// will actually send.
-	event := jobwatch.EventDone
-	if len(h.Events) > 0 {
-		event = h.Events[0]
-	}
-	payload, err := RenderPayload(h, event, testJob(h), key, time.Now(), true)
+	// A test is about the DESTINATION, so it describes no subscription:
+	// an endpoint may have several, or none yet, and picking one of them
+	// to speak for would make the test's shape depend on which.
+	sub := &Subscription{Owner: ep.Owner, Scope: ScopeOwner}
+	payload, err := RenderPayload(ep, sub, TestEvent, testJob(ep), testAd(ep), key, time.Now(), true)
 	if err != nil {
 		return Attempt{}, err
 	}
-	a := sender.Post(ctx, destination, secret, key, payload, event, h.ID)
+	a := sender.Post(ctx, destination, secret, key, payload, TestEvent, ep.ID)
 	cause := a.Cause
 	if a.OK() {
 		cause = ""
 	}
-	if err := store.RecordTest(ctx, h.ID, a.Status, cause); err != nil {
+	if err := store.RecordTest(ctx, ep.ID, a.Status, cause); err != nil {
 		return a, fmt.Errorf("the test was sent but its result could not be recorded: %w", err)
 	}
 	return a, nil
 }
 
+// TestEvent is the event a test delivery names.
+//
+// "running" rather than a terminal event, and deliberately not whichever
+// event happened to be first in some list: a test should describe a job that
+// could plausibly be in the state the rest of the payload shows. The old
+// behaviour named the subscription's first event, which produced bodies
+// saying "failed" next to an exit code of 0 -- an inconsistency a receiver
+// author maps fields from and then cannot reproduce.
+const TestEvent = jobwatch.EventRunning
+
 // testJob is the job a test delivery describes.
 //
 // Filled in rather than omitted: a receiver's handler almost always reads the
 // job, and a test whose payload is missing the field the handler needs tests
-// that the handler can be reached and not that it works. The ids are the
-// hook's own subject where it has one, so the shape matches what will arrive.
-func testJob(h *Hook) *JobPayload {
-	j := &JobPayload{
-		Cluster: h.Job.Cluster,
-		Proc:    h.Job.Proc,
-		Schedd:  h.Job.Schedd,
-		Owner:   h.Owner,
-		Status:  "Completed",
-		Command: "/bin/true",
-		Batch:   h.BatchName,
+// that the handler can be reached and not that it works. Internally
+// consistent with TestEvent -- a running job, with no exit code and no hold
+// reason, because it has neither.
+func testJob(ep *Endpoint) *JobPayload {
+	return &JobPayload{
+		Cluster: 0,
+		Proc:    0,
+		ID:      "0.0",
+		Owner:   ep.Owner,
+		Status:  "Running",
+		Command: "/bin/sleep",
 	}
-	if j.Cluster == 0 {
-		// An owner or batch hook has no one job, so the numbers are
-		// plainly not real ones.
-		j.Cluster, j.Proc = 0, 0
+}
+
+// testAd is the ad a full-payload endpoint's test carries.
+//
+// Small and obviously synthetic, but a real shape: an endpoint set to send
+// whole ads should see an ad in its test, or the test does not exercise the
+// thing that was turned on.
+func testAd(ep *Endpoint) map[string]any {
+	if ep.Payload != PayloadFull {
+		return nil
 	}
-	j.ID = fmt.Sprintf("%d.%d", j.Cluster, j.Proc)
-	zero := int64(0)
-	j.ExitCode = &zero
-	return j
+	return map[string]any{
+		"ClusterId":   0,
+		"ProcId":      0,
+		"Owner":       ep.Owner,
+		"JobStatus":   2,
+		"Cmd":         "/bin/sleep",
+		"Arguments":   "30",
+		"RequestCpus": 1,
+	}
 }

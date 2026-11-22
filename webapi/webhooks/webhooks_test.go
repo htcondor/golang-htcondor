@@ -31,39 +31,76 @@ func newStore(t *testing.T) *Store {
 	return NewStore(db, nil)
 }
 
-func ownerHook(owner, label string) *Hook {
-	return &Hook{
-		Owner: owner, Label: label, Scope: ScopeOwner,
+// ownerSub is a subscription to everything the owner runs.
+func ownerSub(owner, label, endpointID string) *Subscription {
+	return &Subscription{
+		EndpointID: endpointID, Owner: owner, Label: label, Scope: ScopeOwner,
 		Events: []jobwatch.Event{jobwatch.EventFailed},
 	}
 }
 
+// newEndpoint registers a destination and returns it with its secret.
+func newEndpoint(t *testing.T, s *Store, owner, label, dest string) (*Endpoint, []byte) {
+	t.Helper()
+	ep, secret, err := s.CreateEndpoint(context.Background(),
+		&Endpoint{Owner: owner, Label: label}, dest)
+	if err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+	return ep, secret
+}
+
 // --- the model -----------------------------------------------------------
 
-func TestValidateRejectsWhatCannotWork(t *testing.T) {
+func TestEndpointValidateRejectsWhatCannotWork(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		hook *Hook
+		ep   *Endpoint
 		want string
 	}{
-		{"no label", &Hook{Owner: "alice", Scope: ScopeOwner,
-			Events: []jobwatch.Event{jobwatch.EventDone}}, "name is required"},
-		{"unknown scope", &Hook{Owner: "alice", Label: "x", Scope: "galaxy",
+		{"no label", &Endpoint{Owner: "alice", Payload: PayloadSummary}, "name is required"},
+		{"no owner", &Endpoint{Label: "x", Payload: PayloadSummary}, "must have an owner"},
+		{"unknown payload mode", &Endpoint{Owner: "alice", Label: "x", Payload: "everything"},
+			"unknown payload mode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.ep.Validate()
+			if err == nil {
+				t.Fatalf("Validate accepted %+v", tc.ep)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Validate = %q, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsWhatCannotWork(t *testing.T) {
+	const ep = "wh_0000"
+	for _, tc := range []struct {
+		name string
+		hook *Subscription
+		want string
+	}{
+		{"no destination", &Subscription{Owner: "alice", Scope: ScopeOwner,
+			Events: []jobwatch.Event{jobwatch.EventDone}}, "must name the destination"},
+		{"unknown scope", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: "galaxy",
 			Events: []jobwatch.Event{jobwatch.EventDone}}, "unknown scope"},
-		{"no events", &Hook{Owner: "alice", Label: "x", Scope: ScopeOwner}, "at least one event"},
-		{"duplicate event", &Hook{Owner: "alice", Label: "x", Scope: ScopeOwner,
+		{"no events", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: ScopeOwner},
+			"at least one event"},
+		{"duplicate event", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: ScopeOwner,
 			Events: []jobwatch.Event{jobwatch.EventDone, jobwatch.EventDone}}, "duplicate event"},
-		// Custom is a jobwatch event and deliberately not a hook event: it
-		// has no terminal resolution, so it would fire only for jobs still
-		// in the queue and a hook matching nothing would look like a quiet
-		// pool.
-		{"custom event", &Hook{Owner: "alice", Label: "x", Scope: ScopeOwner,
+		// Custom is a jobwatch event and deliberately not a webhook
+		// event: it has no terminal resolution, so it would fire only
+		// for jobs still in the queue and a subscription matching
+		// nothing would look like a quiet pool.
+		{"custom event", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: ScopeOwner,
 			Events: []jobwatch.Event{jobwatch.EventCustom}}, "unsupported event"},
-		{"job hook with no job", &Hook{Owner: "alice", Label: "x", Scope: ScopeJob,
+		{"job hook with no job", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: ScopeJob,
 			Events: []jobwatch.Event{jobwatch.EventDone}}, "needs a cluster id"},
-		{"batch hook with no batch", &Hook{Owner: "alice", Label: "x", Scope: ScopeBatch,
+		{"batch hook with no batch", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: ScopeBatch,
 			Events: []jobwatch.Event{jobwatch.EventDone}}, "needs a batch"},
-		{"owner hook naming a job", &Hook{Owner: "alice", Label: "x", Scope: ScopeOwner,
+		{"owner hook naming a job", &Subscription{EndpointID: ep, Owner: "alice", Label: "x", Scope: ScopeOwner,
 			Job: jobwatch.JobID{Cluster: 5}, Events: []jobwatch.Event{jobwatch.EventDone}},
 			"names no job or batch"},
 	} {
@@ -227,46 +264,71 @@ func TestCreateAndRead(t *testing.T) {
 	ctx := context.Background()
 	const dest = "https://hooks.example.org/abc/secret-path"
 
-	h, secret, err := s.Create(ctx, ownerHook("alice", "Slack"), dest)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	ep, secret := newEndpoint(t, s, "alice", "Slack", dest)
 	if len(secret) != SecretBytes {
 		t.Errorf("secret is %d bytes, want %d", len(secret), SecretBytes)
 	}
-	if h.ID == "" {
-		t.Fatal("Create returned no id")
+	if ep.ID == "" {
+		t.Fatal("CreateEndpoint returned no id")
 	}
-	// An owner hook has no natural end, so it gets a deadline at creation.
-	if h.ExpiresAt == nil {
-		t.Error("an owner hook was created with no deadline")
+	// A destination has no deadline. It is a place, not a thing being
+	// watched, and nothing about it goes stale.
+	if ep.Payload != PayloadSummary {
+		t.Errorf("payload mode defaulted to %q, want %q", ep.Payload, PayloadSummary)
 	}
 
-	got, err := s.Get(ctx, "alice", h.ID)
+	sub, err := s.CreateSubscription(ctx, ownerSub("alice", "everything", ep.ID))
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("CreateSubscription: %v", err)
 	}
-	if got.Label != "Slack" || got.Scope != ScopeOwner {
+	// An owner subscription has no natural end, so it gets a deadline at
+	// creation.
+	if sub.ExpiresAt == nil {
+		t.Error("an owner subscription was created with no deadline")
+	}
+
+	got, err := s.GetEndpoint(ctx, "alice", ep.ID)
+	if err != nil {
+		t.Fatalf("GetEndpoint: %v", err)
+	}
+	if got.Label != "Slack" {
 		t.Errorf("read back %+v", got)
 	}
 	if !got.HasDestination {
-		t.Error("HasDestination is false for a hook with one")
+		t.Error("HasDestination is false for an endpoint with one")
 	}
 	if strings.Contains(got.DestinationHint, "secret-path") {
 		t.Errorf("the hint leaks the path: %q", got.DestinationHint)
 	}
 
-	// Somebody else's hook is not found, rather than refused: a 403 would
-	// confirm the id exists.
-	if _, err := s.Get(ctx, "bob", h.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Get as another owner = %v, want ErrNotFound", err)
+	gotSub, err := s.GetSubscription(ctx, "alice", sub.ID)
+	if err != nil {
+		t.Fatalf("GetSubscription: %v", err)
 	}
-	if hooks, err := s.ForOwner(ctx, "bob"); err != nil || len(hooks) != 0 {
-		t.Errorf("ForOwner(bob) = %v, %v; want no hooks", hooks, err)
+	if gotSub.Scope != ScopeOwner || gotSub.EndpointID != ep.ID {
+		t.Errorf("read back %+v", gotSub)
+	}
+
+	// Somebody else's is not found, rather than refused: a 403 would
+	// confirm the id exists.
+	if _, err := s.GetEndpoint(ctx, "bob", ep.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetEndpoint as another owner = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetSubscription(ctx, "bob", sub.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetSubscription as another owner = %v, want ErrNotFound", err)
+	}
+	if eps, err := s.EndpointsForOwner(ctx, "bob"); err != nil || len(eps) != 0 {
+		t.Errorf("EndpointsForOwner(bob) = %v, %v; want none", eps, err)
+	}
+
+	// A subscription cannot point at somebody else's destination, and the
+	// refusal does not confirm that the id exists.
+	if _, err := s.CreateSubscription(ctx, ownerSub("bob", "borrowed", ep.ID)); err == nil {
+		t.Error("bob subscribed through alice's destination")
 	}
 
 	// Destination is the only way to the value, and it does return it.
-	back, backSecret, err := s.Destination(ctx, h.ID)
+	back, backSecret, err := s.Destination(ctx, ep.ID)
 	if err != nil {
 		t.Fatalf("Destination: %v", err)
 	}
@@ -278,20 +340,59 @@ func TestCreateAndRead(t *testing.T) {
 	}
 }
 
+// TestOneSecretManySubscriptions is the whole point of the split: watching a
+// second thing through a receiver must not mint a second key, because the
+// key is shown once and re-copying it is where people go wrong.
+func TestOneSecretManySubscriptions(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ep, secret := newEndpoint(t, s, "alice", "Zap", "https://hooks.example.org/x")
+
+	for i, sub := range []*Subscription{
+		{EndpointID: ep.ID, Owner: "alice", Scope: ScopeJob,
+			Job: jobwatch.JobID{Cluster: 1, Proc: 0}, Events: []jobwatch.Event{jobwatch.EventDone}},
+		{EndpointID: ep.ID, Owner: "alice", Scope: ScopeJob,
+			Job: jobwatch.JobID{Cluster: 2, Proc: 0}, Events: []jobwatch.Event{jobwatch.EventHeld}},
+		ownerSub("alice", "all of them", ep.ID),
+	} {
+		if _, err := s.CreateSubscription(ctx, sub); err != nil {
+			t.Fatalf("CreateSubscription %d: %v", i, err)
+		}
+	}
+
+	// One destination, one key, still the one that was handed over.
+	eps, err := s.EndpointsForOwner(ctx, "alice")
+	if err != nil {
+		t.Fatalf("EndpointsForOwner: %v", err)
+	}
+	if len(eps) != 1 {
+		t.Fatalf("three subscriptions produced %d destinations, want 1", len(eps))
+	}
+	_, back, err := s.Destination(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	if string(back) != string(secret) {
+		t.Error("the destination's signing key changed when subscriptions were added")
+	}
+
+	subs, err := s.SubscriptionsForOwner(ctx, "alice")
+	if err != nil || len(subs) != 3 {
+		t.Fatalf("SubscriptionsForOwner = %d, %v; want 3", len(subs), err)
+	}
+}
+
 func TestCreateSealsWhenAKeyIsConfigured(t *testing.T) {
 	s := newStore(t)
 	s.sealer = fakeSealer{}
 	ctx := context.Background()
 	const dest = "https://hooks.example.org/sealed"
 
-	h, _, err := s.Create(ctx, ownerHook("alice", "Sealed"), dest)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	h, _ := newEndpoint(t, s, "alice", "Sealed", dest)
 	// Stored sealed: the raw column must not contain the URL.
 	var raw []byte
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT url_data FROM webhooks WHERE id = ?`, h.ID).Scan(&raw); err != nil {
+		`SELECT url_data FROM webhook_endpoints WHERE id = ?`, h.ID).Scan(&raw); err != nil {
 		t.Fatalf("read url_data: %v", err)
 	}
 	if strings.Contains(string(raw), "hooks.example.org") {
@@ -314,46 +415,91 @@ func TestCreateSealsWhenAKeyIsConfigured(t *testing.T) {
 func TestCreateEnforcesQuota(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	for i := 0; i < MaxHooksPerOwner; i++ {
-		if _, _, err := s.Create(ctx, ownerHook("alice", "h"), "https://hooks.example.org/x"); err != nil {
-			t.Fatalf("Create %d: %v", i, err)
+	for i := 0; i < MaxEndpointsPerOwner; i++ {
+		if _, _, err := s.CreateEndpoint(ctx,
+			&Endpoint{Owner: "alice", Label: "h"}, "https://hooks.example.org/x"); err != nil {
+			t.Fatalf("CreateEndpoint %d: %v", i, err)
 		}
 	}
-	if _, _, err := s.Create(ctx, ownerHook("alice", "one too many"), "https://hooks.example.org/x"); err == nil {
-		t.Fatal("Create past the quota succeeded")
+	if _, _, err := s.CreateEndpoint(ctx,
+		&Endpoint{Owner: "alice", Label: "one too many"}, "https://hooks.example.org/x"); err == nil {
+		t.Fatal("CreateEndpoint past the quota succeeded")
 	}
 	// Somebody else's quota is their own.
-	if _, _, err := s.Create(ctx, ownerHook("bob", "mine"), "https://hooks.example.org/x"); err != nil {
-		t.Errorf("bob was refused for alice's hooks: %v", err)
+	if _, _, err := s.CreateEndpoint(ctx,
+		&Endpoint{Owner: "bob", Label: "mine"}, "https://hooks.example.org/x"); err != nil {
+		t.Errorf("bob was refused for alice's destinations: %v", err)
+	}
+
+	// Subscriptions have their own, larger bound, and hitting the
+	// destination ceiling does not consume it.
+	ep, _ := newEndpoint(t, s, "carol", "Zap", "https://hooks.example.org/x")
+	for i := 0; i < MaxSubscriptionsPerOwner; i++ {
+		if _, err := s.CreateSubscription(ctx, ownerSub("carol", "s", ep.ID)); err != nil {
+			t.Fatalf("CreateSubscription %d: %v", i, err)
+		}
+	}
+	if _, err := s.CreateSubscription(ctx, ownerSub("carol", "one too many", ep.ID)); err == nil {
+		t.Error("CreateSubscription past the quota succeeded")
 	}
 }
 
 func TestDeleteIsOwnerScopedAndTakesDeliveries(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	h, _, err := s.Create(ctx, ownerHook("alice", "Slack"), "https://hooks.example.org/x")
+	ep, _ := newEndpoint(t, s, "alice", "Slack", "https://hooks.example.org/x")
+	sub, err := s.CreateSubscription(ctx, ownerSub("alice", "all", ep.ID))
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("CreateSubscription: %v", err)
 	}
 	job := jobwatch.JobID{Cluster: 7, Proc: 0}
-	key := DeliveryKey(h.ID, jobwatch.EventFailed, job)
-	if _, err := s.Enqueue(ctx, h.ID, "alice", jobwatch.EventFailed, &job, []byte("{}"), key); err != nil {
+	key := DeliveryKey(ep.ID, jobwatch.EventFailed, job)
+	if _, err := s.Enqueue(ctx, ep.ID, "alice", jobwatch.EventFailed, &job, []byte("{}"), key); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	if err := s.Delete(ctx, "bob", h.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Delete as another owner = %v, want ErrNotFound", err)
+	if err := s.DeleteEndpoint(ctx, "bob", ep.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteEndpoint as another owner = %v, want ErrNotFound", err)
 	}
-	if err := s.Delete(ctx, "alice", h.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := s.DeleteEndpoint(ctx, "alice", ep.ID); err != nil {
+		t.Fatalf("DeleteEndpoint: %v", err)
 	}
 	var n int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = ?`, h.ID).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM webhook_deliveries WHERE endpoint_id = ?`, ep.ID).Scan(&n); err != nil {
 		t.Fatalf("count deliveries: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("%d deliveries outlived their hook", n)
+		t.Errorf("%d deliveries outlived their destination", n)
+	}
+	// The subscriptions go with it. Explicitly, not by the declared
+	// cascade: this database does not enable PRAGMA foreign_keys, so
+	// the cascade never fires and a subscription left behind would keep
+	// being evaluated against a destination that no longer exists.
+	if _, err := s.GetSubscription(ctx, "alice", sub.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a subscription outlived its destination: %v", err)
+	}
+}
+
+// TestDeleteSubscriptionKeepsTheDestination is the other half of the split:
+// stopping watching one job must not throw away the receiver's key.
+func TestDeleteSubscriptionKeepsTheDestination(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ep, secret := newEndpoint(t, s, "alice", "Zap", "https://hooks.example.org/x")
+	sub, err := s.CreateSubscription(ctx, ownerSub("alice", "all", ep.ID))
+	if err != nil {
+		t.Fatalf("CreateSubscription: %v", err)
+	}
+	if err := s.DeleteSubscription(ctx, "alice", sub.ID); err != nil {
+		t.Fatalf("DeleteSubscription: %v", err)
+	}
+	if _, err := s.GetEndpoint(ctx, "alice", ep.ID); err != nil {
+		t.Fatalf("the destination went with its last subscription: %v", err)
+	}
+	_, back, err := s.Destination(ctx, ep.ID)
+	if err != nil || string(back) != string(secret) {
+		t.Error("the signing key did not survive deleting a subscription")
 	}
 }
 
@@ -363,10 +509,7 @@ func TestDeleteIsOwnerScopedAndTakesDeliveries(t *testing.T) {
 func TestEnqueueDeduplicates(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	h, _, err := s.Create(ctx, ownerHook("alice", "Slack"), "https://hooks.example.org/x")
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	h, _ := newEndpoint(t, s, "alice", "Slack", "https://hooks.example.org/x")
 	job := jobwatch.JobID{Cluster: 12, Proc: 3}
 	key := DeliveryKey(h.ID, jobwatch.EventFailed, job)
 
@@ -383,7 +526,7 @@ func TestEnqueueDeduplicates(t *testing.T) {
 	}
 	var n int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = ?`, h.ID).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM webhook_deliveries WHERE endpoint_id = ?`, h.ID).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
@@ -400,10 +543,7 @@ func TestEnqueueDeduplicates(t *testing.T) {
 func TestClaimDueSkipsFuture(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	h, _, err := s.Create(ctx, ownerHook("alice", "Slack"), "https://hooks.example.org/x")
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	h, _ := newEndpoint(t, s, "alice", "Slack", "https://hooks.example.org/x")
 	job := jobwatch.JobID{Cluster: 1, Proc: 0}
 	key := DeliveryKey(h.ID, jobwatch.EventDone, job)
 	if _, err := s.Enqueue(ctx, h.ID, "alice", jobwatch.EventDone, &job, []byte("{}"), key); err != nil {
@@ -429,12 +569,13 @@ func TestClaimDueSkipsFuture(t *testing.T) {
 }
 
 func TestRenderPayloadCarriesWhatAReceiverNeeds(t *testing.T) {
-	h := &Hook{ID: "wh_1", Label: "Slack", Scope: ScopeJob,
+	ep := &Endpoint{ID: "wh_1", Label: "Slack", Owner: "alice", Payload: PayloadSummary}
+	sub := &Subscription{ID: "ws_1", EndpointID: ep.ID, Scope: ScopeJob,
 		Job: jobwatch.JobID{Cluster: 42, Proc: 1}, Owner: "alice",
 		Events: []jobwatch.Event{jobwatch.EventFailed}}
-	key := DeliveryKey(h.ID, jobwatch.EventFailed, h.Job)
-	body, err := RenderPayload(h, jobwatch.EventFailed,
-		&JobPayload{Cluster: 42, Proc: 1, ID: "42.1", Status: "Held"}, key, time.Now(), false)
+	key := DeliveryKey(ep.ID, jobwatch.EventFailed, sub.Job)
+	body, err := RenderPayload(ep, sub, jobwatch.EventFailed,
+		&JobPayload{Cluster: 42, Proc: 1, ID: "42.1", Status: "Held"}, nil, key, time.Now(), false)
 	if err != nil {
 		t.Fatalf("RenderPayload: %v", err)
 	}
@@ -455,6 +596,78 @@ func TestRenderPayloadCarriesWhatAReceiverNeeds(t *testing.T) {
 	}
 	if p.Job == nil || p.Job.Status != "Held" {
 		t.Errorf("the job was not carried: %+v", p.Job)
+	}
+	// A summary endpoint carries no ad, and says nothing about one: the
+	// field is absent, not explained.
+	if p.JobAd != nil || p.JobAdOmitted != "" {
+		t.Errorf("a summary payload mentioned the ad: ad=%v omitted=%q", p.JobAd, p.JobAdOmitted)
+	}
+}
+
+// TestFullPayloadCarriesTheAdBesideTheSummary pins the shape of the opt-in:
+// the projection a receiver already maps stays exactly where it was.
+func TestFullPayloadCarriesTheAdBesideTheSummary(t *testing.T) {
+	ep := &Endpoint{ID: "wh_1", Label: "Zap", Owner: "alice", Payload: PayloadFull}
+	sub := &Subscription{ID: "ws_1", EndpointID: ep.ID, Scope: ScopeOwner, Owner: "alice",
+		Events: []jobwatch.Event{jobwatch.EventHeld}}
+	ad := map[string]any{"ClusterId": 42, "ProcId": 1, "JobStatus": 5, "Owner": "alice"}
+	body, err := RenderPayload(ep, sub, jobwatch.EventHeld,
+		&JobPayload{Cluster: 42, Proc: 1, ID: "42.1", Status: "Held"}, ad, "k", time.Now(), false)
+	if err != nil {
+		t.Fatalf("RenderPayload: %v", err)
+	}
+	var p Payload
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Job == nil || p.Job.ID != "42.1" {
+		t.Error("the summary was dropped when the whole ad was added")
+	}
+	if p.JobAd == nil {
+		t.Fatal("a full-payload endpoint carried no ad")
+	}
+	// The ad keeps the ClassAd spelling a receiver will look for, not a
+	// lower-cased or renamed one.
+	if _, ok := p.JobAd["ClusterId"]; !ok {
+		t.Errorf("the ad's attribute names were rewritten: %v", p.JobAd)
+	}
+}
+
+// TestFullPayloadExplainsAMissingAd covers the case a receiver cannot
+// otherwise distinguish: no ad, versus an ad with nothing in it.
+func TestFullPayloadExplainsAMissingAd(t *testing.T) {
+	ep := &Endpoint{ID: "wh_1", Owner: "alice", Label: "Zap", Payload: PayloadFull}
+	sub := &Subscription{EndpointID: ep.ID, Owner: "alice", Scope: ScopeOwner,
+		Events: []jobwatch.Event{jobwatch.EventDone}}
+
+	body, err := RenderPayload(ep, sub, jobwatch.EventDone, nil, nil, "k", time.Now(), false)
+	if err != nil {
+		t.Fatalf("RenderPayload: %v", err)
+	}
+	var p Payload
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.JobAdOmitted == "" {
+		t.Error("a full-payload delivery with no ad said nothing about why")
+	}
+
+	// An ad over the size limit is left out with its size named, not
+	// truncated: half an ad is not a smaller ad, it is a malformed one.
+	big := map[string]any{"Arguments": strings.Repeat("x", MaxAdBytes+1)}
+	body, err = RenderPayload(ep, sub, jobwatch.EventDone, nil, big, "k2", time.Now(), false)
+	if err != nil {
+		t.Fatalf("RenderPayload: %v", err)
+	}
+	var q Payload
+	if err := json.Unmarshal(body, &q); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if q.JobAd != nil {
+		t.Error("an oversized ad was sent anyway")
+	}
+	if !strings.Contains(q.JobAdOmitted, "limit") {
+		t.Errorf("the oversized ad was not explained: %q", q.JobAdOmitted)
 	}
 }
 

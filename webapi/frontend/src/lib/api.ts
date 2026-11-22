@@ -1469,16 +1469,47 @@ export interface ConnectorStatus {
   transfer: string;
 }
 
-// One outbound webhook: this server posts to a service when something
-// happens to the owner's jobs. The opposite direction to an Integration,
-// which lets a service act as the owner here.
+// A webhook DESTINATION: where this server posts, and the key a receiver
+// verifies with. Registered once per receiver; what is watched lives in
+// WebhookSubscription, any number of which may point at one of these. The
+// opposite direction to an Integration, which lets a service act as the
+// owner here.
 //
 // No url field, deliberately. The destination is a capability URL -- for
 // Slack, Zapier and most of the rest, possession is the authorization to post
 // -- so no endpoint returns it. destination_hint names the host and nothing
-// else, which is what tells two hooks apart.
+// else, which is what tells two destinations apart.
 export interface Webhook {
   id: string;
+  label: string;
+  // How much of the job every delivery here carries. On the destination so
+  // one receiver always sees one shape.
+  payload: "summary" | "full";
+  created_at: string;
+  updated_at: string;
+  consecutive_failures: number;
+  // When this destination may next be posted to. A failing receiver backs
+  // off to a ceiling and keeps trying; it is never disabled.
+  backoff_until?: string;
+  last_delivery_at?: string;
+  last_status?: number;
+  last_error?: string;
+  last_test_at?: string;
+  last_test_status?: number;
+  last_test_error?: string;
+  // When the queue for this destination last hit its ceiling, and how deep
+  // it was. Events past it were dropped, which has to be visible.
+  backlog_at?: string;
+  backlog_depth?: number;
+  has_destination: boolean;
+  destination_hint?: string;
+}
+
+// What is watched, and which events, posting to one Webhook. Creating one
+// mints no secret: the receiver was configured when its destination was.
+export interface WebhookSubscription {
+  id: string;
+  endpoint_id: string;
   label: string;
   scope: "job" | "batch" | "owner";
   job?: { cluster_id: number; proc_id: number; schedd?: string };
@@ -1488,19 +1519,8 @@ export interface Webhook {
   created_at: string;
   updated_at: string;
   expires_at?: string;
-  disabled_at?: string;
-  disabled_reason?: string;
-  consecutive_failures: number;
   capped_at?: string;
   capped_jobs?: number;
-  last_delivery_at?: string;
-  last_status?: number;
-  last_error?: string;
-  last_test_at?: string;
-  last_test_status?: number;
-  last_test_error?: string;
-  has_destination: boolean;
-  destination_hint?: string;
 }
 
 // What a webhook creation hands back. The signing secret is the only time it
@@ -2874,18 +2894,17 @@ export const api = {
   // integrations, and for a sharper reason: a destination is a capability
   // URL, so a token that could read one back would be enough to post there.
   webhooks: {
-    list: (): Promise<{ webhooks: Webhook[]; events: string[] }> =>
-      fetchJSON(`${BASE}/webhooks`),
+    list: (): Promise<{
+      webhooks: Webhook[];
+      events: string[];
+      payload_modes: string[];
+    }> => fetchJSON(`${BASE}/webhooks`),
+    // Registers a destination. The ONLY call that returns a signing
+    // secret, and the only one that needs to.
     create: (body: {
       label: string;
       url: string;
-      scope: "job" | "batch" | "owner";
-      cluster_id?: number;
-      proc_id?: number;
-      schedd?: string;
-      batch_id?: string;
-      batch_name?: string;
-      events: string[];
+      payload?: "summary" | "full";
     }): Promise<WebhookCreated> =>
       fetchJSON(`${BASE}/webhooks`, {
         method: "POST",
@@ -2894,13 +2913,15 @@ export const api = {
       }),
     update: (
       id: string,
-      body: { label?: string; url?: string; events?: string[] },
+      body: { label?: string; url?: string; payload?: "summary" | "full" },
     ): Promise<{ webhook: Webhook }> =>
       fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       }),
+    // Takes every subscription feeding it. To stop watching one thing
+    // without discarding the receiver's key, delete the subscription.
     remove: (id: string): Promise<void> =>
       fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -2914,16 +2935,47 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: "{}",
       }),
-    // For a hook disabled after repeated give-ups, once the user has fixed
-    // the destination.
-    enable: (id: string): Promise<void> =>
-      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/enable`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }),
     deliveries: (id: string): Promise<{ deliveries: WebhookDelivery[] }> =>
       fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/deliveries`),
+  },
+
+  // What is watched. Separate from the destinations so that adding a second
+  // thing to watch does not ask anybody to paste a capability URL again or
+  // copy a second signing secret.
+  webhookSubscriptions: {
+    list: (): Promise<{
+      subscriptions: WebhookSubscription[];
+      events: string[];
+    }> => fetchJSON(`${BASE}/webhook-subscriptions`),
+    create: (body: {
+      endpoint_id: string;
+      label?: string;
+      scope: "job" | "batch" | "owner";
+      cluster_id?: number;
+      proc_id?: number;
+      schedd?: string;
+      batch_id?: string;
+      batch_name?: string;
+      events: string[];
+    }): Promise<{ subscription: WebhookSubscription }> =>
+      fetchJSON(`${BASE}/webhook-subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    update: (
+      id: string,
+      body: { label?: string; events?: string[] },
+    ): Promise<{ subscription: WebhookSubscription }> =>
+      fetchJSON(`${BASE}/webhook-subscriptions/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    remove: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/webhook-subscriptions/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
   },
 
   admin: {

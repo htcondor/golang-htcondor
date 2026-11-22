@@ -1,17 +1,22 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Webhook } from '@/lib/api';
+import type { Webhook, WebhookSubscription } from '@/lib/api';
 
-// The notifications panel. Two behaviours are load-bearing: the destination
-// is never rendered back, and Test reports what the receiver actually said.
+// The notifications panel. Three behaviours are load-bearing: the
+// destination is never rendered back, Test reports what the receiver
+// actually said, and adding a second subscription asks for no URL and no
+// secret -- which is the whole reason destinations and subscriptions are
+// separate things.
 
 const list = vi.fn();
 const create = vi.fn();
 const test_ = vi.fn();
-const enable = vi.fn();
 const remove = vi.fn();
 const deliveries = vi.fn();
+const listSubs = vi.fn();
+const createSub = vi.fn();
+const removeSub = vi.fn();
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
@@ -25,26 +30,44 @@ vi.mock('@/lib/api', async () => {
         update: () => Promise.reject(new Error('not used here')),
         remove: (id: string) => remove(id),
         test: (id: string) => test_(id),
-        enable: (id: string) => enable(id),
         deliveries: (id: string) => deliveries(id),
+      },
+      webhookSubscriptions: {
+        list: () => listSubs(),
+        create: (b: unknown) => createSub(b),
+        update: () => Promise.reject(new Error('not used here')),
+        remove: (id: string) => removeSub(id),
       },
     },
   };
 });
 
 const EVENTS = ['done', 'succeeded', 'failed', 'held', 'running'];
+const MODES = ['summary', 'full'];
 
-function hook(over: Partial<Webhook> = {}): Webhook {
+function dest(over: Partial<Webhook> = {}): Webhook {
   return {
     id: 'wh_1',
     label: 'Slack #jobs',
-    scope: 'owner',
-    events: ['failed'],
+    payload: 'summary',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     consecutive_failures: 0,
     has_destination: true,
     destination_hint: 'https://hooks.slack.com/… (46 more characters)',
+    ...over,
+  };
+}
+
+function sub(over: Partial<WebhookSubscription> = {}): WebhookSubscription {
+  return {
+    id: 'ws_1',
+    endpoint_id: 'wh_1',
+    label: '',
+    scope: 'owner',
+    events: ['failed'],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     ...over,
   };
 }
@@ -64,10 +87,13 @@ describe('the event notifications panel', () => {
     list.mockReset();
     create.mockReset();
     test_.mockReset();
-    enable.mockReset();
     remove.mockReset();
     deliveries.mockReset();
-    list.mockResolvedValue({ webhooks: [], events: EVENTS });
+    listSubs.mockReset();
+    createSub.mockReset();
+    removeSub.mockReset();
+    list.mockResolvedValue({ webhooks: [], events: EVENTS, payload_modes: MODES });
+    listSubs.mockResolvedValue({ subscriptions: [], events: EVENTS });
     deliveries.mockResolvedValue({ deliveries: [] });
   });
 
@@ -84,13 +110,13 @@ describe('the event notifications panel', () => {
   it('shows an empty state rather than an empty list', async () => {
     await renderSection();
     await waitFor(() =>
-      expect(screen.getByText(/No event notifications are set up/)).toBeInTheDocument(),
+      expect(screen.getByText(/No destinations yet/)).toBeInTheDocument(),
     );
   });
 
   it('never renders the destination back, only its host', async () => {
     const secretPath = 'https://hooks.slack.com/services/T0/B0/SUPERSECRETTOKEN';
-    list.mockResolvedValue({ webhooks: [hook()], events: EVENTS });
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
     await renderSection();
     await waitFor(() => expect(screen.getByText('Slack #jobs')).toBeInTheDocument());
     // For most services holding the URL is the authorization to post, so the
@@ -100,33 +126,57 @@ describe('the event notifications panel', () => {
     expect(screen.getByText(/hooks\.slack\.com/)).toBeInTheDocument();
   });
 
-  it('sends what the form describes, parsing a job as cluster.proc', async () => {
-    create.mockResolvedValue({
-      webhook: hook({ scope: 'job' }),
-      signing_secret: 'deadbeef',
-      secret_shown_once: true,
-      signature_header: 'X-HTCondor-Signature',
-      idempotency_header: 'Idempotency-Key',
-    });
+  it('asks for no URL and no secret when adding a second subscription', async () => {
+    // The point of the split. With a destination already registered, the
+    // "what to watch" form must not contain a URL field at all.
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    createSub.mockResolvedValue({ subscription: sub() });
     await renderSection();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Add a notification' }));
-    fireEvent.change(screen.getByPlaceholderText('Slack #jobs'), {
-      target: { value: 'My Zap' },
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Notify me about something' }),
+    );
+    expect(screen.queryByPlaceholderText(/hooks.slack.com/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(createSub).toHaveBeenCalledTimes(1));
+    // The one destination is chosen for them rather than made a decision.
+    expect(createSub.mock.calls[0][0]).toMatchObject({
+      endpoint_id: 'wh_1',
+      scope: 'owner',
+      events: ['failed'],
     });
-    fireEvent.change(screen.getByPlaceholderText(/hooks.slack.com/), {
-      target: { value: 'https://hooks.zapier.com/abc' },
-    });
+    // Nothing on this path mints a key.
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('offers nothing to watch until a destination exists', async () => {
+    await renderSection();
+    await waitFor(() =>
+      expect(screen.getByText(/No destinations yet/)).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Notify me about something' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('sends what the subscription form describes, parsing a job as cluster.proc', async () => {
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    createSub.mockResolvedValue({ subscription: sub({ scope: 'job' }) });
+    await renderSection();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Notify me about something' }),
+    );
     fireEvent.click(screen.getByRole('radio', { name: /one job/ }));
     fireEvent.change(screen.getByPlaceholderText('1234.0'), {
       target: { value: '4242.7' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create.mock.calls[0][0]).toMatchObject({
-      label: 'My Zap',
-      url: 'https://hooks.zapier.com/abc',
+    await waitFor(() => expect(createSub).toHaveBeenCalledTimes(1));
+    expect(createSub.mock.calls[0][0]).toMatchObject({
+      endpoint_id: 'wh_1',
       scope: 'job',
       cluster_id: 4242,
       proc_id: 7,
@@ -134,52 +184,64 @@ describe('the event notifications panel', () => {
     });
   });
 
-  it('treats a bare number as a cluster batch and a word as a batch name', async () => {
-    create.mockResolvedValue({
-      webhook: hook({ scope: 'batch' }),
-      signing_secret: 'x',
-      secret_shown_once: true,
-      signature_header: 'X-HTCondor-Signature',
-      idempotency_header: 'Idempotency-Key',
-    });
+  it('clears the whole form after adding, not just the text', async () => {
+    // A form that keeps its scope and job id is how somebody adds a second
+    // subscription still pointed at the last one's job without noticing.
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    createSub.mockResolvedValue({ subscription: sub({ scope: 'job' }) });
     await renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: 'Add a notification' }));
-    fireEvent.change(screen.getByPlaceholderText('Slack #jobs'), { target: { value: 'b' } });
-    fireEvent.change(screen.getByPlaceholderText(/hooks.slack.com/), {
-      target: { value: 'https://h.example.org/x' },
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Notify me about something' }),
+    );
+    fireEvent.click(screen.getByRole('radio', { name: /one job/ }));
+    fireEvent.change(screen.getByPlaceholderText('1234.0'), {
+      target: { value: '4242.7' },
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(createSub).toHaveBeenCalledTimes(1));
+
+    // Back to watching everything, with no job id left over.
+    expect(screen.getByRole('radio', { name: /all my jobs/ })).toBeChecked();
+    expect(screen.queryByPlaceholderText('1234.0')).not.toBeInTheDocument();
+  });
+
+  it('treats a bare number as a cluster batch and a word as a batch name', async () => {
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    createSub.mockResolvedValue({ subscription: sub({ scope: 'batch' }) });
+    await renderSection();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Notify me about something' }),
+    );
     fireEvent.click(screen.getByRole('radio', { name: /one batch/ }));
     fireEvent.change(screen.getByPlaceholderText(/cluster number/), {
       target: { value: '991' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create.mock.calls[0][0]).toMatchObject({ batch_id: '991' });
-    expect(create.mock.calls[0][0].batch_name).toBeUndefined();
+    await waitFor(() => expect(createSub).toHaveBeenCalledTimes(1));
+    expect(createSub.mock.calls[0][0]).toMatchObject({ batch_id: '991' });
+    expect(createSub.mock.calls[0][0].batch_name).toBeUndefined();
 
-    create.mockClear();
-    fireEvent.change(screen.getByPlaceholderText('Slack #jobs'), { target: { value: 'b2' } });
-    fireEvent.change(screen.getByPlaceholderText(/hooks.slack.com/), {
-      target: { value: 'https://h.example.org/x' },
-    });
+    createSub.mockClear();
+    fireEvent.click(screen.getByRole('radio', { name: /one batch/ }));
     fireEvent.change(screen.getByPlaceholderText(/cluster number/), {
       target: { value: 'nightly' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create.mock.calls[0][0]).toMatchObject({ batch_name: 'nightly' });
+    await waitFor(() => expect(createSub).toHaveBeenCalledTimes(1));
+    expect(createSub.mock.calls[0][0]).toMatchObject({ batch_name: 'nightly' });
   });
 
-  it('shows the signing secret once, and says what it is for', async () => {
+  it('shows the signing secret once, says what it is for, and says to decode it', async () => {
     create.mockResolvedValue({
-      webhook: hook(),
+      webhook: dest(),
       signing_secret: 'abc123secret',
       secret_shown_once: true,
       signature_header: 'X-HTCondor-Signature',
       idempotency_header: 'Idempotency-Key',
     });
     await renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: 'Add a notification' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a destination' }));
     fireEvent.change(screen.getByPlaceholderText('Slack #jobs'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText(/hooks.slack.com/), {
       target: { value: 'https://h.example.org/x' },
@@ -193,10 +255,48 @@ describe('the event notifications panel', () => {
     // A receiver author needs to know what the signature covers, not just
     // that there is one.
     expect(screen.getByText(/X-HTCondor-Signature/)).toBeInTheDocument();
+    // And the one thing that fails silently: the value is hex, and using it
+    // undecoded still produces a well-formed signature that never matches.
+    expect(screen.getByText(/decode it to 32 bytes/i)).toBeInTheDocument();
+  });
+
+  it('sends the payload mode with a new destination', async () => {
+    create.mockResolvedValue({
+      webhook: dest({ payload: 'full' }),
+      signing_secret: 'x',
+      secret_shown_once: true,
+      signature_header: 'X-HTCondor-Signature',
+      idempotency_header: 'Idempotency-Key',
+    });
+    await renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a destination' }));
+    fireEvent.change(screen.getByPlaceholderText('Slack #jobs'), { target: { value: 'x' } });
+    fireEvent.change(screen.getByPlaceholderText(/hooks.slack.com/), {
+      target: { value: 'https://h.example.org/x' },
+    });
+    // Summary is the default, because sending the whole ad is a disclosure
+    // decision and has to be made rather than inherited.
+    expect(screen.getByRole('radio', { name: /A summary/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /The whole job ad/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).toMatchObject({ payload: 'full' });
+  });
+
+  it('says which destinations send whole ads', async () => {
+    list.mockResolvedValue({
+      webhooks: [dest({ payload: 'full' })],
+      events: EVENTS,
+      payload_modes: MODES,
+    });
+    await renderSection();
+    await waitFor(() =>
+      expect(screen.getByText(/Sends the whole job ad/)).toBeInTheDocument(),
+    );
   });
 
   it('reports what the receiver said when a test fails', async () => {
-    list.mockResolvedValue({ webhooks: [hook()], events: EVENTS });
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
     test_.mockResolvedValue({
       ok: false,
       status: 404,
@@ -214,7 +314,7 @@ describe('the event notifications panel', () => {
   });
 
   it('confirms a successful test', async () => {
-    list.mockResolvedValue({ webhooks: [hook()], events: EVENTS });
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
     test_.mockResolvedValue({ ok: true, status: 200 });
     await renderSection();
     fireEvent.click(await screen.findByRole('button', { name: 'Test' }));
@@ -223,29 +323,47 @@ describe('the event notifications panel', () => {
     );
   });
 
-  it('explains a disabled hook and offers to re-enable it', async () => {
+  it('says a failing destination is waiting, not switched off', async () => {
+    // Nothing is disabled any more. The row has to say that the queue is
+    // intact, or a user reads the silence as lost notifications.
     list.mockResolvedValue({
       webhooks: [
-        hook({
-          disabled_at: new Date().toISOString(),
-          disabled_reason: 'disabled after 5 deliveries in a row were given up on',
+        dest({
+          consecutive_failures: 6,
+          backoff_until: new Date(Date.now() + 10 * 60_000).toISOString(),
         }),
       ],
       events: EVENTS,
+      payload_modes: MODES,
     });
     await renderSection();
-    // Disabled rather than quietly failing, because silence reads as
-    // "nothing has happened yet".
     await waitFor(() =>
-      expect(screen.getByText(/5 deliveries in a row/)).toBeInTheDocument(),
+      expect(screen.getByText(/not answering/)).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Re-enable' }));
-    await waitFor(() => expect(enable).toHaveBeenCalledWith('wh_1'));
+    expect(screen.getByText(/6 failures in a row/)).toBeInTheDocument();
+    expect(screen.getByText(/the queue drains/)).toBeInTheDocument();
+    // There is nothing to re-enable, because nothing was disabled.
+    expect(
+      screen.queryByRole('button', { name: 'Re-enable' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('says so when a hook was capped, rather than leaving the gap unexplained', async () => {
+  it('says when a destination has dropped events for a full queue', async () => {
     list.mockResolvedValue({
-      webhooks: [hook({ capped_at: new Date().toISOString(), capped_jobs: 10_000 })],
+      webhooks: [dest({ backlog_at: new Date().toISOString(), backlog_depth: 1000 })],
+      events: EVENTS,
+      payload_modes: MODES,
+    });
+    await renderSection();
+    await waitFor(() =>
+      expect(screen.getByText(/some events have been dropped/)).toBeInTheDocument(),
+    );
+  });
+
+  it('says so when a subscription was capped, rather than leaving the gap unexplained', async () => {
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    listSubs.mockResolvedValue({
+      subscriptions: [sub({ capped_at: new Date().toISOString(), capped_jobs: 10_000 })],
       events: EVENTS,
     });
     await renderSection();
@@ -254,8 +372,21 @@ describe('the event notifications panel', () => {
     );
   });
 
-  it('calls a never-delivered hook never, not blank', async () => {
-    list.mockResolvedValue({ webhooks: [hook()], events: EVENTS });
+  it('shows which destination each subscription feeds', async () => {
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    listSubs.mockResolvedValue({
+      subscriptions: [sub({ scope: 'job', job: { cluster_id: 42, proc_id: 1 } })],
+      events: EVENTS,
+    });
+    await renderSection();
+    await waitFor(() => expect(screen.getByText('job 42.1')).toBeInTheDocument());
+    expect(screen.getByText(/→ Slack #jobs/)).toBeInTheDocument();
+    // And the destination says how much feeds it, so deleting one can warn.
+    expect(screen.getByText('1 subscription')).toBeInTheDocument();
+  });
+
+  it('calls a never-delivered destination never, not blank', async () => {
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
     await renderSection();
     await waitFor(() =>
       expect(screen.getByText(/Last delivery: never/)).toBeInTheDocument(),
@@ -263,7 +394,7 @@ describe('the event notifications panel', () => {
   });
 
   it('loads recent attempts only when asked', async () => {
-    list.mockResolvedValue({ webhooks: [hook()], events: EVENTS });
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
     deliveries.mockResolvedValue({
       deliveries: [
         { id: 'd1', event: 'failed', state: 'abandoned', attempts: 1, status: 404, error: 'gone', job: '42.0' },
@@ -271,8 +402,8 @@ describe('the event notifications panel', () => {
     });
     await renderSection();
     await waitFor(() => expect(screen.getByText('Slack #jobs')).toBeInTheDocument());
-    // A query per hook on every page load would be a query per hook for
-    // something nobody looked at.
+    // A query per destination on every page load would be a query per
+    // destination for something nobody looked at.
     expect(deliveries).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Recent attempts' }));
