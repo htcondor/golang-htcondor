@@ -39,6 +39,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb/seal"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/chat"
+	"github.com/htcondor/golang-htcondor/webapi/idempotency"
 	"github.com/htcondor/golang-htcondor/webapi/jobssh"
 	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
 	"github.com/htcondor/golang-htcondor/webapi/jupytertunnel"
@@ -175,6 +176,11 @@ type Handler struct {
 	// overrides, applied to EVERY job this API submits regardless of the
 	// surface it arrived on. Zero value applies nothing.
 	submitPolicy submitpolicy.Policy
+
+	// idempotency refuses a submission whose idempotency key is already
+	// used. Nil where the feature is off, which every call site
+	// tolerates -- the Guard's methods are nil-safe.
+	idempotency *idempotency.Guard
 	// apPolicy holds each access point's policy as its schedd reports
 	// it. Every submit path takes its JOB_DEFAULT_REQUEST* values from
 	// here, and the MCP server shares it, so get_access_point_policy
@@ -861,7 +867,32 @@ type HandlerConfig struct {
 	// Same trust model as InteractiveExtraSubmit: operator-only config,
 	// spliced in verbatim.
 	SubmitFileOverrides string
-	UserHeader          string // HTTP header to extract username from (optional)
+
+	// IdempotencyKeyCheck is how much of the idempotency-key guarantee
+	// this access point enforces: NONE, QUEUE, FULL or AUTO (the
+	// default: FULL where an htcondordb mirror is configured, QUEUE
+	// where none is). Configure via HTTP_API_IDEMPOTENCY_KEY_CHECK.
+	// See webapi/idempotency.
+	IdempotencyKeyCheck string
+	// IdempotencyKeyRetention is how long a key this server submitted
+	// stays claimed in memory, covering the window in which a finished
+	// job is in neither the queue nor the mirrored history. Zero means
+	// idempotency.DefaultRetention. Configure via
+	// HTTP_API_IDEMPOTENCY_KEY_RETENTION (seconds).
+	IdempotencyKeyRetention time.Duration
+	// IdempotencyKeyTimeout bounds the queue and history lookups a
+	// keyed submission waits on. Zero means
+	// idempotency.DefaultTimeout. Configure via
+	// HTTP_API_IDEMPOTENCY_KEY_TIMEOUT (seconds).
+	IdempotencyKeyTimeout time.Duration
+	// IdempotencyKeyHistoryWindow, when non-zero, limits the history
+	// lookup to that much of the past. It trades the guarantee for the
+	// cost of the read and is not needed where the history is indexed
+	// on the key. Configure via
+	// HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW (seconds).
+	IdempotencyKeyHistoryWindow time.Duration
+
+	UserHeader string // HTTP header to extract username from (optional)
 	// UserHeaderTrustedProxies is a list of CIDRs from which UserHeader
 	// is honored. When UserHeader is set, this list MUST be non-empty
 	// (or UserHeaderTrustAnyUnsafe must be true) — otherwise the
@@ -1746,6 +1777,30 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		logger.Info(logging.DestinationHTTP, "Site submit-file policy loaded",
 			"defaults_bytes", len(cfg.SubmitFileDefaults),
 			"overrides_bytes", len(cfg.SubmitFileOverrides))
+	}
+
+	// The idempotency-key guard. Built after the mirror (h.dbMirror is
+	// set in the literal above) because ModeAuto resolves against
+	// whether one is configured.
+	if mode, err := idempotency.ParseMode(cfg.IdempotencyKeyCheck); err != nil {
+		logger.Error(logging.DestinationHTTP,
+			"HTTP_API_IDEMPOTENCY_KEY_CHECK is not a mode; idempotency keys are not enforced",
+			"value", cfg.IdempotencyKeyCheck, "error", err)
+	} else {
+		h.idempotency = idempotency.NewGuard(idempotency.Config{
+			Mode:          mode,
+			Retention:     cfg.IdempotencyKeyRetention,
+			Timeout:       cfg.IdempotencyKeyTimeout,
+			HistoryWindow: cfg.IdempotencyKeyHistoryWindow,
+		}, idemLookups{h: h})
+		// Say which guarantee is in force, resolved rather than as
+		// configured: "AUTO" in a log line tells an operator nothing,
+		// and the difference between FULL and QUEUE is the difference
+		// between the feature working and half working.
+		logger.Info(logging.DestinationHTTP, "Idempotency keys",
+			"configured", mode.String(),
+			"enforcing", h.idempotency.Mode().String(),
+			"header", IdempotencyKeyHeader)
 	}
 
 	h.build = cfg.Build
@@ -2733,6 +2788,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		DisableSecretRedaction: h.mcpDisableSecretRedaction,
 		RedactDisabledRules:    h.mcpRedactDisabledRules,
 		SubmitPolicy:           h.submitPolicy,
+		Idempotency:            h.idempotency,
 		// The same preparation every REST submit path runs (see
 		// Handler.submitJob), handed over so the agent tools and the
 		// interactive sessions the SSH gateway creates get it too. One

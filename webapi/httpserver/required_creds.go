@@ -314,10 +314,38 @@ func (s *Handler) submitApplied(ctx context.Context, submitFile string) (int, []
 		return 0, nil, err
 	}
 	s.ensureRequiredCredentials(ctx)
+
+	// The idempotency key is checked, claimed and stamped onto the job
+	// here rather than in the REST handler, for the reason this function
+	// exists at all: every surface that submits a job arrives here, and a
+	// check in one handler is a check the next surface does not get. It
+	// is the last step before the submit so that the window in which the
+	// key is claimed but the job does not exist is as short as it can be.
+	//
+	// With no key on the context this is one map-free function call and
+	// a line scan of the submit file.
+	claim, submitFile, err := s.idempotency.Begin(ctx, htcondor.GetAuthenticatedUserFromContext(ctx), submitFile)
+	if err != nil {
+		return 0, nil, err
+	}
+	// Unconditional: Abandon after Commit does nothing, so the only
+	// paths that keep the claim are the ones that committed it.
+	defer claim.Abandon()
+
 	// scheddFor: the one schedd, or in multi-AP mode the AP the
 	// submission was assigned and routed to.
 	schedd := s.scheddFor(ctx)
-	return schedd.SubmitRemote(s.withSubmitDefaults(ctx, schedd), submitFile)
+	cluster, ads, err := schedd.SubmitRemote(s.withSubmitDefaults(ctx, schedd), submitFile)
+	if err != nil {
+		// The submission did not happen, so the key is unused: the
+		// deferred Abandon frees it and an immediate retry is allowed.
+		// This is the one case where holding the claim would be wrong --
+		// a client whose submit failed for an unrelated reason would be
+		// locked out of its own key for the whole retention.
+		return 0, nil, err
+	}
+	claim.Commit(cluster)
+	return cluster, ads, nil
 }
 
 // withSubmitDefaults returns ctx carrying the JOB_DEFAULT_REQUEST* values

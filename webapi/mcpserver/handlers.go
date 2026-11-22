@@ -23,6 +23,7 @@ import (
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/condordocs"
 	"github.com/htcondor/golang-htcondor/webapi/dbmirror"
+	"github.com/htcondor/golang-htcondor/webapi/idempotency"
 	"github.com/htcondor/golang-htcondor/webapi/matchanalyzer"
 	"github.com/htcondor/golang-htcondor/webapi/runtimeest"
 	"github.com/htcondor/golang-htcondor/webapi/shareurl"
@@ -218,6 +219,35 @@ var readOnlyMCPTools = map[string]bool{
 // via WithGrantedScopes. Stdio callers (no scopes on context) see
 // the full catalog.
 // handleListTools answers tools/list.
+// submitJobProperties is submit_job's input schema properties.
+//
+// The idempotency key is advertised only where this access point
+// enforces it. Offering an agent an argument that will be refused is
+// worse than not offering it: the agent has no way to tell a refusal it
+// caused from one the deployment caused, and would retry.
+func (s *Server) submitJobProperties() map[string]interface{} {
+	props := map[string]interface{}{
+		"submit_file": map[string]interface{}{
+			"type":        "string",
+			"description": "HTCondor submit file content",
+		},
+	}
+	if s.idempotency.Mode() != idempotency.ModeOff {
+		props["idempotency_key"] = map[string]interface{}{
+			"type": "string",
+			"description": "Optional. A key that makes this submission safe to retry: if a " +
+				"submission carrying the same key already exists, this call is REFUSED and " +
+				"names the job that has it, instead of queueing the work twice. Use one when " +
+				"you may not learn whether a submit succeeded -- pick a value derived from " +
+				"the work itself (not a fresh random value per attempt, which defeats it) " +
+				"and reuse it verbatim on every retry of that submission. A refusal naming " +
+				"an existing job means the work IS queued: look that job up rather than " +
+				"submitting again.",
+		}
+	}
+	return props
+}
+
 func (s *Server) handleListTools(ctx context.Context, _ json.RawMessage) interface{} {
 	return map[string]interface{}{
 		"tools": s.toolsFor(ctx),
@@ -241,14 +271,9 @@ func (s *Server) toolsFor(ctx context.Context) []Tool {
 				"(2) A system-path executable (/bin/bash, /usr/bin/python3, ...) requires transfer_executable = False, or the job holds on file transfer; " +
 				"with it set, no upload_job_input call is needed.",
 			InputSchema: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"submit_file": map[string]interface{}{
-						"type":        "string",
-						"description": "HTCondor submit file content",
-					},
-				},
-				"required": []string{"submit_file"},
+				"type":       "object",
+				"properties": s.submitJobProperties(),
+				"required":   []string{"submit_file"},
 			},
 		},
 		{
@@ -1306,6 +1331,19 @@ func (s *Server) toolSubmitJob(ctx context.Context, args map[string]interface{})
 	submitFile, ok := args["submit_file"].(string)
 	if !ok || submitFile == "" {
 		return nil, fmt.Errorf("submit_file is required")
+	}
+
+	// The idempotency key rides the context to the submit door, where it
+	// is checked and claimed; see submitApplied. A key given as a
+	// non-string is a client bug worth naming rather than ignoring --
+	// ignoring it would submit the job unguarded, which is the one
+	// outcome the caller asked to avoid.
+	if raw, present := args["idempotency_key"]; present {
+		key, ok := raw.(string)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("idempotency_key must be a non-empty string")
+		}
+		ctx = idempotency.WithKey(ctx, key)
 	}
 
 	// Read the submit file before handing it to the schedd: some

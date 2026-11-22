@@ -118,6 +118,29 @@ func (h *Handler) handleMultiSubmitJob(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "submit_file is required")
 		return
 	}
+	// The Idempotency-Key header, as on the single-AP path.
+	//
+	// What it guarantees here is NARROWER, and the difference is
+	// structural rather than a gap to be fixed in passing. The live-queue
+	// half of the check reads the one access point this submission was
+	// routed to, because that is the only schedd in the picture; a retry
+	// that assignment sends to a DIFFERENT access point does not see the
+	// first attempt's job in a queue. What still covers it is this
+	// server's own claim on the key, which is keyed by account and key
+	// and not by access point, for as long as the retention lasts, plus
+	// the history mirror once the job has finished. The window left over
+	// is a retry beyond the retention for a job still running elsewhere.
+	//
+	// Closing it properly means asking something that spans the access
+	// points -- a federation hub's jobs table -- which is a different
+	// uniqueness domain than the one this feature was specified with.
+	keyed, kerr := withIdempotencyKey(ctx, r)
+	if kerr != nil {
+		h.writeIdempotencyFailure(w, kerr)
+		return
+	}
+	ctx = keyed
+
 	// Same read of the submit file as the single-AP path, and advisory
 	// for the same reason: this endpoint has accepted these submit files
 	// since it existed, and a 400 would break working clients.
