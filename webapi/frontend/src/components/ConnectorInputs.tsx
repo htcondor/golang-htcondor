@@ -63,6 +63,8 @@ export function ConnectorInputs({
     staleTime: 5 * 60 * 1000,
   });
 
+  const list = pickers.data ?? [];
+
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refused, setRefused] = useState<Refused[]>([]);
@@ -111,7 +113,6 @@ export function ConnectorInputs({
     }
   };
 
-  const list = pickers.data ?? [];
   if (list.length === 0 && value.length === 0) return null;
 
   return (
@@ -126,7 +127,7 @@ export function ConnectorInputs({
             data-testid={`picker-open-${p.name}`}
             className="rounded-sm border border-gray-300 bg-white px-3 py-1.5 hover:bg-gray-100 disabled:opacity-50"
           >
-            {busy === p.name ? 'Opening…' : `Add from ${labelFor(p)}…`}
+            {busy === p.name ? 'Opening…' : `Add from ${labelFor(p, list)}…`}
           </button>
         ))}
         {list.length > 0 && (
@@ -143,8 +144,8 @@ export function ConnectorInputs({
           data-testid="picker-needs-connect"
         >
           {connect.needsConsent
-            ? `Your ${labelFor(connect.picker)} authorization is no longer valid.`
-            : `This access point has no ${labelFor(connect.picker)} authorization from you yet.`}{' '}
+            ? `Your ${labelFor(connect.picker, list)} authorization is no longer valid.`
+            : `This access point has no ${labelFor(connect.picker, list)} authorization from you yet.`}{' '}
           <a className="underline" href={connect.url}>
             Authorize it
           </a>
@@ -206,14 +207,18 @@ export function ConnectorInputs({
 /**
  * What to call a chooser in a button.
  *
- * The configured name is the operator's and may be anything ("drive",
- * "lab-shared"); the provider is what a person recognizes. Prefer the
- * name when the operator chose a distinct one, since an access point
- * with two Drive choosers needs them told apart.
+ * The provider is what a person recognizes; the configured name is the
+ * operator's and may be anything ("drive", "lab-shared"), so leading
+ * with it gives a button reading "Add from drive…". The name is added
+ * only where it has to be: an access point with two choosers for one
+ * provider needs them told apart, and one with a single Drive chooser
+ * does not need its internal name on a button.
  */
-function labelFor(p: Picker): string {
-  if (p.name && p.name !== p.provider) return p.name;
-  return providerNames[p.provider] ?? p.provider;
+function labelFor(p: Picker, all: Picker[]): string {
+  const friendly = providerNames[p.provider] ?? p.provider;
+  const sameProvider = all.filter((o) => o.provider === p.provider).length;
+  if (sameProvider > 1) return `${friendly} (${p.name})`;
+  return friendly;
 }
 
 const providerNames: Record<string, string> = {
