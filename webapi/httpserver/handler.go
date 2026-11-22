@@ -3259,8 +3259,21 @@ func (h *Handler) isUserHeaderTrustedSource(r *http.Request) bool {
 //   - X-Frame-Options: SAMEORIGIN keeps the OAuth2 consent page out
 //     of attacker iframes (clickjacking on the consent button).
 //
-//   - Referrer-Policy: same-origin avoids leaking the API path
-//     (which encodes job IDs and tokens) to third parties.
+//   - Referrer-Policy: strict-origin-when-cross-origin avoids leaking
+//     the API path (which encodes job IDs and tokens) to third
+//     parties, while still telling them WHICH SITE asked.
+//
+//     It was same-origin, which sends no referrer at all across
+//     origins. That broke the Google file chooser: its iframe URL
+//     carries the provider's developer key, and a key restricted by
+//     HTTP referrer rejects a request that arrives with no Referer --
+//     so the one request that had to satisfy the restriction was
+//     guaranteed to fail it. Google reports that as "The API developer
+//     key is invalid", naming the key rather than the referrer.
+//
+//     strict-origin-when-cross-origin keeps the original intent: the
+//     path is still never sent to a third party, only the bare origin,
+//     which a provider embedded in the page already knows.
 //
 // The frame-ancestors directive in CSP duplicates X-Frame-Options
 // for browsers that honor CSP only; both are cheap to send.
@@ -3327,7 +3340,7 @@ func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub b
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 	}
 	if h.Get("Referrer-Policy") == "" {
-		h.Set("Referrer-Policy", "same-origin")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	}
 }
 
