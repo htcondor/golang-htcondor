@@ -870,31 +870,45 @@ const openAPISchema = `{
       },
       "Webhook": {
         "type": "object",
-        "description": "One outbound webhook: this server posts to a URL when the owner's jobs change state. The opposite direction to an Integration, which lets a service act as the owner here. There is no url field: the destination is a capability URL -- for most providers possession is the authorization to post -- so no endpoint returns it.",
+        "description": "A webhook DESTINATION: where this server posts, and the key a receiver verifies with. Registered once per receiver; what is watched lives in WebhookSubscription, any number of which may point here. There is no url field: the destination is a capability URL -- for most providers possession is the authorization to post -- so no endpoint returns it. The opposite direction to an Integration, which lets a service act as the owner here.",
         "properties": {
           "id": {"type": "string"},
-          "label": {"type": "string", "description": "The owner's own name for it."},
-          "scope": {"type": "string", "enum": ["job", "batch", "owner"], "description": "What it watches. A job or batch webhook ends when its subject does; an owner webhook carries a TTL and is renewed by being edited."},
+          "label": {"type": "string", "description": "The owner's own name for the receiver."},
+          "payload": {"type": "string", "enum": ["summary", "full"], "description": "How much of the job every delivery here carries. \"summary\" is the small fixed projection; \"full\" adds the job's whole ClassAd beside it. On the destination rather than the subscription so one receiver always sees one shape, and so two subscriptions selecting the same job and event collapse into a single POST."},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "consecutive_failures": {"type": "integer", "description": "Deliveries that failed in a row. Any success resets it. It drives backoff_until and nothing else: a destination is NEVER disabled for failing."},
+          "backoff_until": {"type": "string", "format": "date-time", "description": "When this destination may next be posted to. A failing receiver backs off exponentially to a 15-minute ceiling and keeps trying, rather than being switched off -- the common failure is a receiver that is down for a while and comes back, and a disabled hook comes back only if somebody revisits a page they have no reason to look at. While backing off, only the OLDEST queued delivery is attempted, so a week-long outage costs the receiver one request per interval rather than one per queued event."},
+          "last_delivery_at": {"type": "string", "format": "date-time"},
+          "last_status": {"type": "integer"},
+          "last_error": {"type": "string"},
+          "prev_secret_expires_at": {"type": "string", "format": "date-time", "description": "When the key this destination rotated away from stops being accepted. Present only while a rotation is in progress, so its presence means \"two keys are live and deliveries carry two signatures\". Absent once the old key has expired."},
+          "last_test_at": {"type": "string", "format": "date-time", "description": "Kept apart from real traffic, so a test does not overwrite the record of the deliveries that matter, nor the reverse."},
+          "last_test_status": {"type": "integer"},
+          "last_test_error": {"type": "string"},
+          "backlog_at": {"type": "string", "format": "date-time", "description": "When this destination's queue last hit the per-destination ceiling. Surfaced because events dropped for a full queue are events the receiver will never hear about, and that must not be discovered as a gap."},
+          "backlog_depth": {"type": "integer"},
+          "has_destination": {"type": "boolean", "description": "Whether a destination is stored, without being one."},
+          "destination_hint": {"type": "string", "description": "The destination's scheme and host, and how long the rest was. Never a prefix of the path: for a Slack or Zapier hook the path IS the secret."}
+        }
+      },
+      "WebhookSubscription": {
+        "type": "object",
+        "description": "What is watched, and which events, posting to one Webhook destination. Creating one mints NO secret and returns no URL: the receiver was configured once, when its destination was registered.",
+        "properties": {
+          "id": {"type": "string"},
+          "endpoint_id": {"type": "string", "description": "The destination this posts to."},
+          "label": {"type": "string", "description": "Optional; the destination carries the name a person recognises."},
+          "scope": {"type": "string", "enum": ["job", "batch", "owner"], "description": "What it watches. A job or batch subscription ends when its subject does; an owner subscription carries a TTL and is renewed by being edited."},
           "job": {"type": "object", "description": "The subject, for scope \"job\".", "properties": {"cluster_id": {"type": "integer"}, "proc_id": {"type": "integer"}, "schedd": {"type": "string"}}},
           "batch_id": {"type": "string"},
           "batch_name": {"type": "string"},
           "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}},
           "created_at": {"type": "string", "format": "date-time"},
           "updated_at": {"type": "string", "format": "date-time"},
-          "expires_at": {"type": "string", "format": "date-time", "description": "When it stops being evaluated. For a job or batch webhook this is brought forward once the subject has ended."},
-          "disabled_at": {"type": "string", "format": "date-time", "description": "Set when delivery was given up on. A webhook is disabled rather than left failing quietly, because silence reads as \"nothing has happened yet\"."},
-          "disabled_reason": {"type": "string", "description": "Shown to the owner, who otherwise cannot tell a misconfigured URL from an endpoint that was down."},
-          "consecutive_failures": {"type": "integer"},
-          "capped_at": {"type": "string", "format": "date-time", "description": "When the selection last exceeded the fan-out ceiling. Surfaced because the deliveries that did not happen would otherwise look like events that did not happen."},
-          "capped_jobs": {"type": "integer"},
-          "last_delivery_at": {"type": "string", "format": "date-time"},
-          "last_status": {"type": "integer"},
-          "last_error": {"type": "string"},
-          "last_test_at": {"type": "string", "format": "date-time", "description": "Kept apart from real traffic, so a test does not overwrite the record of the deliveries that matter, nor the reverse."},
-          "last_test_status": {"type": "integer"},
-          "last_test_error": {"type": "string"},
-          "has_destination": {"type": "boolean", "description": "Whether a destination is stored, without being one."},
-          "destination_hint": {"type": "string", "description": "The destination's scheme and host, and how long the rest was. Never a prefix of the path: for a Slack or Zapier hook the path IS the secret."}
+          "expires_at": {"type": "string", "format": "date-time", "description": "When it stops being evaluated. For a job or batch subscription this is brought forward once the subject has ended."},
+          "capped_at": {"type": "string", "format": "date-time", "description": "When the selection last exceeded the fan-out ceiling. Surfaced because the deliveries that did not happen would otherwise look like events that did not happen. A capped subscription is not disabled: one rolled-up delivery is sent per event per day, and per-job deliveries resume on their own if the selection drops back under the ceiling."},
+          "capped_jobs": {"type": "integer"}
         }
       },
       "WebhookDelivery": {
@@ -904,7 +918,7 @@ const openAPISchema = `{
           "id": {"type": "string", "description": "The idempotency key, which is also this row's primary key."},
           "event": {"type": "string"},
           "job": {"type": "string", "description": "cluster.proc, absent on a summary delivery."},
-          "state": {"type": "string", "enum": ["pending", "delivered", "abandoned"], "description": "\"abandoned\" means we stopped trying, which is deliberately distinct from \"delivered\"."},
+          "state": {"type": "string", "enum": ["pending", "delivered", "abandoned"], "description": "\"abandoned\" means we stopped trying, which is deliberately distinct from \"delivered\". Only two things abandon a delivery: the destination REFUSED it (a 4xx that is not 408 or 429), which says the request is wrong rather than the receiver absent; or it aged out without landing. Nothing is abandoned merely for failing -- a failing destination backs off and keeps its place in the queue."},
           "attempts": {"type": "integer"},
           "status": {"type": "integer", "description": "The receiver's last HTTP status, 0 if it was never reached."},
           "error": {"type": "string"}
@@ -1381,29 +1395,23 @@ const openAPISchema = `{
     },
     "/webhooks": {
       "get": {
-        "summary": "List your outbound webhooks",
-        "description": "The webhooks you have set up, newest first, with the event vocabulary this server implements -- so a page offers exactly what exists rather than a list somebody remembered to keep in step. No destination is ever returned. SESSION ONLY: a destination is a capability URL, so a token that could read one back would be enough to post there itself.",
+        "summary": "List your webhook destinations",
+        "description": "The destinations you have registered, newest first, with the event vocabulary and payload modes this server implements -- so a page offers exactly what exists rather than a list somebody remembered to keep in step. No destination URL is ever returned. SESSION ONLY: a destination is a capability URL, so a token that could read one back would be enough to post there itself.",
         "operationId": "listWebhooks",
         "responses": {
-          "200": {"description": "Your webhooks", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhooks": {"type": "array", "items": {"$ref": "#/components/schemas/Webhook"}}, "events": {"type": "array", "items": {"type": "string"}}}}}}},
+          "200": {"description": "Your destinations", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhooks": {"type": "array", "items": {"$ref": "#/components/schemas/Webhook"}}, "events": {"type": "array", "items": {"type": "string"}}, "payload_modes": {"type": "array", "items": {"type": "string"}}}}}}},
           "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "503": {"description": "Webhooks are disabled on this server (HTTP_API_WEBHOOKS)", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       },
       "post": {
-        "summary": "Set up an outbound webhook",
-        "description": "Subscribes a URL to events on one job, one batch, or all of your jobs. The destination must be https and is stored sealed; it is never returned by any endpoint. The signing secret comes back in THIS response and nowhere else -- a receiver needs it to verify the X-HTCondor-Signature header, and nothing can recover it afterwards. The event vocabulary is fixed and is the same one the job-watch tools use: notably there is no way to say \"JobStatus == 4\", which is the obvious way to ask for \"finished\" and would never fire, because the schedd deletes a completed job from the queue rather than leaving it in that state.",
+        "summary": "Register a webhook destination",
+        "description": "Registers where to post and mints the key a receiver verifies with. This is the ONLY call that returns a signing secret, and the only one that needs to: configure the receiver once here, then add as many subscriptions as you like through POST /webhook-subscriptions without ever copying another key. The destination must be https and is stored sealed; it is never returned by any endpoint. The signing secret comes back in THIS response and nowhere else -- hex-encoded, and it must be DECODED to its 32 raw bytes before use as the HMAC key.",
         "operationId": "createWebhook",
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["label", "url", "scope", "events"], "properties": {
-          "label": {"type": "string", "maxLength": 128, "description": "Required, so you can tell your webhooks apart."},
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["label", "url"], "properties": {
+          "label": {"type": "string", "maxLength": 128, "description": "Required, so you can tell your destinations apart."},
           "url": {"type": "string", "maxLength": 2048, "description": "https only, with no credentials in it. Checked for reachability at delivery time, not here: only routable public addresses are dialled."},
-          "scope": {"type": "string", "enum": ["job", "batch", "owner"]},
-          "cluster_id": {"type": "integer", "description": "With scope \"job\"."},
-          "proc_id": {"type": "integer", "description": "With scope \"job\"."},
-          "schedd": {"type": "string", "description": "The access point, on a server fronting several."},
-          "batch_id": {"type": "string", "description": "With scope \"batch\": a cluster number, for a batch with no name."},
-          "batch_name": {"type": "string", "description": "With scope \"batch\": the batch name from the jobs page."},
-          "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}}
+          "payload": {"type": "string", "enum": ["summary", "full"], "default": "summary", "description": "\"full\" adds the job's whole ClassAd beside the summary. Opt-in because it is a disclosure decision: an ad carries hundreds of attributes, including whatever the submitter put in a custom one. Turning it on also makes this owner's evaluator passes read every attribute rather than a twenty-attribute projection, which is more expensive."}
         }}}}},
         "responses": {
           "201": {"description": "Created. signing_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
@@ -1413,7 +1421,7 @@ const openAPISchema = `{
             "signature_header": {"type": "string"},
             "idempotency_header": {"type": "string"}
           }}}}},
-          "400": {"description": "Malformed body, no name, an http destination, credentials in the URL, an unsupported event, or a scope with no subject", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "400": {"description": "Malformed body, no name, an http destination, credentials in the URL, an unknown payload mode, or the per-owner destination limit", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "415": {"description": "Not application/json. Required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
@@ -1422,45 +1430,45 @@ const openAPISchema = `{
     },
     "/webhooks/{id}": {
       "get": {
-        "summary": "One of your webhooks",
+        "summary": "One of your webhook destinations",
         "operationId": "getWebhook",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {
-          "200": {"description": "The webhook", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
-          "404": {"description": "No such webhook of yours. Somebody else's answers 404 rather than 403, because a 403 would confirm the id exists.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "200": {"description": "The destination", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
+          "404": {"description": "No such destination of yours. Somebody else's answers 404 rather than 403, because a 403 would confirm the id exists.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       },
       "patch": {
-        "summary": "Change a webhook",
-        "description": "The name, the events and the destination. Replacing the destination clears the failure count and re-enables a disabled webhook: deliveries that failed were to a URL that is no longer configured. Any edit renews an owner-scoped webhook's deadline, since editing one is the clearest statement that somebody still wants it.",
+        "summary": "Change a webhook destination",
+        "description": "The name, the payload mode and the URL. Replacing the URL clears the backoff: deliveries that failed were to a destination that is no longer configured, so a freshly fixed URL should not wait out a penalty the old one earned. The signing secret is NOT rotated -- the receiver is the same receiver, and re-keying it would make every subscription's receiver need reconfiguring because one of them moved. Events are not here: they belong to the subscription.",
         "operationId": "updateWebhook",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {
           "label": {"type": "string"},
           "url": {"type": "string", "description": "A new destination. Write-only, as at creation."},
-          "events": {"type": "array", "items": {"type": "string"}}
+          "payload": {"type": "string", "enum": ["summary", "full"]}
         }}}}},
         "responses": {
           "200": {"description": "Updated", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
-          "400": {"description": "Malformed body or a destination that is not usable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
-          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "400": {"description": "Malformed body, a destination that is not usable, or an unknown payload mode", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       },
       "delete": {
-        "summary": "Delete a webhook",
-        "description": "Removes it and everything queued for it, so whatever was listening stops immediately.",
+        "summary": "Delete a webhook destination",
+        "description": "Removes it, EVERY subscription feeding it, and everything queued for it, so whatever was listening stops immediately. To stop watching one thing without discarding the receiver's key, delete the subscription instead.",
         "operationId": "deleteWebhook",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {
           "200": {"description": "Deleted"},
-          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
     "/webhooks/{id}/test": {
       "post": {
-        "summary": "Test a webhook",
-        "description": "Sends ONE REAL delivery -- the same signature, the same headers, the same connection policy -- with \"test\": true in the body, and reports what the receiver answered. It is not retried, because somebody is watching the result. Answers 200 whatever the receiver said: the test RAN, and its outcome is the body. An HTTP error here would claim this server failed.",
+        "summary": "Test a webhook destination",
+        "description": "Sends ONE REAL delivery -- the same signature, the same headers, the same connection policy -- with \"test\": true in the body, and reports what the receiver answered. It is not retried, because somebody is watching the result. It names one fixed event and describes a job consistent with it, since a destination may have several subscriptions or none. A test neither clears nor sets the backoff: it says what the receiver answered now, and whether the queue may flow again is decided by a real delivery. Answers 200 whatever the receiver said: the test RAN, and its outcome is the body.",
         "operationId": "testWebhook",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {
@@ -1469,32 +1477,122 @@ const openAPISchema = `{
             "status": {"type": "integer", "description": "The receiver's HTTP status, 0 if it was never reached."},
             "error": {"type": "string", "description": "What went wrong, including the start of the receiver's own message."}
           }}}}},
-          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "500": {"description": "The destination could not be read at all -- the row is gone, or it is sealed and this server has no KEK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
-    "/webhooks/{id}/enable": {
+    "/webhooks/{id}/rotate-secret": {
       "post": {
-        "summary": "Re-enable a disabled webhook",
-        "description": "For a webhook disabled after repeated give-ups, once the destination has been fixed. Clears the failure count.",
-        "operationId": "enableWebhook",
+        "summary": "Mint a new signing secret for a destination",
+        "description": "Returns a new signing secret, shown only in THIS response, and keeps the previous one verifying for a 24-hour grace period. Deliveries during that window carry TWO signatures -- \"t=<ts>,v1=<new>,v1=<old>\" -- and a receiver matches whichever key it holds, so it can be updated at any point rather than at the same instant as the server. The current key is first.\n\nThe old key is deliberately not discarded at once: swapping outright does not delay deliveries, it loses them, because a receiver that rejects a signature answers 4xx and a 4xx that is not 408 or 429 is a permanent refusal here.\n\nRotating AGAIN inside the window replaces the previous key with the one just retired, so a key known to have leaked stops being accepted immediately. Rotate twice to retire one now.\n\nThe destination URL, the subscriptions feeding it and the delivery queue are all untouched.",
+        "operationId": "rotateWebhookSecret",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {
-          "200": {"description": "Enabled"},
-          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "200": {"description": "Rotated. signing_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "webhook": {"$ref": "#/components/schemas/Webhook"},
+            "signing_secret": {"type": "string", "description": "The new HMAC-SHA256 key, hex-encoded. DECODE IT before use: the key is the 32 raw bytes, not this 64-character string. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "signature_header": {"type": "string"},
+            "idempotency_header": {"type": "string"}
+          }}}}},
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
     "/webhooks/{id}/deliveries": {
       "get": {
         "summary": "Recent delivery attempts",
-        "description": "The last 50 attempts for one webhook, newest first, so an owner can see whether it is working without reading a server log.",
+        "description": "The last 50 attempts for one destination, newest first, so an owner can see whether it is working without reading a server log. Per destination rather than per subscription, because a delivery belongs to the receiver: two subscriptions that select the same job and event produce one POST.",
         "operationId": "listWebhookDeliveries",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {
-          "200": {"description": "Attempts, empty rather than null for a webhook that has sent nothing", "content": {"application/json": {"schema": {"type": "object", "properties": {"deliveries": {"type": "array", "items": {"$ref": "#/components/schemas/WebhookDelivery"}}}}}}},
-          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "200": {"description": "Attempts, empty rather than null for a destination that has sent nothing", "content": {"application/json": {"schema": {"type": "object", "properties": {"deliveries": {"type": "array", "items": {"$ref": "#/components/schemas/WebhookDelivery"}}}}}}},
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/subscriptions": {
+      "get": {
+        "summary": "What feeds one destination",
+        "operationId": "listWebhookEndpointSubscriptions",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The subscriptions posting to this destination", "content": {"application/json": {"schema": {"type": "object", "properties": {"subscriptions": {"type": "array", "items": {"$ref": "#/components/schemas/WebhookSubscription"}}}}}}},
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhook-subscriptions": {
+      "get": {
+        "summary": "List what you are watching",
+        "description": "Every subscription you hold, across all your destinations, newest first.",
+        "operationId": "listWebhookSubscriptions",
+        "responses": {
+          "200": {"description": "Your subscriptions", "content": {"application/json": {"schema": {"type": "object", "properties": {"subscriptions": {"type": "array", "items": {"$ref": "#/components/schemas/WebhookSubscription"}}, "events": {"type": "array", "items": {"type": "string"}}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "summary": "Start watching something",
+        "description": "Subscribes one job, one batch, or all of your jobs to events, posting to a destination you already hold. No secret is minted and none is returned -- that is the point of keeping destinations separate. The event vocabulary is fixed and is the same one the job-watch tools use: notably there is no way to say \"JobStatus == 4\", which is the obvious way to ask for \"finished\" and would never fire, because the schedd deletes a completed job from the queue rather than leaving it in that state.",
+        "operationId": "createWebhookSubscription",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["endpoint_id", "scope", "events"], "properties": {
+          "endpoint_id": {"type": "string", "description": "A destination you own. Somebody else's reads as \"no such destination\" rather than a refusal, because an id alone must not reveal that it exists."},
+          "label": {"type": "string", "maxLength": 128, "description": "Optional."},
+          "scope": {"type": "string", "enum": ["job", "batch", "owner"]},
+          "cluster_id": {"type": "integer", "description": "With scope \"job\"."},
+          "proc_id": {"type": "integer", "description": "With scope \"job\"."},
+          "schedd": {"type": "string", "description": "The access point, on a server fronting several."},
+          "batch_id": {"type": "string", "description": "With scope \"batch\": a cluster number, for a batch with no name."},
+          "batch_name": {"type": "string", "description": "With scope \"batch\": the batch name from the jobs page."},
+          "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"type": "object", "properties": {"subscription": {"$ref": "#/components/schemas/WebhookSubscription"}}}}}},
+          "400": {"description": "Malformed body, no such destination of yours, an unsupported event, a scope with no subject, or the per-owner subscription limit", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhook-subscriptions/{id}": {
+      "get": {
+        "summary": "One of your subscriptions",
+        "operationId": "getWebhookSubscription",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The subscription", "content": {"application/json": {"schema": {"type": "object", "properties": {"subscription": {"$ref": "#/components/schemas/WebhookSubscription"}}}}}},
+          "404": {"description": "No such subscription of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "patch": {
+        "summary": "Change a subscription",
+        "description": "The name and the events. NOT its destination and NOT its scope: either of those is a different subscription wearing the same id, and its memory of which jobs it has already seen would describe the old one. Any edit renews an owner-scoped subscription's deadline, since editing one is the clearest statement that somebody still wants it.",
+        "operationId": "updateWebhookSubscription",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "label": {"type": "string"},
+          "events": {"type": "array", "items": {"type": "string"}}
+        }}}}},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"type": "object", "properties": {"subscription": {"$ref": "#/components/schemas/WebhookSubscription"}}}}}},
+          "400": {"description": "Malformed body or an unsupported event", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such subscription of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "delete": {
+        "summary": "Stop watching",
+        "description": "Removes the subscription. The destination stays, with its signing secret and whatever else feeds it.",
+        "operationId": "deleteWebhookSubscription",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "404": {"description": "No such subscription of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

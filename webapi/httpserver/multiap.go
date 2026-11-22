@@ -470,10 +470,12 @@ func multiAPAllowed(method, path string) bool {
 		// never a schedd. The submit page reads and saves them.
 		return true
 	}
-	if path == "/api/v1/webhooks" || strings.HasPrefix(path, "/api/v1/webhooks/") {
-		// A user's own webhooks, in this server's database. The evaluator
-		// reads every access point through the hub, so a hook does not
-		// belong to one and is not routed to one.
+	if path == "/api/v1/webhooks" || strings.HasPrefix(path, "/api/v1/webhooks/") ||
+		path == "/api/v1/webhook-subscriptions" || strings.HasPrefix(path, "/api/v1/webhook-subscriptions/") {
+		// A user's own webhook destinations and subscriptions, in this
+		// server's database. The evaluator reads every access point
+		// through the hub, so neither belongs to one and neither is
+		// routed to one.
 		return true
 	}
 	if path == "/api/v1/integrations" || strings.HasPrefix(path, "/api/v1/integrations/") {

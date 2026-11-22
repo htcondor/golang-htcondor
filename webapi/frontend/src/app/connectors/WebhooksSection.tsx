@@ -8,9 +8,16 @@
 // Both headings say which way, because revoking the wrong one is the mistake
 // the page exists to prevent.
 //
-// Two things on this panel are load-bearing rather than decorative. The
-// signing secret is shown once and never again, so the moment it appears is
-// the moment the user has to copy it. And Test sends a REAL delivery, so its
+// The panel is in two halves because the data is: a DESTINATION is where
+// deliveries go and the key a receiver verifies with, and a SUBSCRIPTION is
+// what is watched. They used to be one thing, which meant watching a second
+// job required pasting the capability URL again and copying a second signing
+// secret for the same receiver -- and the secret is shown once, so that was
+// the most error-prone moment the feature had.
+//
+// Two things here are load-bearing rather than decorative. The signing
+// secret is shown once and never again, so the moment it appears is the
+// moment the user has to copy it. And Test sends a REAL delivery, so its
 // result is the only honest answer to "is this configured right".
 
 import { useState } from "react";
@@ -19,6 +26,7 @@ import {
   api,
   type Webhook,
   type WebhookCreated,
+  type WebhookSubscription,
   type WebhookTestResult,
 } from "@/lib/api";
 import { ChipList } from "@/components/ChipList";
@@ -36,47 +44,87 @@ const EVENT_HELP: Record<string, string> = {
 
 export function WebhooksSection() {
   const qc = useQueryClient();
+  // One banner for both moments, because they are the same moment: a
+  // secret that is readable once and never again.
   const [created, setCreated] = useState<WebhookCreated | null>(null);
+  const [createdKind, setCreatedKind] = useState<"created" | "rotated">("created");
   const [tested, setTested] = useState<Record<string, WebhookTestResult>>({});
 
-  const { data, isLoading, error } = useQuery({
+  const dests = useQuery({
     queryKey: ["webhooks"],
     queryFn: api.webhooks.list,
   });
+  const subs = useQuery({
+    queryKey: ["webhook-subscriptions"],
+    queryFn: api.webhookSubscriptions.list,
+  });
 
-  const create = useMutation({
+  // A subscription changes nothing about a destination and vice versa, but
+  // deleting a destination takes its subscriptions with it, so both lists
+  // are refreshed after any write rather than reasoning about which.
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["webhooks"] });
+    qc.invalidateQueries({ queryKey: ["webhook-subscriptions"] });
+  };
+
+  const createDest = useMutation({
     mutationFn: api.webhooks.create,
     onSuccess: (res) => {
+      setCreatedKind("created");
       setCreated(res);
-      qc.invalidateQueries({ queryKey: ["webhooks"] });
+      refresh();
     },
   });
 
-  const remove = useMutation({
-    mutationFn: (id: string) => api.webhooks.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["webhooks"] }),
+  const rotate = useMutation({
+    mutationFn: (id: string) => api.webhooks.rotateSecret(id),
+    onSuccess: (res) => {
+      setCreatedKind("rotated");
+      setCreated(res);
+      refresh();
+    },
   });
 
-  const enable = useMutation({
-    mutationFn: (id: string) => api.webhooks.enable(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["webhooks"] }),
+  const removeDest = useMutation({
+    mutationFn: (id: string) => api.webhooks.remove(id),
+    onSuccess: refresh,
+  });
+
+  const createSub = useMutation({
+    mutationFn: api.webhookSubscriptions.create,
+    onSuccess: refresh,
+  });
+
+  const removeSub = useMutation({
+    mutationFn: (id: string) => api.webhookSubscriptions.remove(id),
+    onSuccess: refresh,
   });
 
   const test = useMutation({
     mutationFn: (id: string) => api.webhooks.test(id),
     onSuccess: (res, id) => {
       setTested((cur) => ({ ...cur, [id]: res }));
-      // The attempt is recorded against the hook, so the row's own "last
-      // test" line comes from the server rather than from this state.
+      // The attempt is recorded against the destination, so the row's own
+      // "last test" line comes from the server rather than from this state.
       qc.invalidateQueries({ queryKey: ["webhooks"] });
     },
   });
 
-  const hooks = data?.webhooks ?? [];
-  const events = data?.events ?? [];
+  const destinations = dests.data?.webhooks ?? [];
+  const subscriptions = subs.data?.subscriptions ?? [];
+  const events = subs.data?.events ?? dests.data?.events ?? [];
+  const loading = dests.isLoading || subs.isLoading;
+  const failed = dests.error ?? subs.error;
+
+  // How many things feed each destination, so a delete can say what it
+  // takes with it rather than surprising somebody.
+  const feeding = new Map<string, number>();
+  for (const s of subscriptions) {
+    feeding.set(s.endpoint_id, (feeding.get(s.endpoint_id) ?? 0) + 1);
+  }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-gray-900">
           Event notifications
@@ -84,69 +132,129 @@ export function WebhooksSection() {
         <p className="mt-1 text-sm text-gray-500">
           This access point posts to a URL you give it when your jobs change
           state — for a Zap, a Slack channel, or anything that accepts a
-          webhook. The URL is treated as a secret, because for most services
-          holding it is all it takes to post there.
+          webhook. Set a destination up once; then say what you want to hear
+          about, as often as you like, without configuring the receiver again.
         </p>
       </div>
 
       {created && (
-        <NewWebhookShown created={created} onDismiss={() => setCreated(null)} />
+        <NewWebhookShown
+          created={created}
+          kind={createdKind}
+          onDismiss={() => setCreated(null)}
+        />
       )}
-
-      <CreateWebhookForm
-        events={events}
-        pending={create.isPending}
-        error={create.error}
-        onCreate={(body) => create.mutate(body)}
-      />
-
-      {isLoading && <p className="text-sm text-gray-500">Loading…</p>}
-      {error && (
+      {rotate.error != null && (
         <p className="rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {(error as Error).message}
+          {(rotate.error as Error).message}
         </p>
       )}
 
-      {!isLoading && !error && hooks.length === 0 && (
-        <p className="rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500">
-          No event notifications are set up.
+      {loading && <p className="text-sm text-gray-500">Loading…</p>}
+      {failed != null && (
+        <p className="rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {(failed as Error).message}
         </p>
       )}
 
-      <div className="space-y-3">
-        {hooks.map((h) => (
-          <WebhookRow
-            key={h.id}
-            hook={h}
-            tested={tested[h.id]}
-            testing={test.isPending && test.variables === h.id}
-            onTest={() => test.mutate(h.id)}
-            onEnable={() => enable.mutate(h.id)}
-            onRemove={() => remove.mutate(h.id)}
-            removing={remove.isPending}
-          />
-        ))}
-      </div>
+      {!loading && failed == null && (
+        <>
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">
+                Where notifications go
+              </h3>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Each destination has its own signing secret, shown once when
+                you add it. The URL is treated as a secret too, because for
+                most services holding it is all it takes to post there.
+              </p>
+            </div>
+
+            <CreateDestinationForm
+              pending={createDest.isPending}
+              error={createDest.error}
+              onCreate={(body) => createDest.mutate(body)}
+            />
+
+            {destinations.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500">
+                No destinations yet. Add one before choosing what to be
+                notified about.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {destinations.map((d) => (
+                  <DestinationRow
+                    key={d.id}
+                    dest={d}
+                    feeds={feeding.get(d.id) ?? 0}
+                    tested={tested[d.id]}
+                    testing={test.isPending && test.variables === d.id}
+                    onTest={() => test.mutate(d.id)}
+                    onRotate={() => rotate.mutate(d.id)}
+                    rotating={rotate.isPending && rotate.variables === d.id}
+                    onRemove={() => removeDest.mutate(d.id)}
+                    removing={removeDest.isPending}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">
+                What you are notified about
+              </h3>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Each of these watches one job, one batch, or everything you
+                run, and posts to a destination above. Adding one asks for no
+                URL and no secret.
+              </p>
+            </div>
+
+            <CreateSubscriptionForm
+              destinations={destinations}
+              events={events}
+              pending={createSub.isPending}
+              error={createSub.error}
+              onCreate={(body) => createSub.mutate(body)}
+            />
+
+            {subscriptions.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500">
+                Nothing is being watched.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {subscriptions.map((s) => (
+                  <SubscriptionRow
+                    key={s.id}
+                    sub={s}
+                    dest={destinations.find((d) => d.id === s.endpoint_id)}
+                    onRemove={() => removeSub.mutate(s.id)}
+                    removing={removeSub.isPending}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </section>
   );
 }
 
-function CreateWebhookForm({
-  events,
+function CreateDestinationForm({
   onCreate,
   pending,
   error,
 }: {
-  events: string[];
   onCreate: (body: {
     label: string;
     url: string;
-    scope: "job" | "batch" | "owner";
-    cluster_id?: number;
-    proc_id?: number;
-    batch_id?: string;
-    batch_name?: string;
-    events: string[];
+    payload?: "summary" | "full";
   }) => void;
   pending: boolean;
   error: unknown;
@@ -154,51 +262,17 @@ function CreateWebhookForm({
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
-  const [scope, setScope] = useState<"job" | "batch" | "owner">("owner");
-  const [job, setJob] = useState("");
-  const [batch, setBatch] = useState("");
-  const [chosen, setChosen] = useState<string[]>(["failed"]);
+  const [payload, setPayload] = useState<"summary" | "full">("summary");
 
-  const toggle = (e: string) =>
-    setChosen((cur) =>
-      cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e],
-    );
+  const ready = label.trim() !== "" && url.trim() !== "";
 
-  // "42.1" or "42", which is how a job is written everywhere else in the UI.
-  const parsedJob = (() => {
-    const m = /^(\d+)(?:\.(\d+))?$/.exec(job.trim());
-    if (!m) return null;
-    return { cluster: Number(m[1]), proc: m[2] ? Number(m[2]) : 0 };
-  })();
-
-  const ready =
-    label.trim() !== "" &&
-    url.trim() !== "" &&
-    chosen.length > 0 &&
-    (scope !== "job" || parsedJob !== null) &&
-    (scope !== "batch" || batch.trim() !== "");
-
-  const submit = () => {
-    const body = {
-      label: label.trim(),
-      url: url.trim(),
-      scope,
-      events: chosen,
-    } as Parameters<typeof onCreate>[0];
-    if (scope === "job" && parsedJob) {
-      body.cluster_id = parsedJob.cluster;
-      body.proc_id = parsedJob.proc;
-    }
-    if (scope === "batch") {
-      // A batch is either a name or a bare cluster number, the way the jobs
-      // page labels one. A number with no name is a lone cluster.
-      const trimmed = batch.trim();
-      if (/^\d+$/.test(trimmed)) body.batch_id = trimmed;
-      else body.batch_name = trimmed;
-    }
-    onCreate(body);
+  // Everything is cleared, not just the text fields. A form that keeps its
+  // previous choices is how somebody adds a second destination that quietly
+  // carries the first one's settings.
+  const reset = () => {
     setLabel("");
     setUrl("");
+    setPayload("summary");
   };
 
   if (!open) {
@@ -208,7 +282,7 @@ function CreateWebhookForm({
         onClick={() => setOpen(true)}
         className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
       >
-        Add a notification
+        Add a destination
       </button>
     );
   }
@@ -242,6 +316,191 @@ function CreateWebhookForm({
           </span>
         </label>
       </div>
+
+      <fieldset>
+        <legend className="text-xs font-medium text-gray-700">
+          How much to send
+        </legend>
+        <div className="mt-1 space-y-1">
+          {(
+            [
+              [
+                "summary",
+                "A summary",
+                "Job id, owner, status, exit code, hold reason, command. Enough for most receivers.",
+              ],
+              [
+                "full",
+                "The whole job ad",
+                "Adds every attribute of the job beside the summary — including arguments and anything custom you set. Send it only where you would be comfortable with all of that.",
+              ],
+            ] as const
+          ).map(([value, title, help]) => (
+            <label key={value} className="flex items-start gap-2 text-sm">
+              <input
+                type="radio"
+                name="payload"
+                checked={payload === value}
+                onChange={() => setPayload(value)}
+                className="mt-1"
+              />
+              <span>
+                <span className="text-gray-900">{title}</span>{" "}
+                <span className="text-xs text-gray-500">{help}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {error != null && (
+        <p className="rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {(error as Error).message}
+        </p>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            onCreate({ label: label.trim(), url: url.trim(), payload });
+            reset();
+          }}
+          disabled={pending || !ready}
+          className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {pending ? "Adding…" : "Add"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            reset();
+            setOpen(false);
+          }}
+          className="rounded-sm border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CreateSubscriptionForm({
+  destinations,
+  events,
+  onCreate,
+  pending,
+  error,
+}: {
+  destinations: Webhook[];
+  events: string[];
+  onCreate: (body: {
+    endpoint_id: string;
+    scope: "job" | "batch" | "owner";
+    cluster_id?: number;
+    proc_id?: number;
+    batch_id?: string;
+    batch_name?: string;
+    events: string[];
+  }) => void;
+  pending: boolean;
+  error: unknown;
+}) {
+  const [open, setOpen] = useState(false);
+  const [endpoint, setEndpoint] = useState("");
+  const [scope, setScope] = useState<"job" | "batch" | "owner">("owner");
+  const [job, setJob] = useState("");
+  const [batch, setBatch] = useState("");
+  const [chosen, setChosen] = useState<string[]>(["failed"]);
+
+  const toggle = (e: string) =>
+    setChosen((cur) =>
+      cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e],
+    );
+
+  // "42.1" or "42", which is how a job is written everywhere else in the UI.
+  const parsedJob = (() => {
+    const m = /^(\d+)(?:\.(\d+))?$/.exec(job.trim());
+    if (!m) return null;
+    return { cluster: Number(m[1]), proc: m[2] ? Number(m[2]) : 0 };
+  })();
+
+  // Default to the only destination there is, which is the common case and
+  // saves a pointless choice.
+  const chosenEndpoint =
+    endpoint || (destinations.length === 1 ? destinations[0].id : "");
+
+  const ready =
+    chosenEndpoint !== "" &&
+    chosen.length > 0 &&
+    (scope !== "job" || parsedJob !== null) &&
+    (scope !== "batch" || batch.trim() !== "");
+
+  // Reset everything, including the scope and the events. Leaving them set
+  // is how somebody adds a second subscription still carrying the last
+  // one's job id without noticing.
+  const reset = () => {
+    setEndpoint("");
+    setScope("owner");
+    setJob("");
+    setBatch("");
+    setChosen(["failed"]);
+  };
+
+  const submit = () => {
+    const body = {
+      endpoint_id: chosenEndpoint,
+      scope,
+      events: chosen,
+    } as Parameters<typeof onCreate>[0];
+    if (scope === "job" && parsedJob) {
+      body.cluster_id = parsedJob.cluster;
+      body.proc_id = parsedJob.proc;
+    }
+    if (scope === "batch") {
+      // A batch is either a name or a bare cluster number, the way the jobs
+      // page labels one. A number with no name is a lone cluster.
+      const trimmed = batch.trim();
+      if (/^\d+$/.test(trimmed)) body.batch_id = trimmed;
+      else body.batch_name = trimmed;
+    }
+    onCreate(body);
+    reset();
+  };
+
+  if (destinations.length === 0) return null;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+      >
+        Notify me about something
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <label className="block">
+        <span className="text-xs font-medium text-gray-700">Send it to</span>
+        <select
+          value={chosenEndpoint}
+          onChange={(e) => setEndpoint(e.target.value)}
+          className="mt-1 w-full rounded-sm border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 sm:w-72"
+        >
+          {destinations.length !== 1 && <option value="">Choose one…</option>}
+          {destinations.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.label}
+              {d.destination_hint ? ` — ${d.destination_hint}` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <fieldset>
         <legend className="text-xs font-medium text-gray-700">
@@ -302,6 +561,13 @@ function CreateWebhookForm({
         </label>
       )}
 
+      {scope === "owner" && (
+        <p className="rounded-sm bg-amber-50 px-2 py-1 text-xs text-amber-800">
+          Watching everything also covers jobs that are already in that state
+          — a notification goes out for each of them as soon as you add this.
+        </p>
+      )}
+
       <fieldset>
         <legend className="text-xs font-medium text-gray-700">When</legend>
         <div className="mt-1 space-y-1">
@@ -339,7 +605,10 @@ function CreateWebhookForm({
         </button>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            reset();
+            setOpen(false);
+          }}
           className="rounded-sm border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
         >
           Cancel
@@ -353,14 +622,21 @@ function CreateWebhookForm({
 //
 // A receiver that verifies signatures needs this value, and nothing can
 // recover it afterwards -- so the panel says what it is for as well as that
-// it will not come back.
+// it will not come back. It also says the one thing people get wrong: the
+// value is hex and has to be decoded before it is used as the key.
 function NewWebhookShown({
   created,
+  kind,
   onDismiss,
 }: {
   created: WebhookCreated;
+  kind: "created" | "rotated";
   onDismiss: () => void;
 }) {
+  const rotated = kind === "rotated";
+  const until = created.webhook.prev_secret_expires_at
+    ? new Date(created.webhook.prev_secret_expires_at)
+    : null;
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -374,7 +650,9 @@ function NewWebhookShown({
   return (
     <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4">
       <h3 className="text-sm font-semibold text-amber-900">
-        “{created.webhook.label}” is set up
+        {rotated
+          ? `“${created.webhook.label}” has a new signing secret`
+          : `“${created.webhook.label}” is set up`}
       </h3>
       <p className="text-xs text-amber-800">
         This is the signing secret. Your receiver uses it to check that a
@@ -382,7 +660,31 @@ function NewWebhookShown({
         <code className="font-mono">{created.signature_header}</code> header,
         over the timestamp, the{" "}
         <code className="font-mono">{created.idempotency_header}</code> and the
-        body. It is never shown again.
+        body. It is never shown again, and everything you point at this
+        destination will use it, so you only have to do this once.
+      </p>
+      {rotated && (
+        <p className="text-xs text-amber-800">
+          {until ? (
+            <>
+              Your old secret keeps working until{" "}
+              <strong>{until.toLocaleString()}</strong>, and until then every
+              delivery carries both signatures — so nothing is lost while you
+              update your receiver. If you are rotating because the old secret
+              leaked, rotate again now: that retires it immediately.
+            </>
+          ) : (
+            <>
+              Your old secret has already stopped working, so update your
+              receiver now.
+            </>
+          )}
+        </p>
+      )}
+      <p className="text-xs text-amber-800">
+        It is hex-encoded: <strong>decode it to 32 bytes</strong> before using
+        it as the key. Using the text as-is still produces a valid-looking
+        signature that never matches, with nothing to say why.
       </p>
       <div className="flex gap-2">
         <input
@@ -415,43 +717,63 @@ function NewWebhookShown({
   );
 }
 
-function WebhookRow({
-  hook,
+function DestinationRow({
+  dest,
+  feeds,
   tested,
   testing,
   onTest,
-  onEnable,
+  onRotate,
+  rotating,
   onRemove,
   removing,
 }: {
-  hook: Webhook;
+  dest: Webhook;
+  feeds: number;
   tested?: WebhookTestResult;
   testing: boolean;
   onTest: () => void;
-  onEnable: () => void;
+  onRotate: () => void;
+  rotating: boolean;
   onRemove: () => void;
   removing: boolean;
 }) {
   const [showDeliveries, setShowDeliveries] = useState(false);
-  const disabled = hook.disabled_at != null;
+  // Backing off is not broken, and the row says so: the difference matters,
+  // because one needs attention and the other is already recovering.
+  //
+  // Judged by the SERVER's own state rather than by comparing its timestamp
+  // against this browser's clock. The server clears both the counter and the
+  // deadline on any success, so a non-zero counter is its statement that the
+  // destination is failing now -- and a clock a few minutes out would
+  // otherwise make a healthy destination look stuck, or a stuck one look
+  // fine.
+  const backoff = dest.backoff_until ? new Date(dest.backoff_until) : null;
+  const waiting = backoff != null && dest.consecutive_failures > 0;
 
   return (
     <div
       className={`rounded-lg border p-3 ${
-        disabled ? "border-amber-300 bg-amber-50" : "border-gray-200"
+        waiting ? "border-amber-300 bg-amber-50" : "border-gray-200"
       }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-900">{hook.label}</span>
-            <span className="text-xs text-gray-500">{subjectOf(hook)}</span>
+            <span className="font-medium text-gray-900">{dest.label}</span>
+            <span className="text-xs text-gray-500">
+              {feeds === 0
+                ? "nothing is sent here yet"
+                : `${feeds} ${feeds === 1 ? "subscription" : "subscriptions"}`}
+            </span>
           </div>
           <div className="mt-0.5 text-xs text-gray-500">
-            {hook.destination_hint || "destination stored"}
+            {dest.destination_hint || "destination stored"}
           </div>
-          <div className="mt-1">
-            <ChipList items={hook.events} max={5} />
+          <div className="mt-0.5 text-xs text-gray-500">
+            {dest.payload === "full"
+              ? "Sends the whole job ad"
+              : "Sends a summary of the job"}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -463,18 +785,25 @@ function WebhookRow({
           >
             {testing ? "Testing…" : "Test"}
           </button>
-          {disabled && (
-            <button
-              type="button"
-              onClick={onEnable}
-              className="rounded-sm border border-amber-400 bg-white px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
-            >
-              Re-enable
-            </button>
-          )}
+          {/* Confirmed, because it is not undoable: the new secret is
+              shown once, and anything still on the old one has a
+              deadline from this moment. */}
+          <ConfirmButton
+            label={rotating ? "Rotating…" : "Rotate secret"}
+            title="Mint a new signing secret. The old one keeps working for 24 hours, and deliveries carry both signatures until then."
+            compact
+            pending={rotating}
+            onConfirm={onRotate}
+          />
           <ConfirmButton
             label="Delete"
-            title="Delete this notification and everything queued for it"
+            title={
+              feeds > 0
+                ? `Delete this destination, the ${feeds} ${
+                    feeds === 1 ? "subscription" : "subscriptions"
+                  } sending to it, and everything queued`
+                : "Delete this destination and everything queued for it"
+            }
             compact
             pending={removing}
             onConfirm={onRemove}
@@ -487,9 +816,7 @@ function WebhookRow({
       {tested && (
         <p
           className={`mt-2 rounded-sm px-2 py-1 text-xs ${
-            tested.ok
-              ? "bg-green-50 text-green-800"
-              : "bg-red-50 text-red-700"
+            tested.ok ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"
           }`}
         >
           {tested.ok
@@ -498,36 +825,48 @@ function WebhookRow({
         </p>
       )}
 
-      {disabled && (
+      {waiting && backoff && (
         <p className="mt-2 rounded-sm bg-amber-100 px-2 py-1 text-xs text-amber-900">
-          {hook.disabled_reason || "This notification has been turned off."}
+          Your receiver is not answering, so deliveries are waiting rather
+          than being thrown away. Next try at{" "}
+          {backoff.toLocaleTimeString()}
+          {dest.consecutive_failures > 1 &&
+            ` (${dest.consecutive_failures} failures in a row)`}
+          . Nothing is lost: when it answers again, the queue drains.
         </p>
       )}
 
-      {hook.capped_at && (
-        <p className="mt-2 rounded-sm bg-amber-100 px-2 py-1 text-xs text-amber-900">
-          {hook.capped_jobs} jobs matched at once, which is more than this
-          server will post about individually. A summary was sent instead.
+      {dest.prev_secret_expires_at && (
+        <p className="mt-2 rounded-sm bg-blue-50 px-2 py-1 text-xs text-blue-900">
+          The signing secret was rotated. The previous one still works until{" "}
+          {new Date(dest.prev_secret_expires_at).toLocaleString()}, and
+          deliveries carry both signatures until then — update your receiver
+          before that time.
+        </p>
+      )}
+
+      {dest.backlog_at && (
+        <p className="mt-2 rounded-sm bg-red-50 px-2 py-1 text-xs text-red-800">
+          Too much has queued up for this destination ({dest.backlog_depth}{" "}
+          waiting), so some events have been dropped. Fix the receiver, or
+          narrow what you send here.
         </p>
       )}
 
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
         <span>
           Last delivery:{" "}
-          {hook.last_delivery_at
-            ? `${new Date(hook.last_delivery_at).toLocaleString()}${
-                hook.last_status ? ` (${hook.last_status})` : ""
+          {dest.last_delivery_at
+            ? `${new Date(dest.last_delivery_at).toLocaleString()}${
+                dest.last_status ? ` (${dest.last_status})` : ""
               }`
             : "never"}
         </span>
-        {hook.last_test_at && (
+        {dest.last_test_at && (
           <span>
-            Last test: {new Date(hook.last_test_at).toLocaleString()}
-            {hook.last_test_status ? ` (${hook.last_test_status})` : ""}
+            Last test: {new Date(dest.last_test_at).toLocaleString()}
+            {dest.last_test_status ? ` (${dest.last_test_status})` : ""}
           </span>
-        )}
-        {hook.expires_at && (
-          <span>Expires {new Date(hook.expires_at).toLocaleString()}</span>
         )}
         <button
           type="button"
@@ -538,18 +877,69 @@ function WebhookRow({
         </button>
       </div>
 
-      {hook.last_error && !disabled && (
-        <p className="mt-1 text-xs text-gray-500">{hook.last_error}</p>
+      {dest.last_error && !waiting && (
+        <p className="mt-1 text-xs text-gray-500">{dest.last_error}</p>
       )}
 
-      {showDeliveries && <Deliveries id={hook.id} />}
+      {showDeliveries && <Deliveries id={dest.id} />}
     </div>
   );
 }
 
-// Deliveries is the per-hook history, loaded only when asked for: most rows
-// are never expanded, and a list per hook on every page load would be a query
-// per hook for something nobody looked at.
+function SubscriptionRow({
+  sub,
+  dest,
+  onRemove,
+  removing,
+}: {
+  sub: WebhookSubscription;
+  dest?: Webhook;
+  onRemove: () => void;
+  removing: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900">{subjectOf(sub)}</span>
+            <span className="text-xs text-gray-500">
+              → {dest?.label ?? "a destination that has gone"}
+            </span>
+          </div>
+          <div className="mt-1">
+            <ChipList items={sub.events} max={5} />
+          </div>
+        </div>
+        <ConfirmButton
+          label="Stop"
+          title="Stop watching this. The destination and its signing secret stay."
+          compact
+          pending={removing}
+          onConfirm={onRemove}
+        />
+      </div>
+
+      {sub.capped_at && (
+        <p className="mt-2 rounded-sm bg-amber-100 px-2 py-1 text-xs text-amber-900">
+          {sub.capped_jobs} jobs matched at once, which is more than this
+          server will post about individually. A summary was sent instead, and
+          per-job notifications resume on their own if the number drops.
+        </p>
+      )}
+
+      {sub.expires_at && (
+        <p className="mt-2 text-xs text-gray-500">
+          Expires {new Date(sub.expires_at).toLocaleString()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Deliveries is the per-destination history, loaded only when asked for:
+// most rows are never expanded, and a list per destination on every page
+// load would be a query per destination for something nobody looked at.
 function Deliveries({ id }: { id: string }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["webhooks", id, "deliveries"],
@@ -562,11 +952,7 @@ function Deliveries({ id }: { id: string }) {
     );
   const rows = data?.deliveries ?? [];
   if (rows.length === 0)
-    return (
-      <p className="mt-2 text-xs text-gray-500">
-        Nothing has been sent yet.
-      </p>
-    );
+    return <p className="mt-2 text-xs text-gray-500">Nothing has been sent yet.</p>;
   return (
     <table className="mt-2 w-full text-xs">
       <thead className="text-left text-gray-500">
@@ -597,13 +983,13 @@ function Deliveries({ id }: { id: string }) {
   );
 }
 
-// subjectOf renders what a hook watches.
-function subjectOf(h: Webhook): string {
-  switch (h.scope) {
+// subjectOf renders what a subscription watches.
+function subjectOf(s: WebhookSubscription): string {
+  switch (s.scope) {
     case "job":
-      return h.job ? `job ${h.job.cluster_id}.${h.job.proc_id}` : "one job";
+      return s.job ? `job ${s.job.cluster_id}.${s.job.proc_id}` : "one job";
     case "batch":
-      return `batch ${h.batch_name || h.batch_id}`;
+      return `batch ${s.batch_name || s.batch_id}`;
     default:
       return "all my jobs";
   }

@@ -93,6 +93,10 @@ type evalFixture struct {
 	store *Store
 	src   *fakeSource
 	eval  *Evaluator
+	// ep is the destination every subscription in a test posts to,
+	// created lazily. One per fixture, because the split means a
+	// subscription needs one and almost no test cares which.
+	ep *Endpoint
 }
 
 func newEvalFixture(t *testing.T) *evalFixture {
@@ -103,22 +107,59 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	return &evalFixture{store: store, src: src, eval: eval}
 }
 
-// hook creates a live hook.
-func (f *evalFixture) hook(t *testing.T, h *Hook) *Hook {
+// endpoint returns the fixture's destination, creating it on first use.
+func (f *evalFixture) endpoint(t *testing.T) *Endpoint {
 	t.Helper()
-	out, _, err := f.store.Create(context.Background(), h, "https://hooks.example.org/x")
+	if f.ep == nil {
+		ep, _, err := f.store.CreateEndpoint(context.Background(),
+			&Endpoint{Owner: "alice", Label: "dest"}, "https://hooks.example.org/x")
+		if err != nil {
+			t.Fatalf("CreateEndpoint: %v", err)
+		}
+		f.ep = ep
+	}
+	return f.ep
+}
+
+// hook creates a live subscription against the fixture's destination.
+//
+// Still called hook because every caller reads as "make me something that
+// watches"; what it makes is a Subscription.
+func (f *evalFixture) hook(t *testing.T, sub *Subscription) *Subscription {
+	t.Helper()
+	if sub.EndpointID == "" {
+		owner := sub.Owner
+		if owner == "alice" || owner == "" {
+			sub.EndpointID = f.endpoint(t).ID
+		} else {
+			// A second owner cannot borrow alice's destination: the
+			// store checks ownership, which is the point.
+			ep, _, err := f.store.CreateEndpoint(context.Background(),
+				&Endpoint{Owner: owner, Label: "dest"}, "https://hooks.example.org/y")
+			if err != nil {
+				t.Fatalf("CreateEndpoint: %v", err)
+			}
+			sub.EndpointID = ep.ID
+		}
+	}
+	out, err := f.store.CreateSubscription(context.Background(), sub)
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("CreateSubscription: %v", err)
 	}
 	return out
 }
 
-// queued returns the deliveries sitting on the queue for a hook.
-func (f *evalFixture) queued(t *testing.T, hookID string) []Delivery {
+// queued returns the deliveries sitting on the queue for a subscription's
+// destination.
+//
+// Takes a SUBSCRIPTION and resolves its endpoint, because deliveries are
+// keyed on the destination now and every caller has the subscription in
+// hand.
+func (f *evalFixture) queued(t *testing.T, sub *Subscription) []Delivery {
 	t.Helper()
 	rows, err := f.store.db.QueryContext(context.Background(),
 		`SELECT id, event, job_cluster, job_proc, payload_json
-		   FROM webhook_deliveries WHERE webhook_id = ? ORDER BY id`, hookID)
+		   FROM webhook_deliveries WHERE endpoint_id = ? ORDER BY id`, sub.EndpointID)
 	if err != nil {
 		t.Fatalf("query deliveries: %v", err)
 	}
@@ -153,8 +194,8 @@ func (f *evalFixture) pass(t *testing.T) EvalStats {
 	return st
 }
 
-func jobHook(cluster, proc int64, events ...jobwatch.Event) *Hook {
-	return &Hook{Owner: "alice", Label: "job hook", Scope: ScopeJob,
+func jobHook(cluster, proc int64, events ...jobwatch.Event) *Subscription {
+	return &Subscription{Owner: "alice", Label: "job hook", Scope: ScopeJob,
 		Job: jobwatch.JobID{Cluster: cluster, Proc: proc}, Events: events}
 }
 
@@ -172,7 +213,7 @@ func TestTerminalAdInQueueFires(t *testing.T) {
 	if st.Enqueued != 2 {
 		t.Fatalf("enqueued %d, want 2 (succeeded and done): %+v", st.Enqueued, st)
 	}
-	got := f.queued(t, h.ID)
+	got := f.queued(t, h)
 	events := map[jobwatch.Event]bool{}
 	for _, d := range got {
 		events[d.Event] = true
@@ -193,7 +234,7 @@ func TestHistoryRowFiresFailed(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 1 {
 		t.Fatalf("enqueued %d, want 1: %+v", st.Enqueued, st)
 	}
-	got := f.queued(t, h.ID)
+	got := f.queued(t, h)
 	if len(got) != 1 || got[0].Event != jobwatch.EventFailed {
 		t.Fatalf("fired %+v, want one failed", got)
 	}
@@ -219,7 +260,7 @@ func TestHeldJobFires(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 1 {
 		t.Fatalf("enqueued %d, want 1", st.Enqueued)
 	}
-	got := f.queued(t, h.ID)
+	got := f.queued(t, h)
 	var p Payload
 	if err := json.Unmarshal(got[0].Payload, &p); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -238,7 +279,7 @@ func TestIdleJobFiresNothing(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 0 {
 		t.Fatalf("an idle job fired %d deliveries", st.Enqueued)
 	}
-	if got := f.queued(t, h.ID); len(got) != 0 {
+	if got := f.queued(t, h); len(got) != 0 {
 		t.Errorf("queued %+v for an idle job", got)
 	}
 }
@@ -259,7 +300,7 @@ func TestRepeatedPassesDoNotRedeliver(t *testing.T) {
 	if second.Enqueued != 0 || third.Enqueued != 0 {
 		t.Errorf("a job still held re-delivered: %d then %d", second.Enqueued, third.Enqueued)
 	}
-	if got := f.queued(t, h.ID); len(got) != 1 {
+	if got := f.queued(t, h); len(got) != 1 {
 		t.Errorf("%d delivery rows after three passes, want 1", len(got))
 	}
 }
@@ -283,7 +324,7 @@ func TestAbsenceFiresDone(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 1 {
 		t.Fatalf("enqueued %d on absence, want 1", st.Enqueued)
 	}
-	got := f.queued(t, h.ID)
+	got := f.queued(t, h)
 	if len(got) != 1 || got[0].Event != jobwatch.EventDone {
 		t.Fatalf("fired %+v, want one done", got)
 	}
@@ -301,7 +342,7 @@ func TestAbsenceDoesNotFireSucceededOrFailed(t *testing.T) {
 	f.src.queue = nil
 	f.pass(t)
 
-	if got := f.queued(t, h.ID); len(got) != 0 {
+	if got := f.queued(t, h); len(got) != 0 {
 		t.Errorf("absence produced %+v; it cannot say how a job ended", got)
 	}
 }
@@ -320,7 +361,7 @@ func TestTruncatedReadProvesNothing(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 0 {
 		t.Fatalf("a truncated read fired %d done deliveries", st.Enqueued)
 	}
-	if got := f.queued(t, h.ID); len(got) != 0 {
+	if got := f.queued(t, h); len(got) != 0 {
 		t.Errorf("queued %+v from a truncated read", got)
 	}
 
@@ -344,7 +385,7 @@ func TestJobHookIgnoresOtherJobs(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 1 {
 		t.Fatalf("enqueued %d, want exactly the one job", st.Enqueued)
 	}
-	got := f.queued(t, h.ID)
+	got := f.queued(t, h)
 	if len(got) != 1 || got[0].Job.Proc != 1 || got[0].Job.Cluster != 42 {
 		t.Errorf("fired for %+v, want 42.1", got)
 	}
@@ -352,7 +393,7 @@ func TestJobHookIgnoresOtherJobs(t *testing.T) {
 
 func TestBatchHookSelectsItsBatch(t *testing.T) {
 	f := newEvalFixture(t)
-	h := f.hook(t, &Hook{Owner: "alice", Label: "nightly", Scope: ScopeBatch,
+	h := f.hook(t, &Subscription{Owner: "alice", Label: "nightly", Scope: ScopeBatch,
 		BatchID: "100", BatchName: "nightly", Events: []jobwatch.Event{jobwatch.EventHeld}})
 	f.src.queue = []*classad.ClassAd{
 		heldBatchAd(100, 0, "nightly"),
@@ -363,7 +404,7 @@ func TestBatchHookSelectsItsBatch(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 2 {
 		t.Fatalf("enqueued %d, want the 2 jobs of the batch", st.Enqueued)
 	}
-	for _, d := range f.queued(t, h.ID) {
+	for _, d := range f.queued(t, h) {
 		if d.Job.Cluster != 100 {
 			t.Errorf("fired for %+v, which is not in the batch", d.Job)
 		}
@@ -373,7 +414,7 @@ func TestBatchHookSelectsItsBatch(t *testing.T) {
 func TestClusterBatchHookSelectsByCluster(t *testing.T) {
 	f := newEvalFixture(t)
 	// A lone cluster is a batch too, identified by its id with no name.
-	h := f.hook(t, &Hook{Owner: "alice", Label: "cluster 7", Scope: ScopeBatch,
+	h := f.hook(t, &Subscription{Owner: "alice", Label: "cluster 7", Scope: ScopeBatch,
 		BatchID: "7", Events: []jobwatch.Event{jobwatch.EventHeld}})
 	f.src.queue = []*classad.ClassAd{
 		jobAd(7, 0, statusHeldJS),
@@ -383,7 +424,7 @@ func TestClusterBatchHookSelectsByCluster(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 2 {
 		t.Fatalf("enqueued %d, want 2", st.Enqueued)
 	}
-	for _, d := range f.queued(t, h.ID) {
+	for _, d := range f.queued(t, h) {
 		if d.Job.Cluster != 7 {
 			t.Errorf("fired for cluster %d, want 7", d.Job.Cluster)
 		}
@@ -392,7 +433,7 @@ func TestClusterBatchHookSelectsByCluster(t *testing.T) {
 
 func TestOwnerHookSelectsEverything(t *testing.T) {
 	f := newEvalFixture(t)
-	h := f.hook(t, &Hook{Owner: "alice", Label: "all mine", Scope: ScopeOwner,
+	h := f.hook(t, &Subscription{Owner: "alice", Label: "all mine", Scope: ScopeOwner,
 		Events: []jobwatch.Event{jobwatch.EventHeld}})
 	f.src.queue = []*classad.ClassAd{
 		jobAd(1, 0, statusHeldJS),
@@ -402,7 +443,7 @@ func TestOwnerHookSelectsEverything(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 2 {
 		t.Fatalf("enqueued %d, want the 2 held jobs", st.Enqueued)
 	}
-	if got := f.queued(t, h.ID); len(got) != 2 {
+	if got := f.queued(t, h); len(got) != 2 {
 		t.Errorf("%d deliveries, want 2", len(got))
 	}
 }
@@ -429,7 +470,7 @@ func TestOnePassReadsEachOwnerOnce(t *testing.T) {
 func TestFanoutCapRollsUpAndDisables(t *testing.T) {
 	f := newEvalFixture(t)
 	f.eval.FanoutCap = 3
-	h := f.hook(t, &Hook{Owner: "alice", Label: "everything", Scope: ScopeOwner,
+	h := f.hook(t, &Subscription{Owner: "alice", Label: "everything", Scope: ScopeOwner,
 		Events: []jobwatch.Event{jobwatch.EventHeld}})
 	for i := int64(0); i < 10; i++ {
 		f.src.queue = append(f.src.queue, jobAd(100+i, 0, statusHeldJS))
@@ -439,7 +480,7 @@ func TestFanoutCapRollsUpAndDisables(t *testing.T) {
 	if st.Capped != 1 {
 		t.Fatalf("capped %d hooks, want 1: %+v", st.Capped, st)
 	}
-	got := f.queued(t, h.ID)
+	got := f.queued(t, h)
 	if len(got) != 1 {
 		t.Fatalf("%d deliveries, want one rolled-up: %+v", len(got), got)
 	}
@@ -457,26 +498,63 @@ func TestFanoutCapRollsUpAndDisables(t *testing.T) {
 		t.Errorf("summary = %+v, want 10 jobs over a limit of 3", p.Capped)
 	}
 
-	stored, err := f.store.Get(context.Background(), "alice", h.ID)
+	stored, err := f.store.GetSubscription(context.Background(), "alice", h.ID)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.DisabledAt == nil {
-		t.Error("a capped hook was left enabled, and would cap again every pass")
+		t.Fatalf("GetSubscription: %v", err)
 	}
 	if stored.CappedJobs != 10 {
 		t.Errorf("capped_jobs = %d, want 10", stored.CappedJobs)
 	}
-	// Disabled means no longer evaluated, so the next pass does nothing.
-	if next := f.pass(t); next.Capped != 0 || next.Enqueued != 0 {
-		t.Errorf("a disabled hook was evaluated again: %+v", next)
+
+	// Nothing is disabled any more, so the subscription IS evaluated
+	// again -- and must not post a second rolled-up delivery for the
+	// same event on the same day. The rollup key carries the date, which
+	// is what makes the second pass a primary-key conflict rather than
+	// another POST.
+	next := f.pass(t)
+	if next.Enqueued != 0 {
+		t.Errorf("a second pass enqueued %d more deliveries for a still-capped subscription", next.Enqueued)
+	}
+	if again := f.queued(t, h); len(again) != 1 {
+		t.Errorf("%d deliveries after two capped passes, want the one rolled-up", len(again))
+	}
+}
+
+// TestCappedSubscriptionRecoversWhenItShrinks is why nothing is disabled: a
+// selection that drops back under the ceiling has to start working again on
+// its own, with nobody pressing a button.
+func TestCappedSubscriptionRecoversWhenItShrinks(t *testing.T) {
+	f := newEvalFixture(t)
+	f.eval.FanoutCap = 3
+	f.hook(t, &Subscription{Owner: "alice", Label: "mine", Scope: ScopeOwner,
+		Events: []jobwatch.Event{jobwatch.EventHeld}})
+	for i := int64(0); i < 10; i++ {
+		f.src.queue = append(f.src.queue, jobAd(300+i, 0, statusHeldJS))
+	}
+	if st := f.pass(t); st.Capped != 1 {
+		t.Fatalf("first pass capped %d, want 1", st.Capped)
+	}
+
+	// The cluster drains to two held jobs, which is under the ceiling.
+	// They are jobs this subscription has already SEEN, so the tracked
+	// set must not have swallowed them as delivered.
+	f.src.queue = nil
+	for i := int64(0); i < 2; i++ {
+		f.src.queue = append(f.src.queue, jobAd(400+i, 0, statusHeldJS))
+	}
+	st := f.pass(t)
+	if st.Capped != 0 {
+		t.Errorf("a shrunken selection still reported capped: %+v", st)
+	}
+	if st.Enqueued != 2 {
+		t.Errorf("enqueued %d after the selection shrank, want 2 per-job deliveries", st.Enqueued)
 	}
 }
 
 func TestUnderTheCapDeliversPerJob(t *testing.T) {
 	f := newEvalFixture(t)
 	f.eval.FanoutCap = 10
-	h := f.hook(t, &Hook{Owner: "alice", Label: "mine", Scope: ScopeOwner,
+	h := f.hook(t, &Subscription{Owner: "alice", Label: "mine", Scope: ScopeOwner,
 		Events: []jobwatch.Event{jobwatch.EventHeld}})
 	for i := int64(0); i < 5; i++ {
 		f.src.queue = append(f.src.queue, jobAd(200+i, 0, statusHeldJS))
@@ -484,7 +562,7 @@ func TestUnderTheCapDeliversPerJob(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 5 || st.Capped != 0 {
 		t.Fatalf("got %+v, want 5 per-job deliveries and no cap", st)
 	}
-	for _, d := range f.queued(t, h.ID) {
+	for _, d := range f.queued(t, h) {
 		if d.Job == nil {
 			t.Error("a per-job delivery names no job")
 		}
@@ -500,7 +578,7 @@ func TestTerminableHookEndsWithItsSubject(t *testing.T) {
 	h := f.hook(t, jobHook(42, 0, jobwatch.EventDone))
 	ctx := context.Background()
 
-	before, err := f.store.Get(ctx, "alice", h.ID)
+	before, err := f.store.GetSubscription(ctx, "alice", h.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -518,7 +596,7 @@ func TestTerminableHookEndsWithItsSubject(t *testing.T) {
 	if st.Expired != 1 {
 		t.Fatalf("expired %d hooks, want 1: %+v", st.Expired, st)
 	}
-	after, err := f.store.Get(ctx, "alice", h.ID)
+	after, err := f.store.GetSubscription(ctx, "alice", h.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -542,7 +620,7 @@ func TestHookWithNoJobsYetDoesNotExpire(t *testing.T) {
 	if st := f.pass(t); st.Expired != 0 {
 		t.Fatalf("expired %d hooks although nothing has been seen", st.Expired)
 	}
-	stored, err := f.store.Get(context.Background(), "alice", h.ID)
+	stored, err := f.store.GetSubscription(context.Background(), "alice", h.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -553,7 +631,7 @@ func TestHookWithNoJobsYetDoesNotExpire(t *testing.T) {
 
 func TestOwnerHookNeverEndsWithItsJobs(t *testing.T) {
 	f := newEvalFixture(t)
-	h := f.hook(t, &Hook{Owner: "alice", Label: "all", Scope: ScopeOwner,
+	h := f.hook(t, &Subscription{Owner: "alice", Label: "all", Scope: ScopeOwner,
 		Events: []jobwatch.Event{jobwatch.EventDone}})
 
 	f.src.queue = []*classad.ClassAd{jobAd(1, 0, statusRunningJS)}
@@ -564,7 +642,7 @@ func TestOwnerHookNeverEndsWithItsJobs(t *testing.T) {
 	if st := f.pass(t); st.Expired != 0 {
 		t.Fatalf("an owner hook expired with its jobs: %+v", st)
 	}
-	stored, err := f.store.Get(context.Background(), "alice", h.ID)
+	stored, err := f.store.GetSubscription(context.Background(), "alice", h.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -587,7 +665,7 @@ func TestHistoryFailureStillFiresFromTheQueue(t *testing.T) {
 	if st := f.pass(t); st.Enqueued != 1 {
 		t.Fatalf("enqueued %d with history unavailable, want 1", st.Enqueued)
 	}
-	if got := f.queued(t, h.ID); len(got) != 1 {
+	if got := f.queued(t, h); len(got) != 1 {
 		t.Errorf("%d deliveries, want 1", len(got))
 	}
 }
@@ -609,7 +687,7 @@ func TestQueueFailureIsReportedNotSwallowed(t *testing.T) {
 	if st.Errors != 1 {
 		t.Errorf("errors = %d, want 1", st.Errors)
 	}
-	if got := f.queued(t, h.ID); len(got) != 0 {
+	if got := f.queued(t, h); len(got) != 0 {
 		t.Errorf("a failed queue read concluded that a job finished: %+v", got)
 	}
 }

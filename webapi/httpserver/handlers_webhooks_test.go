@@ -20,12 +20,65 @@ import (
 func serveWebhooks(t *testing.T, server *Server, r *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	if strings.HasPrefix(r.URL.Path, "/api/v1/webhooks/") {
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/v1/webhook-subscriptions/"):
+		server.handleWebhookSubscriptionItem(rec, r)
+	case r.URL.Path == "/api/v1/webhook-subscriptions":
+		server.handleWebhookSubscriptions(rec, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/webhooks/"):
 		server.handleWebhookItem(rec, r)
-	} else {
+	default:
 		server.handleWebhooks(rec, r)
 	}
 	return rec
+}
+
+// createSubscription posts to the subscription route and returns what came
+// back.
+func createSubscription(t *testing.T, server *Server, user, body string) (int, map[string]any) {
+	t.Helper()
+	rec := serveWebhooks(t, server, userRequest(t, server, user, []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhook-subscriptions", body))
+	var out map[string]any
+	if rec.Body.Len() > 0 {
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode (%d): %v: %s", rec.Code, err, rec.Body.String())
+		}
+	}
+	return rec.Code, out
+}
+
+// newWebhookEndpoint registers a destination and returns its id, which is
+// what nearly every test below actually wants.
+func newWebhookEndpoint(t *testing.T, server *Server, body string) string {
+	t.Helper()
+	status, out := createWebhook(t, server, "alice", body)
+	if status != http.StatusCreated {
+		t.Fatalf("create destination: status %d: %v", status, out)
+	}
+	ep, _ := out["webhook"].(map[string]any)
+	id, _ := ep["id"].(string)
+	if id == "" {
+		t.Fatalf("create destination returned no id: %v", out)
+	}
+	return id
+}
+
+// listSubscriptions returns one user's subscriptions.
+func listSubscriptions(t *testing.T, server *Server, user string) []map[string]any {
+	t.Helper()
+	rec := serveWebhooks(t, server, userRequest(t, server, user, []string{"condor-users"},
+		http.MethodGet, "/api/v1/webhook-subscriptions", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list subscriptions status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Subscriptions []map[string]any `json:"subscriptions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	return out.Subscriptions
 }
 
 func createWebhook(t *testing.T, server *Server, user, body string) (int, map[string]any) {
@@ -61,8 +114,7 @@ func TestCreateWebhookAndList(t *testing.T) {
 	f := newReauthFixture(t, Config{})
 
 	status, body := createWebhook(t, f.server, "alice",
-		`{"label":"Slack","url":"https://hooks.slack.com/services/T/B/XXXXXXXX",
-		  "scope":"job","cluster_id":42,"proc_id":1,"events":["failed","held"]}`)
+		`{"label":"Slack","url":"https://hooks.slack.com/services/T/B/XXXXXXXX"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("create status %d, want 201: %v", status, body)
 	}
@@ -103,7 +155,7 @@ func TestCreateWebhookAndList(t *testing.T) {
 	// Bob's own, so the isolation is checked from both sides rather than
 	// only from alice's.
 	status, body = createWebhook(t, f.server, "bob",
-		`{"label":"Bob's hook","url":"https://hooks.example.org/bob","scope":"owner","events":["done"]}`)
+		`{"label":"Bob's hook","url":"https://hooks.example.org/bob"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("bob's create status %d, want 201: %v", status, body)
 	}
@@ -115,20 +167,160 @@ func TestCreateWebhookAndList(t *testing.T) {
 	}
 }
 
+// TestSubscribingTwiceMintsNoSecondSecret is the split, asserted at the HTTP
+// surface: watching a second job must not hand the user another key to
+// paste, because the key is shown once and re-copying it is the mistake the
+// old shape invited.
+func TestSubscribingTwiceMintsNoSecondSecret(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	ep := newWebhookEndpoint(t, f.server,
+		`{"label":"Zap","url":"https://hooks.zapier.com/hooks/catch/1/abc"}`)
+
+	for _, body := range []string{
+		`{"endpoint_id":"` + ep + `","scope":"job","cluster_id":42,"proc_id":0,"events":["held"]}`,
+		`{"endpoint_id":"` + ep + `","scope":"job","cluster_id":43,"proc_id":0,"events":["failed"]}`,
+		`{"endpoint_id":"` + ep + `","scope":"owner","events":["done"]}`,
+	} {
+		status, out := createSubscription(t, f.server, "alice", body)
+		if status != http.StatusCreated {
+			t.Fatalf("create subscription: status %d: %v", status, out)
+		}
+		// No secret, no URL, nothing to copy.
+		if _, ok := out["signing_secret"]; ok {
+			t.Error("creating a subscription returned a signing secret")
+		}
+		raw := mustJSON(t, out)
+		if strings.Contains(raw, "hooks.zapier.com") {
+			t.Errorf("a subscription response leaked the destination: %s", raw)
+		}
+	}
+
+	if subs := listSubscriptions(t, f.server, "alice"); len(subs) != 3 {
+		t.Errorf("alice has %d subscriptions, want 3", len(subs))
+	}
+	if eps := listWebhooks(t, f.server, "alice"); len(eps) != 1 {
+		t.Errorf("three subscriptions produced %d destinations, want 1", len(eps))
+	}
+}
+
+// TestSubscriptionCannotBorrowAnotherOwnersDestination: naming somebody
+// else's endpoint must not work, and must not confirm that the id exists.
+func TestSubscriptionCannotBorrowAnotherOwnersDestination(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	ep := newWebhookEndpoint(t, f.server,
+		`{"label":"Alice's","url":"https://hooks.example.org/alice"}`)
+
+	status, out := createSubscription(t, f.server, "bob",
+		`{"endpoint_id":"`+ep+`","scope":"owner","events":["done"]}`)
+	if status == http.StatusCreated {
+		t.Fatal("bob subscribed through alice's destination")
+	}
+	msg, _ := out["message"].(string)
+	if !strings.Contains(strings.ToLower(msg), "no such destination") {
+		t.Errorf("message = %q, want it to read as a missing destination", msg)
+	}
+	if subs := listSubscriptions(t, f.server, "bob"); len(subs) != 0 {
+		t.Errorf("bob has %d subscriptions", len(subs))
+	}
+}
+
+// TestDeletingADestinationTakesItsSubscriptions: the two deletes are
+// different gestures and the row counts differ, which a UI has to be able
+// to say.
+func TestDeletingADestinationTakesItsSubscriptions(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	ep := newWebhookEndpoint(t, f.server,
+		`{"label":"Zap","url":"https://hooks.example.org/x"}`)
+	if status, out := createSubscription(t, f.server, "alice",
+		`{"endpoint_id":"`+ep+`","scope":"owner","events":["done"]}`); status != http.StatusCreated {
+		t.Fatalf("create subscription: %d %v", status, out)
+	}
+
+	rec := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodDelete, "/api/v1/webhooks/"+ep, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete destination: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if subs := listSubscriptions(t, f.server, "alice"); len(subs) != 0 {
+		t.Errorf("%d subscriptions outlived their destination", len(subs))
+	}
+}
+
+// TestDeletingASubscriptionKeepsTheDestination is the other half: stopping
+// watching one job must not throw away the receiver's key.
+func TestDeletingASubscriptionKeepsTheDestination(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	ep := newWebhookEndpoint(t, f.server,
+		`{"label":"Zap","url":"https://hooks.example.org/x"}`)
+	_, out := createSubscription(t, f.server, "alice",
+		`{"endpoint_id":"`+ep+`","scope":"owner","events":["done"]}`)
+	sub, _ := out["subscription"].(map[string]any)
+	sid, _ := sub["id"].(string)
+	if sid == "" {
+		t.Fatalf("no subscription id: %v", out)
+	}
+
+	rec := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodDelete, "/api/v1/webhook-subscriptions/"+sid, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete subscription: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if eps := listWebhooks(t, f.server, "alice"); len(eps) != 1 {
+		t.Errorf("the destination went with its last subscription (%d left)", len(eps))
+	}
+	if subs := listSubscriptions(t, f.server, "alice"); len(subs) != 0 {
+		t.Errorf("%d subscriptions left", len(subs))
+	}
+}
+
+// TestEndpointCarriesThePayloadMode: "send the whole ad" is the
+// destination's setting, so one receiver sees one shape.
+func TestEndpointCarriesThePayloadMode(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+
+	// The default is the small projection: turning on whole ads is a
+	// disclosure decision and has to be made, not inherited.
+	id := newWebhookEndpoint(t, f.server,
+		`{"label":"summary","url":"https://hooks.example.org/a"}`)
+	mine := listWebhooks(t, f.server, "alice")
+	if mode, _ := mine[0]["payload"].(string); mode != "summary" {
+		t.Errorf("default payload mode = %q, want summary", mode)
+	}
+
+	rec := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPatch, "/api/v1/webhooks/"+id, `{"payload":"full"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch payload mode: status %d: %s", rec.Code, rec.Body.String())
+	}
+	mine = listWebhooks(t, f.server, "alice")
+	if mode, _ := mine[0]["payload"].(string); mode != "full" {
+		t.Errorf("payload mode = %q after the patch, want full", mode)
+	}
+
+	// An unknown mode is refused rather than silently falling back.
+	rec = serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPatch, "/api/v1/webhooks/"+id, `{"payload":"everything"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("patch with an unknown payload mode: status %d, want 400", rec.Code)
+	}
+	status, out := createWebhook(t, f.server, "alice",
+		`{"label":"bad","url":"https://hooks.example.org/b","payload":"everything"}`)
+	if status != http.StatusBadRequest {
+		t.Errorf("create with an unknown payload mode: status %d, want 400: %v", status, out)
+	}
+}
+
 func TestCreateWebhookRefusals(t *testing.T) {
 	f := newReauthFixture(t, Config{})
 	for _, tc := range []struct {
 		name, body, want string
 	}{
-		{"no label", `{"url":"https://h.example.org/x","scope":"owner","events":["failed"]}`, "name is required"},
-		{"http destination", `{"label":"x","url":"http://h.example.org/x","scope":"owner","events":["failed"]}`, "https"},
-		{"no events", `{"label":"x","url":"https://h.example.org/x","scope":"owner","events":[]}`, "at least one event"},
-		{"unknown event", `{"label":"x","url":"https://h.example.org/x","scope":"owner","events":["exploded"]}`, "unsupported event"},
-		{"unknown scope", `{"label":"x","url":"https://h.example.org/x","scope":"galaxy","events":["failed"]}`, "unknown scope"},
-		{"job scope with no job", `{"label":"x","url":"https://h.example.org/x","scope":"job","events":["failed"]}`, "cluster id"},
+		{"no label", `{"url":"https://h.example.org/x"}`, "name is required"},
+		{"http destination", `{"label":"x","url":"http://h.example.org/x"}`, "https"},
+		{"no destination", `{"label":"x"}`, "destination URL is required"},
 		// A password in a URL is logged by everything it passes through and
 		// replayed on every retry.
-		{"credentials in url", `{"label":"x","url":"https://u:p@h.example.org/x","scope":"owner","events":["failed"]}`, "credentials"},
+		{"credentials in url", `{"label":"x","url":"https://u:p@h.example.org/x"}`, "credentials"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := createWebhook(t, f.server, "alice", tc.body)
@@ -138,6 +330,33 @@ func TestCreateWebhookRefusals(t *testing.T) {
 			// ErrorResponse puts the status text in "error" and the
 			// explanation in "message"; the explanation is the half a user
 			// can act on.
+			if msg, _ := body["message"].(string); !strings.Contains(strings.ToLower(msg), strings.ToLower(tc.want)) {
+				t.Errorf("message = %q, want it to mention %q", msg, tc.want)
+			}
+		})
+	}
+}
+
+func TestCreateSubscriptionRefusals(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	ep := newWebhookEndpoint(t, f.server,
+		`{"label":"dest","url":"https://h.example.org/x"}`)
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"no destination", `{"scope":"owner","events":["failed"]}`, "must name the destination"},
+		{"unknown destination", `{"endpoint_id":"wh_nope","scope":"owner","events":["failed"]}`, "no such destination"},
+		{"no events", `{"endpoint_id":"` + ep + `","scope":"owner","events":[]}`, "at least one event"},
+		{"unknown event", `{"endpoint_id":"` + ep + `","scope":"owner","events":["exploded"]}`, "unsupported event"},
+		{"unknown scope", `{"endpoint_id":"` + ep + `","scope":"galaxy","events":["failed"]}`, "unknown scope"},
+		{"job scope with no job", `{"endpoint_id":"` + ep + `","scope":"job","events":["failed"]}`, "cluster id"},
+		{"batch scope with no batch", `{"endpoint_id":"` + ep + `","scope":"batch","events":["failed"]}`, "needs a batch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := createSubscription(t, f.server, "alice", tc.body)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status %d, want 400: %v", status, body)
+			}
 			if msg, _ := body["message"].(string); !strings.Contains(strings.ToLower(msg), strings.ToLower(tc.want)) {
 				t.Errorf("message = %q, want it to mention %q", msg, tc.want)
 			}
@@ -163,7 +382,7 @@ func TestWebhookRequiresSessionAndJSON(t *testing.T) {
 		t.Fatalf("session create: %v", err)
 	}
 	r = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/webhooks",
-		strings.NewReader(`{"label":"forged","url":"https://evil.example.org/x","scope":"owner","events":["failed"]}`))
+		strings.NewReader(`{"label":"forged","url":"https://evil.example.org/x"}`))
 	r.Header.Set("Content-Type", "text/plain")
 	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid}) //nolint:gosec // test cookie
 	if rec := serveWebhooks(t, f.server, r); rec.Code != http.StatusUnsupportedMediaType {
@@ -176,13 +395,8 @@ func TestWebhookRequiresSessionAndJSON(t *testing.T) {
 
 func TestWebhookItemIsOwnerScoped(t *testing.T) {
 	f := newReauthFixture(t, Config{})
-	status, body := createWebhook(t, f.server, "alice",
-		`{"label":"mine","url":"https://h.example.org/x","scope":"owner","events":["failed"]}`)
-	if status != http.StatusCreated {
-		t.Fatalf("create: %v", body)
-	}
-	hook, _ := body["webhook"].(map[string]any)
-	id, _ := hook["id"].(string)
+	id := newWebhookEndpoint(t, f.server,
+		`{"label":"mine","url":"https://h.example.org/x"}`)
 
 	// Somebody else's hook is not found rather than refused, at every verb:
 	// a 403 would confirm the id exists.
@@ -192,6 +406,7 @@ func TestWebhookItemIsOwnerScoped(t *testing.T) {
 		{http.MethodPatch, "/api/v1/webhooks/" + id, `{"label":"theirs"}`},
 		{http.MethodPost, "/api/v1/webhooks/" + id + "/test", `{}`},
 		{http.MethodGet, "/api/v1/webhooks/" + id + "/deliveries", ""},
+		{http.MethodGet, "/api/v1/webhooks/" + id + "/subscriptions", ""},
 	} {
 		rec := serveWebhooks(t, f.server, userRequest(t, f.server, "bob", []string{"condor-users"},
 			tc.method, tc.path, tc.body))
@@ -216,14 +431,16 @@ func TestWebhookItemIsOwnerScoped(t *testing.T) {
 
 func TestUpdateWebhook(t *testing.T) {
 	f := newReauthFixture(t, Config{})
-	_, body := createWebhook(t, f.server, "alice",
-		`{"label":"old","url":"https://h.example.org/one","scope":"owner","events":["failed"]}`)
-	hook, _ := body["webhook"].(map[string]any)
-	id, _ := hook["id"].(string)
+	id := newWebhookEndpoint(t, f.server,
+		`{"label":"old","url":"https://h.example.org/one"}`)
+	_, out := createSubscription(t, f.server, "alice",
+		`{"endpoint_id":"`+id+`","scope":"owner","events":["failed"]}`)
+	sub, _ := out["subscription"].(map[string]any)
+	sid, _ := sub["id"].(string)
 
 	rec := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
 		http.MethodPatch, "/api/v1/webhooks/"+id,
-		`{"label":"new","events":["done","held"],"url":"https://other.example.org/two"}`))
+		`{"label":"new","url":"https://other.example.org/two"}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -234,12 +451,23 @@ func TestUpdateWebhook(t *testing.T) {
 	if label, _ := mine[0]["label"].(string); label != "new" {
 		t.Errorf("label = %q, want new", label)
 	}
-	events := mustJSON(t, mine[0]["events"])
-	if !strings.Contains(events, "done") || !strings.Contains(events, "held") {
-		t.Errorf("events = %s, want done and held", events)
-	}
 	if hint, _ := mine[0]["destination_hint"].(string); !strings.Contains(hint, "other.example.org") {
 		t.Errorf("the destination was not replaced: %q", hint)
+	}
+
+	// Events move with the SUBSCRIPTION, which is the thing that watches.
+	rec = serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPatch, "/api/v1/webhook-subscriptions/"+sid, `{"events":["done","held"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch subscription status %d: %s", rec.Code, rec.Body.String())
+	}
+	subs := listSubscriptions(t, f.server, "alice")
+	if len(subs) != 1 {
+		t.Fatalf("got %d subscriptions", len(subs))
+	}
+	events := mustJSON(t, subs[0]["events"])
+	if !strings.Contains(events, "done") || !strings.Contains(events, "held") {
+		t.Errorf("events = %s, want done and held", events)
 	}
 
 	// A bad destination is refused and changes nothing.
@@ -261,7 +489,7 @@ func TestUpdateWebhook(t *testing.T) {
 func TestTestWebhookReportsTheReceiver(t *testing.T) {
 	f := newReauthFixture(t, Config{})
 	_, body := createWebhook(t, f.server, "alice",
-		`{"label":"broken","url":"https://localhost.invalid.example/x","scope":"owner","events":["failed"]}`)
+		`{"label":"broken","url":"https://localhost.invalid.example/x"}`)
 	hook, _ := body["webhook"].(map[string]any)
 	id, _ := hook["id"].(string)
 
@@ -434,5 +662,74 @@ func TestReceiverMustDecodeTheHexSecret(t *testing.T) {
 	// is being taken as text somewhere and the documentation is wrong again.
 	if err := webhooks.VerifySignature([]byte(shown), key, body, header, at); err == nil {
 		t.Error("the undecoded hex string verified, so the stated decode requirement is not real")
+	}
+}
+
+// TestRotateSecretAtTheHTTPSurface: a new secret, shown once, with the old
+// one's deadline reported so a receiver can be updated before it lapses.
+func TestRotateSecretAtTheHTTPSurface(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	id := newWebhookEndpoint(t, f.server,
+		`{"label":"Zap","url":"https://hooks.example.org/x"}`)
+
+	rec := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhooks/"+id+"/rotate-secret", `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	secret, _ := out["signing_secret"].(string)
+	if secret == "" {
+		t.Fatal("rotation returned no signing secret")
+	}
+	if once, _ := out["secret_shown_once"].(bool); !once {
+		t.Error("rotation did not mark the secret as shown once")
+	}
+	hook, _ := out["webhook"].(map[string]any)
+	if hook == nil {
+		t.Fatal("rotation returned no webhook")
+	}
+	// The deadline for updating the receiver. Without it the user has no
+	// way to know how long the old key has.
+	if when, _ := hook["prev_secret_expires_at"].(string); when == "" {
+		t.Error("rotation did not report when the old secret expires")
+	}
+
+	// It is a different secret from the next rotation's, and the
+	// destination URL is untouched.
+	rec2 := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhooks/"+id+"/rotate-secret", `{}`))
+	var out2 map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &out2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if s2, _ := out2["signing_secret"].(string); s2 == secret {
+		t.Error("two rotations produced the same secret")
+	}
+	mine := listWebhooks(t, f.server, "alice")
+	if len(mine) != 1 {
+		t.Fatalf("rotation changed the destination count to %d", len(mine))
+	}
+	if hint, _ := mine[0]["destination_hint"].(string); !strings.Contains(hint, "hooks.example.org") {
+		t.Errorf("rotation disturbed the destination: %q", hint)
+	}
+
+	// Somebody else's destination is not found rather than refused, and
+	// above all is not re-keyed.
+	other := serveWebhooks(t, f.server, userRequest(t, f.server, "bob", []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhooks/"+id+"/rotate-secret", `{}`))
+	if other.Code != http.StatusNotFound {
+		t.Errorf("rotate as another owner: status %d, want 404", other.Code)
+	}
+
+	// GET does not rotate. A secret-minting action behind a safe method
+	// is a link somebody can be made to follow.
+	get := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodGet, "/api/v1/webhooks/"+id+"/rotate-secret", ""))
+	if get.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET rotate-secret: status %d, want 405", get.Code)
 	}
 }
