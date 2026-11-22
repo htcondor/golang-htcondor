@@ -22,6 +22,17 @@ vi.mock('@/lib/api', async () => {
         create: (b: unknown) => create(b),
         remove: (id: string) => remove(id),
       },
+      // The page renders the webhooks section too; stub it so these tests
+      // exercise the integrations half without reaching for a real fetch.
+      webhooks: {
+        list: () => Promise.resolve({ webhooks: [], events: ["failed"] }),
+        create: () => Promise.reject(new Error("not used here")),
+        update: () => Promise.reject(new Error("not used here")),
+        remove: () => Promise.resolve(),
+        test: () => Promise.reject(new Error("not used here")),
+        enable: () => Promise.resolve(),
+        deliveries: () => Promise.resolve({ deliveries: [] }),
+      },
     },
   };
 });

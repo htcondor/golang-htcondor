@@ -54,6 +54,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/submitpolicy"
 	"github.com/htcondor/golang-htcondor/webapi/templates"
 	"github.com/htcondor/golang-htcondor/webapi/usagestats"
+	"github.com/htcondor/golang-htcondor/webapi/webhooks"
 	"github.com/ory/fosite"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
@@ -587,6 +588,14 @@ type Handler struct {
 	jobWatch     *jobwatch.Store
 	jobWatchEval *jobwatch.Evaluator
 	jobWatchFeed *jobwatch.Feed
+
+	// Outbound webhooks. The evaluator reads jobs through the same source
+	// as jobWatchEval, so a hook and a watch over the same jobs cannot
+	// disagree about whether one finished; see initWebhooks.
+	webhooks        *webhooks.Store
+	webhookEval     *webhooks.Evaluator
+	webhookDispatch *webhooks.Dispatcher
+	webhookSender   *webhooks.Sender
 	// runtimeEst answers runtime estimates and runtimeRefresher keeps it
 	// fed from the mirror's history; both nil when the feature is off.
 	// See runtime_estimate.go.
@@ -1289,6 +1298,20 @@ type HandlerConfig struct {
 	// the directory. Empty disables site apps entirely: no library is
 	// built and no /site/ route is registered.
 	SiteAppsDir string
+	// WebhooksDisabled is HTTP_API_WEBHOOKS set false: outbound webhooks
+	// are not offered at all.
+	//
+	// Negated so the zero value leaves them ON, which is what every other
+	// user-facing feature in this struct does and what a test constructing
+	// a bare Config expects. An operator turning them off is making a
+	// decision about egress -- a webhook makes this daemon POST to an
+	// address a user chose -- so it deserves a knob even though the
+	// destination is already restricted to routable public addresses.
+	WebhooksDisabled bool
+	// WebhookFanoutLimit is HTTP_API_WEBHOOK_FANOUT_LIMIT: the most jobs
+	// one webhook may deliver for before it rolls up and is disabled. Zero
+	// selects the package default.
+	WebhookFanoutLimit int
 	// SiteAppsUpload is HTTP_API_SITE_APPS_UPLOAD: whether
 	// administrators may publish a bundle through the web interface.
 	// False unless the site says otherwise; see siteapps_admin.go.
@@ -2653,6 +2676,8 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	// The feed keeps of each job only what the watches, the activity
 	// stream and the dashboard read (jobwatch.FeedAttrs), not whole ads.
 	h.jobWatchFeed.Keep = h.jobWatchEval.LiveAttrs
+	// Outbound webhooks ride the same source and the same feed.
+	h.initWebhooks(cfg, watchSrc)
 
 	h.initRuntimeEstimates(cfg)
 
@@ -3324,6 +3349,8 @@ func (h *Handler) Start(ctx context.Context, ln net.Listener, protocol string) e
 	h.startJobWatchEvaluator(h.ctx)
 	h.startJobWatchFeed(h.ctx)
 	h.startJobWatchNudge(h.ctx)
+	h.startWebhooks(h.ctx)
+	h.startWebhookNudge(h.ctx)
 	h.startJupyterSweeper(h.ctx)
 	h.startRuntimeEstimates(h.ctx)
 	h.startReservations(h.ctx)

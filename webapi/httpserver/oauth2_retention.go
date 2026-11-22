@@ -178,6 +178,16 @@ func (h *Handler) runTokenRetention(ctx context.Context) {
 				"clients", n, "after", unusedClientTTL.String())
 		}
 
+		// Settled webhook deliveries. Hourly with the rest rather than
+		// daily: they are written by the evaluator at job rate, which on a
+		// busy access point is a great deal faster than tokens arrive.
+		if n, err := h.pruneWebhookDeliveries(ctx); err != nil {
+			h.logger.Warn(logging.DestinationHTTP, "Webhook delivery sweep failed", "error", err)
+		} else if n > 0 {
+			h.logger.Info(logging.DestinationHTTP, "Deleted settled webhook deliveries",
+				"rows", n, "retention", webhookDeliveryRetention.String())
+		}
+
 		if h.tokenRetentionFor < 0 || time.Since(lastTokenSweep) < 24*time.Hour {
 			return
 		}

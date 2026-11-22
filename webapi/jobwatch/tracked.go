@@ -118,3 +118,16 @@ func looksLikeRanges(blob string) bool {
 	}
 	return true
 }
+
+// EncodeTracked and DecodeTracked are the range encoding above, for a caller
+// that keeps its own tracked set in its own column.
+//
+// Exported for the webhook evaluator, which needs a tracked set for the same
+// reason this one exists: a finished job is destroyed from the queue, so "it
+// was here and now it is gone" is the evidence that a terminal event
+// happened, and storing that set per job costs megabytes a pass for a large
+// cluster where ranges cost tens of bytes.
+func EncodeTracked(ids []JobID) (string, error) { return encodeTracked(ids) }
+
+// DecodeTracked reads back what EncodeTracked wrote.
+func DecodeTracked(blob string) ([]JobID, error) { return decodeTracked(blob) }

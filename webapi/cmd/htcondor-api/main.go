@@ -1878,6 +1878,40 @@ func loadSiteAppsConfig(cfg *config.Config, logger *logging.Logger) siteAppsSett
 	return siteAppsSettings{Dir: dir, Reload: reload, Upload: upload, GitHub: github}
 }
 
+// webhookSettings is what the configuration says about outbound webhooks.
+type webhookSettings struct {
+	Disabled    bool
+	FanoutLimit int
+}
+
+// loadWebhookSettings reads the outbound-webhook configuration.
+//
+// On by default. A webhook destination is restricted to a routable public
+// https address and a user can only ever subscribe to their own jobs, so the
+// feature is safe to offer; the knob exists for the access point that permits
+// no egress at all, where the alternative is a page whose every delivery
+// times out.
+func loadWebhookSettings(cfg *config.Config, logger *logging.Logger) webhookSettings {
+	out := webhookSettings{Disabled: !cfg.GetBool("HTTP_API_WEBHOOKS", true)}
+	if out.Disabled {
+		logger.Info(logging.DestinationHTTP, "Outbound webhooks are disabled by configuration")
+		return out
+	}
+	if raw, ok := cfg.Get("HTTP_API_WEBHOOK_FANOUT_LIMIT"); ok {
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		switch {
+		case err != nil || n < 1:
+			logger.Warn(logging.DestinationHTTP,
+				"Ignoring HTTP_API_WEBHOOK_FANOUT_LIMIT: want a positive number of jobs",
+				"value", raw)
+		default:
+			out.FanoutLimit = n
+			logger.Info(logging.DestinationHTTP, "Webhook fan-out limit", "jobs", n)
+		}
+	}
+	return out
+}
+
 // siteAppsSettings is what the configuration says about site apps.
 type siteAppsSettings struct {
 	Dir    string
@@ -2415,6 +2449,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	// until now. A directory that is configured and not being scanned
 	// is otherwise silent, which is the whole reason it says so.
 	siteApps := loadSiteAppsConfig(cfg, logger)
+	webhookCfg := loadWebhookSettings(cfg, logger)
 
 	// Create collector
 	collector := setupCollector(cfg, logger)
@@ -2691,6 +2726,8 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		WebUIAppOnlyGroup:          webuiAppOnlyGroup,
 		SiteAppsDir:                siteApps.Dir,
 		SiteAppsReloadInterval:     siteApps.Reload,
+		WebhooksDisabled:           webhookCfg.Disabled,
+		WebhookFanoutLimit:         webhookCfg.FanoutLimit,
 		SiteAppsUpload:             siteApps.Upload,
 		SiteAppsGitHub:             siteApps.GitHub,
 		WebUISiteName:              webuiSiteName,
@@ -2991,6 +3028,7 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 	// point a throwaway demo server at a bundle directory without
 	// writing a configuration file.
 	demoSiteApps := loadSiteAppsConfig(cfg, logger)
+	demoWebhooks := loadWebhookSettings(cfg, logger)
 	demoAppOnlyGroup, _ := cfg.Get("HTTP_API_WEBUI_APP_ONLY_GROUP")
 
 	// Start condor_master
@@ -3151,6 +3189,8 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 		// have something to drive.
 		SiteAppsDir:            demoSiteApps.Dir,
 		SiteAppsReloadInterval: demoSiteApps.Reload,
+		WebhooksDisabled:       demoWebhooks.Disabled,
+		WebhookFanoutLimit:     demoWebhooks.FanoutLimit,
 		SiteAppsUpload:         demoSiteApps.Upload,
 		SiteAppsGitHub:         demoSiteApps.GitHub,
 		WebUIAppOnlyGroup:      demoAppOnlyGroup,

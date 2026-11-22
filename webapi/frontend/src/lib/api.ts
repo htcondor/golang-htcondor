@@ -1448,6 +1448,70 @@ export interface Integration {
   last_used_at?: string;
 }
 
+// One outbound webhook: this server posts to a service when something
+// happens to the owner's jobs. The opposite direction to an Integration,
+// which lets a service act as the owner here.
+//
+// No url field, deliberately. The destination is a capability URL -- for
+// Slack, Zapier and most of the rest, possession is the authorization to post
+// -- so no endpoint returns it. destination_hint names the host and nothing
+// else, which is what tells two hooks apart.
+export interface Webhook {
+  id: string;
+  label: string;
+  scope: "job" | "batch" | "owner";
+  job?: { cluster_id: number; proc_id: number; schedd?: string };
+  batch_id?: string;
+  batch_name?: string;
+  events: string[];
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+  disabled_at?: string;
+  disabled_reason?: string;
+  consecutive_failures: number;
+  capped_at?: string;
+  capped_jobs?: number;
+  last_delivery_at?: string;
+  last_status?: number;
+  last_error?: string;
+  last_test_at?: string;
+  last_test_status?: number;
+  last_test_error?: string;
+  has_destination: boolean;
+  destination_hint?: string;
+}
+
+// What a webhook creation hands back. The signing secret is the only time it
+// is readable: a receiver needs it to verify signatures, and nothing can
+// recover it from the row afterwards.
+export interface WebhookCreated {
+  webhook: Webhook;
+  signing_secret: string;
+  secret_shown_once: boolean;
+  signature_header: string;
+  idempotency_header: string;
+}
+
+// One delivery attempt, for the "is this working" panel.
+export interface WebhookDelivery {
+  id: string;
+  event: string;
+  state: "pending" | "delivered" | "abandoned";
+  attempts: number;
+  status?: number;
+  error?: string;
+  job?: string;
+}
+
+// What a test reported. ok is false for a receiver that refused: the test
+// RAN, so the endpoint answers 200 and this is the outcome.
+export interface WebhookTestResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
 // The URLs an outside service's setup form asks for. Served by the server
 // rather than built here: the OAuth2 paths sit under /mcp/oauth2/ or
 // /oauth2/ depending on configuration, so a guess would 404 on half the
@@ -2772,6 +2836,62 @@ export const api = {
       fetchJSON(`${BASE}/integrations/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
+  },
+
+  // Outbound webhooks. Session-authenticated on the server, like
+  // integrations, and for a sharper reason: a destination is a capability
+  // URL, so a token that could read one back would be enough to post there.
+  webhooks: {
+    list: (): Promise<{ webhooks: Webhook[]; events: string[] }> =>
+      fetchJSON(`${BASE}/webhooks`),
+    create: (body: {
+      label: string;
+      url: string;
+      scope: "job" | "batch" | "owner";
+      cluster_id?: number;
+      proc_id?: number;
+      schedd?: string;
+      batch_id?: string;
+      batch_name?: string;
+      events: string[];
+    }): Promise<WebhookCreated> =>
+      fetchJSON(`${BASE}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    update: (
+      id: string,
+      body: { label?: string; url?: string; events?: string[] },
+    ): Promise<{ webhook: Webhook }> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    remove: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    // Sends one real delivery through the real signer and dial policy, and
+    // reports what the receiver said. Anything that simulated it would test
+    // the wrong code.
+    test: (id: string): Promise<WebhookTestResult> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    // For a hook disabled after repeated give-ups, once the user has fixed
+    // the destination.
+    enable: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    deliveries: (id: string): Promise<{ deliveries: WebhookDelivery[] }> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/deliveries`),
   },
 
   admin: {

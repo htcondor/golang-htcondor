@@ -5,13 +5,15 @@
 // The two directions are genuinely different things and the page says so,
 // because the trust runs opposite ways:
 //
-//   - Apps connected to your account (below). An outside service holds a
-//     credential that lets it act as you HERE. You are the authorization
-//     server; it is the client.
+//   - Apps connected to your account. An outside service holds a credential
+//     that lets it act as you HERE. You are the authorization server; it is
+//     the client.
+//   - Event notifications. This server posts to a service when your jobs
+//     change state. Nothing outside gains any access; we reach out to it.
 //   - Services you connected. You grant this server access to YOUR account
 //     somewhere else -- Drive and the like -- so a job can read or write
 //     files there. That half lives in the connectors package and is not on
-//     this page yet; it slots in as a second section beside this one.
+//     this page yet; it slots in as another section beside these.
 //
 // Mixing them under one heading without that distinction is how somebody
 // revokes the wrong thing, so each section names who ends up able to do what.
@@ -26,6 +28,7 @@ import {
 } from "@/lib/api";
 import { ChipList } from "@/components/ChipList";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { WebhooksSection } from "./WebhooksSection";
 
 // The scopes worth offering as checkboxes. The server narrows whatever is
 // asked for to what the account could consent to, so an unavailable one here
@@ -124,6 +127,10 @@ export default function ConnectorsPage() {
           />
         )}
       </section>
+
+      <hr className="border-gray-200" />
+
+      <WebhooksSection />
     </div>
   );
 }
