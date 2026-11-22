@@ -19,9 +19,12 @@
 // lowest-friction way to hand somebody their job output. The tree is
 // deliberately small:
 //
-//	/outputs/                 one directory per readable job
-//	/outputs/<cluster>.<proc>/   that job's sandbox
+//	/outputs/                      one directory per readable job
+//	/outputs/<cluster>.<proc>/     that job's sandbox
 //	/outputs/<cluster>.<proc>.tar  the same sandbox as one archive
+//	/templates/<ns>/<name>/        a submit description to drop a CSV on
+//	/templates/<ns>/<name>/submit/ drop it here; one job per row
+//	/templates/<ns>/<name>/status/ what happened to each upload
 //
 // The archive is addressable but NOT listed, which is the one surprising
 // thing here and is on purpose twice over. Listing it would mean knowing
@@ -34,6 +37,7 @@
 package sftpjobs
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -41,8 +45,17 @@ import (
 	"strings"
 )
 
-// outputsDir is the one top-level directory.
-const outputsDir = "outputs"
+// The top-level directories.
+const (
+	outputsDir   = "outputs"
+	templatesDir = "templates"
+)
+
+// Names inside a template directory.
+const (
+	submitDirName = "submit"
+	statusDirName = "status"
+)
 
 // tarSuffix marks the archive form of a job.
 const tarSuffix = ".tar"
@@ -55,16 +68,29 @@ const (
 	kindJobDir
 	kindJobFile
 	kindJobTar
+
+	// The templates tree.
+	kindTemplates    // /templates
+	kindNamespace    // /templates/system, /templates/user
+	kindUserOwner    // /templates/user/<account>
+	kindTemplate     // a template's own directory
+	kindTemplateFile // job.sub or README inside it
+	kindSubmitDir    // .../submit
+	kindSubmitFile   // .../submit/<name>
+	kindStatusDir    // .../status
+	kindStatusFile   // .../status/<name>
 )
 
 // ref is a parsed request path.
 type ref struct {
 	kind kind
-	// Cluster and Proc are set for every kind but kindRoot and
-	// kindOutputs.
+	// cluster and proc are set for the job kinds.
 	cluster, proc int
-	// name is the sandbox-relative path, for kindJobFile.
+	// name is the sandbox-relative path for kindJobFile, and the file
+	// name for kindTemplateFile, kindSubmitFile and kindStatusFile.
 	name string
+	// tref is set for every templates-tree kind below kindNamespace.
+	tref TemplateRef
 }
 
 // parsePath reads a request path.
@@ -79,7 +105,11 @@ func parsePath(p string) (ref, error) {
 	case 0:
 		return ref{kind: kindRoot}, nil
 	}
-	if parts[0] != outputsDir {
+	switch parts[0] {
+	case outputsDir:
+	case templatesDir:
+		return parseTemplatePath(p, parts[1:])
+	default:
 		return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 	}
 	if len(parts) == 1 {
@@ -110,6 +140,98 @@ func parsePath(p string) (ref, error) {
 	r.kind = kindJobFile
 	r.name = path.Join(parts[2:]...)
 	return r, nil
+}
+
+// parseTemplatePath reads what follows /templates.
+//
+// The namespace decides how many components name the template: a system
+// template is <ns>/<name>, a user one is <ns>/<owner>/<name>. Anything
+// deeper is one of the fixed names inside it, and anything else does not
+// exist -- a template directory holds no tree of its own.
+func parseTemplatePath(p string, rest []string) (ref, error) {
+	missing := func() (ref, error) { return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist) }
+
+	if len(rest) == 0 {
+		return ref{kind: kindTemplates}, nil
+	}
+	ns := rest[0]
+	if ns != NamespaceSystem && ns != NamespaceUser {
+		return missing()
+	}
+	if len(rest) == 1 {
+		return ref{kind: kindNamespace, tref: TemplateRef{Namespace: ns}}, nil
+	}
+
+	tref := TemplateRef{Namespace: ns}
+	var tail []string
+	if ns == NamespaceUser {
+		tref.Owner = rest[1]
+		if len(rest) == 2 {
+			if checkTemplateName(tref.Owner) != nil {
+				return missing()
+			}
+			return ref{kind: kindUserOwner, tref: tref}, nil
+		}
+		tref.Name, tail = rest[2], rest[3:]
+	} else {
+		tref.Name, tail = rest[1], rest[2:]
+	}
+	if tref.Valid() != nil {
+		return missing()
+	}
+
+	switch len(tail) {
+	case 0:
+		return ref{kind: kindTemplate, tref: tref}, nil
+	case 1:
+		switch tail[0] {
+		case SubmitFileName, ReadmeFileName:
+			return ref{kind: kindTemplateFile, tref: tref, name: tail[0]}, nil
+		case submitDirName:
+			return ref{kind: kindSubmitDir, tref: tref}, nil
+		case statusDirName:
+			return ref{kind: kindStatusDir, tref: tref}, nil
+		}
+		return missing()
+	case 2:
+		// An upload's name is the client's, so it is checked rather than
+		// trusted: it becomes a key and appears in a status listing.
+		if checkUploadName(tail[1]) != nil {
+			return missing()
+		}
+		switch tail[0] {
+		case submitDirName:
+			return ref{kind: kindSubmitFile, tref: tref, name: tail[1]}, nil
+		case statusDirName:
+			return ref{kind: kindStatusFile, tref: tref, name: tail[1]}, nil
+		}
+	}
+	return missing()
+}
+
+// checkUploadName accepts a name for a dropped file.
+//
+// Narrow on purpose: the name is the client's, it keys the status entry
+// somebody reads back, and it is shown in a listing. A name that is not
+// one plain component is refused rather than reduced to one, because two
+// uploads reducing to the same name would have one overwrite the
+// other's result.
+func checkUploadName(name string) error {
+	if name == "" || len(name) > 128 {
+		return errors.New("the name is empty or too long")
+	}
+	if name == "." || name == ".." || strings.HasPrefix(name, "-") {
+		return fmt.Errorf("%q is not a usable file name", name)
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+		default:
+			return fmt.Errorf("%q contains %q; use letters, digits, '.', '_' or '-'", name, r)
+		}
+	}
+	return nil
 }
 
 // splitPath breaks a cleaned absolute path into components, refusing

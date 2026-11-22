@@ -23,6 +23,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,6 +74,13 @@ type Config struct {
 	// convenience.
 	Jobs JobLister
 
+	// Templates and Submitter enable the templates tree: dropping a CSV
+	// into a template's submit/ directory submits one job per row. With
+	// either unset the tree is absent, and the file service serves job
+	// output only.
+	Templates TemplateSource
+	Submitter Submitter
+
 	// Window is the retention for a streamed read. Zero takes
 	// sandboxfs.DefaultWindow.
 	Window int
@@ -82,8 +90,22 @@ type Config struct {
 }
 
 // FS serves one account's jobs.
+//
+// One per channel, so the account is fixed and nothing a client sends
+// can reach another's. The status and dedup maps live for the channel's
+// lifetime: a client that uploads and then reads status/ in the same
+// session sees its result, and one that reconnects does not. Persisting
+// them would need storage this does not have; the submitted cluster
+// carries the template and the digest as attributes, which is where a
+// durable answer would come from.
 type FS struct {
 	cfg Config
+
+	mu     sync.Mutex
+	status map[statusKey]uploadStatus
+	// submitted maps a template and a content digest to the cluster it
+	// became, so the same bytes dropped twice are one submission.
+	submitted map[statusKey]int
 }
 
 // New returns an FS for one authenticated account.
@@ -152,6 +174,9 @@ func (f *FS) Fileread(req *sftp.Request) (io.ReaderAt, error) {
 	case kindRoot, kindOutputs, kindJobDir:
 		return nil, &os.PathError{Op: "open", Path: req.Filepath, Err: syscall.EISDIR}
 	}
+	if r.kind >= kindTemplates {
+		return f.readTemplates(r, req.Filepath)
+	}
 	return nil, fmt.Errorf("%q: %w", req.Filepath, fs.ErrNotExist)
 }
 
@@ -175,7 +200,11 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 	ctx := f.cfg.Context
 	switch r.kind {
 	case kindRoot:
-		return listerAt{dirInfo(outputsDir, time.Time{})}, nil
+		out := listerAt{dirInfo(outputsDir, time.Time{})}
+		if f.templatesEnabled() {
+			out = append(out, dirInfo(templatesDir, time.Time{}))
+		}
+		return out, nil
 
 	case kindOutputs:
 		refs, err := f.readableJobs(ctx)
@@ -213,6 +242,9 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 
 	case kindJobTar:
 		return nil, &os.PathError{Op: "readdir", Path: p, Err: syscall.ENOTDIR}
+	}
+	if r.kind >= kindTemplates {
+		return f.listTemplates(r, p)
 	}
 	return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 }
@@ -311,6 +343,9 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 			mode: 0o444,
 		}}, nil
 	}
+	if r.kind >= kindTemplates {
+		return f.statTemplates(r, p)
+	}
 	return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 }
 
@@ -338,6 +373,13 @@ func (f *FS) readableJobs(ctx context.Context) ([]JobRef, error) {
 // the server answer "unexpected request", which tells somebody whose
 // upload failed nothing at all.
 func (f *FS) Filewrite(req *sftp.Request) (io.WriterAt, error) {
+	r, err := parsePath(req.Filepath)
+	if err != nil {
+		return nil, err
+	}
+	if r.kind == kindSubmitFile {
+		return f.writeTemplates(r, req.Filepath)
+	}
 	return nil, &os.PathError{Op: "write", Path: req.Filepath, Err: syscall.EROFS}
 }
 

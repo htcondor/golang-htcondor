@@ -448,8 +448,15 @@ func TestDirectoriesAreNotReadable(t *testing.T) {
 // failed nothing at all.
 func TestWritesAreRefusedWithAReason(t *testing.T) {
 	f := newTestFS(t, false, nil)
-	if _, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/outputs/x"}); !errors.Is(err, syscall.EROFS) {
-		t.Errorf("Filewrite = %v, want EROFS", err)
+	// A path that EXISTS and cannot be written: read-only.
+	_, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/outputs/12.0/stdout"})
+	if !errors.Is(err, syscall.EROFS) {
+		t.Errorf("Filewrite of an existing file = %v, want EROFS", err)
+	}
+	// A path that does not exist: say so, rather than calling it
+	// read-only. "/outputs/x" names no job.
+	if _, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/outputs/x"}); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Filewrite of a nonexistent path = %v, want fs.ErrNotExist", err)
 	}
 	for _, m := range []string{"Mkdir", "Remove", "Rename", "Setstat", "Rmdir"} {
 		if err := f.Filecmd(&sftp.Request{Method: m, Filepath: "/outputs/x"}); !errors.Is(err, syscall.EROFS) {
