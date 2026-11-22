@@ -539,6 +539,53 @@ PKCE flow for the Picker while the server holds a separate grant for jobs
 — means two consent screens for one user intention, two grants to revoke,
 and two sets of scopes to keep aligned.
 
+### A chooser is not a connector flag
+
+An earlier revision had `..._PICKER = true` on the connector. The
+developer key proved that wrong: Google's Picker needs `setDeveloperKey`
+and an app id, which belong to a Google Cloud project and are not
+something a credential has — a boolean had nowhere to put them.
+
+A chooser is its own configured thing, under `HTTP_API_PICKER_<NAME>_*`,
+naming the connector whose credential it *borrows*. That also puts the
+Content-Security-Policy consequence where it belongs: the policy is a
+property of the page, widened once per configured chooser, not once per
+credential that happens to exist.
+
+The provider's chooser is loaded through an adapter served from our own
+origin, which is what lets `script-src` stay `'self'` for the adapter
+itself; the adapter then loads the provider's script, and that is the
+origin the policy names. The adapter implements one narrow contract
+(`window.htcondorPicker.open`), and the narrowness is for testability:
+the e2e suite serves the *real* adapter and stands in one layer deeper,
+at `apis.google.com/js/api.js`. So the page code under test is the page
+code that ships, and the adapter — the only part that speaks a
+third-party API — is covered rather than bypassed.
+
+### A chosen file's name has to survive three readers
+
+A chosen file's name does two jobs: it is the name the file lands under
+in the sandbox, and it is the token that replaces the reference in the
+submit file. The second one is the constraint, and it is tighter than it
+looks, because the name has to get past the regexp that finds
+references *and* HTCondor's own parse of `transfer_input_files`.
+
+So a provider allows names a reference cannot carry. `CheckSpoolName`
+refuses what it can at parse time — `.` and `..` (legal URL paths that
+reached the spool tar as entry names), a percent-encoded space (which
+lands in the rewritten line, where HTCondor splits on it), `$` (macro
+expansion, not a character), control characters, quotes.
+
+A **raw** space or comma is deliberately not refused, and this is the
+part worth remembering: the regexp stops there, so the text parses as a
+shorter reference plus an ordinary input — which is exactly what those
+tokens mean when a submitter writes them on purpose. Nothing in the
+text separates the two intents. A name with a space is therefore not
+expressible as a reference at all, and the chooser is the only place
+that can prevent one, because it is the only place holding the real
+name. It reports those per file and still adds the rest: being refused
+three files over one bad name loses two good choices.
+
 ## Scope width is blast radius
 
 In `direct` mode the token sits in `$_CONDOR_CREDS` on an execute node,
@@ -852,6 +899,13 @@ than grow a second one.
   session-scoped, `direct` collapses into `spool` and the plugin patch is
   wasted. See "Answering the grant-durability question"; verify before
   building `direct`.
+- **A file whose name has a space in it cannot be used at all.** The
+  chooser says so and names the file, which is honest but not a fix:
+  the person has to rename it where it lives. Quoting is not available
+  (`transfer_input_files` does not support it for this purpose), so the
+  options are a sandbox name that differs from the provider's name —
+  which means the submit file and the provider disagree about what the
+  file is called — or leaving it refused. Refused for now, deliberately.
 - **Folder picking under `drive.file`** — whether picking a folder
   usefully grants its contents, which decides whether "pick a directory
   of inputs" is offerable.
