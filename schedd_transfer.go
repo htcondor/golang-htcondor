@@ -61,11 +61,46 @@ type procID struct {
 // w: Writer where the tar archive will be written
 // Returns: A channel that will receive the error result (nil on success)
 func (s *Schedd) ReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer) <-chan error {
+	return s.ReceiveJobSandboxWithOptions(ctx, constraint, w, SandboxOptions{})
+}
+
+// SandboxOptions tunes a sandbox download.
+type SandboxOptions struct {
+	// OnPreamble, if set, is called with the size a job's sender
+	// advertised, before any of that job's files arrive. Returning an
+	// error aborts the download.
+	//
+	// Called once PER JOB, because one constraint can match many and each
+	// sends its own preamble. A caller enforcing a size limit on a single
+	// job gets one call; one downloading a whole cluster gets the chance
+	// to refuse at each job in turn, having already received the ones
+	// before it.
+	//
+	// known is false when the sender advertised no size (a peer predating
+	// 8.1.0), and size is then 0 rather than meaning an empty sandbox.
+	OnPreamble func(size int64, known bool) error
+
+	// OnJobCount, if set, is called with the number of jobs the
+	// constraint matched, before any of them is received. Returning an
+	// error aborts the download.
+	//
+	// Worth checking, because a constraint matching NOTHING is not an
+	// error here: the loop runs zero times and the caller gets a valid,
+	// empty archive. So a job that does not exist, or is not the
+	// caller's, is otherwise indistinguishable from one that produced no
+	// output. The count also decides whether names are prefixed with
+	// "cluster.proc", which a caller reading one job's files needs to
+	// know.
+	OnJobCount func(count int) error
+}
+
+// ReceiveJobSandboxWithOptions is ReceiveJobSandbox with per-call options.
+func (s *Schedd) ReceiveJobSandboxWithOptions(ctx context.Context, constraint string, w io.Writer, opts SandboxOptions) <-chan error {
 	errChan := make(chan error, 1)
 
 	go func() {
 		defer close(errChan)
-		err := s.doReceiveJobSandbox(ctx, constraint, w)
+		err := s.doReceiveJobSandbox(ctx, constraint, w, opts)
 		errChan <- err
 	}()
 
@@ -73,7 +108,7 @@ func (s *Schedd) ReceiveJobSandbox(ctx context.Context, constraint string, w io.
 }
 
 // doReceiveJobSandbox implements the actual transfer logic
-func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer) error {
+func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer, opts SandboxOptions) error {
 	// Get SecurityConfig from context, HTCondor config, or defaults
 	secConfig, err := GetSecurityConfigOrDefault(ctx, s.cfg, commands.TRANSFER_DATA_WITH_PERMS, "CLIENT", s.address)
 	if err != nil {
@@ -117,6 +152,11 @@ func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w i
 	if err != nil {
 		return fmt.Errorf("failed to receive job count: %w", err)
 	}
+	if opts.OnJobCount != nil {
+		if err := opts.OnJobCount(int(jobCount)); err != nil {
+			return err
+		}
+	}
 
 	// 7. EOM (implicit)
 
@@ -130,7 +170,7 @@ func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w i
 
 	// 8. For each job, receive job ad and files
 	for i := int32(0); i < jobCount; i++ {
-		if err := s.processJobSandbox(ctx, cedarStream, tarWriter, jobCount, i); err != nil {
+		if err := s.processJobSandbox(ctx, cedarStream, tarWriter, jobCount, i, opts); err != nil {
 			return err
 		}
 	}
@@ -150,7 +190,7 @@ func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w i
 }
 
 // processJobSandbox handles the reception of a single job's sandbox
-func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, jobCount int32, i int32) error {
+func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, jobCount int32, i int32, opts SandboxOptions) error {
 	// a. Receive job ClassAd
 	responseMsg := message.NewMessageFromStream(cedarStream)
 	jobAd, err := responseMsg.GetClassAd(ctx)
@@ -264,7 +304,7 @@ func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stre
 	// loop, writing to a tar-backed sink that applies the output-file filter and
 	// remaps. The tool download path performs no final TransferAck (ReceiveAck
 	// left false), preserving its long-standing behavior against the schedd.
-	if err := s.receiveJobFiles(ctx, cedarStream, tarWriter, dirPrefix, transferOutputFiles, outputRemaps); err != nil {
+	if err := s.receiveJobFiles(ctx, cedarStream, tarWriter, dirPrefix, transferOutputFiles, outputRemaps, opts); err != nil {
 		return fmt.Errorf("failed to receive files for job %d.%d: %w", clusterID, procID, err)
 	}
 
@@ -276,14 +316,16 @@ func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stre
 // applying the output-file filter, path-traversal guard and output remaps in a
 // tar-backed Sink. ReceiveAck is left false to preserve the tool's behavior
 // against the schedd's TRANSFER_DATA uploader (which sends no final ack here).
-func (s *Schedd) receiveJobFiles(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, dirPrefix string, transferOutputFiles map[string]bool, outputRemaps map[string]OutputRemap) error {
+func (s *Schedd) receiveJobFiles(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, dirPrefix string, transferOutputFiles map[string]bool, outputRemaps map[string]OutputRemap, opts SandboxOptions) error {
 	sink := &tarSink{
 		tw:        tarWriter,
 		dirPrefix: dirPrefix,
 		filter:    transferOutputFiles,
 		remaps:    outputRemaps,
 	}
-	_, err := filetransfer.ReceiveStream(ctx, cedarStream, sink, ftOpts)
+	o := ftOpts
+	o.OnPreamble = opts.OnPreamble
+	_, err := filetransfer.ReceiveStream(ctx, cedarStream, sink, o)
 	return err
 }
 
@@ -421,6 +463,7 @@ func (s *Schedd) spoolJobFilesFromFS(ctx context.Context, jobAds []*classad.Clas
 		// true (the default). This lets minimal jobs — those whose only
 		// transferable file is the executable itself — spool successfully.
 		fileSet, skippedURLs := inputFilesAndURLs(ad)
+		logSpoolAllowSet(ad, fileSet, skippedURLs)
 		if len(fileSet) == 0 {
 			// Distinguish the two ways of having nothing to spool. A
 			// job whose inputs are all URLs is not misconfigured --
@@ -706,7 +749,8 @@ func parseJobAdsForSpooling(jobAds []*classad.ClassAd) ([]procID, map[procID]*jo
 		jobIDs[i] = id
 
 		// Get list of input files for this job
-		inputFileSet := getInputFilesFromJobAd(ad)
+		inputFileSet, skippedURLs := inputFilesAndURLs(ad)
+		logSpoolAllowSet(ad, inputFileSet, skippedURLs)
 
 		jobInfoMap[id] = &jobInfo{
 			ad:         ad,
@@ -802,18 +846,14 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 	// satisfied by uploading its basename, which is exactly what
 	// submitlint tells a caller to do.
 	transferExe := true // default is true
-	transferExePresent := false
 	if expr, ok := ad.Lookup("TransferExecutable"); ok {
-		transferExePresent = true
 		val := expr.Eval(nil)
 		if b, err := val.BoolValue(); err == nil {
 			transferExe = b
 		}
 	}
 	cmdValue := ""
-	cmdPresent := false
 	if expr, ok := ad.Lookup("Cmd"); ok {
-		cmdPresent = true
 		val := expr.Eval(nil)
 		if cmd, err := val.StringValue(); err == nil {
 			cmdValue = cmd
@@ -823,17 +863,53 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 		inputFileSet[path.Base(cmdValue)] = true
 	}
 
-	// Log the inputs that went into building the allow-set. Without
-	// this it's nearly impossible to tell from a held-job postmortem
-	// whether the proc ad's TransferInput was empty, whether Cmd was
-	// missing from the projection, or whether Cmd was absolute and
-	// therefore (intentionally) excluded. The cluster.proc isn't on
-	// the ad at this point, but the caller's logging usually carries
-	// it via the surrounding context.
-	log.Printf("spool allow-set source: TransferInput=%q Cmd=%q (present=%v) TransferExecutable=%v (present=%v) urls_skipped=%v → set=%v",
-		transferInputRaw, cmdValue, cmdPresent, transferExe, transferExePresent, urls, inputFileSet)
-
 	return inputFileSet, urls
+}
+
+// logSpoolAllowSet records the inputs that went into building a spool's
+// allow-set.
+//
+// Without it it is nearly impossible to tell from a held-job postmortem
+// whether the proc ad's TransferInput was empty, whether Cmd was missing
+// from the projection, or whether Cmd was absolute and therefore
+// (intentionally) excluded. The cluster.proc isn't on the ad at this
+// point, but the caller's logging usually carries it via the
+// surrounding context.
+//
+// Called by the two spool paths rather than by inputFilesAndURLs
+// itself, because the set is also computed to ANSWER questions --
+// SpoolInputAllowSet, which the share-URL mint path and the SFTP
+// template service call to find out which names a job would accept.
+// Logging there put a spool diagnostic in the daemon log for a
+// directory listing.
+func logSpoolAllowSet(ad *classad.ClassAd, set map[string]bool, urls []string) {
+	transferInputRaw, _ := ad.EvaluateAttrString("TransferInput")
+	cmdValue, cmdPresent := ad.EvaluateAttrString("Cmd")
+	transferExe, transferExePresent := ad.EvaluateAttrBool("TransferExecutable")
+	if !transferExePresent {
+		transferExe = true // the default inputFilesAndURLs applies
+	}
+	log.Printf("spool allow-set source: TransferInput=%q Cmd=%q (present=%v) TransferExecutable=%v (present=%v) urls_skipped=%v → set=%v",
+		transferInputRaw, cmdValue, cmdPresent, transferExe, transferExePresent, urls, set)
+}
+
+// transferInputHasFile reports whether TransferInput names anything this
+// access point would have to upload.
+//
+// The question configureRemoteJobAd asks before deciding a submission
+// needs an input spool at all, and it is not the same as "TransferInput
+// is non-empty": a list of URLs is work for the execute node, not for
+// the submitter. Shares isURL with inputFilesAndURLs so that the job
+// held for spooling and the allow-set it is waiting on cannot disagree
+// about what a URL is.
+func transferInputHasFile(ad *classad.ClassAd) bool {
+	raw, _ := ad.EvaluateAttrString("TransferInput")
+	for _, f := range parseFileList(raw) {
+		if !isURL(f) {
+			return true
+		}
+	}
+	return false
 }
 
 // SpoolInputAllowSet returns, sorted, the filenames the schedd will

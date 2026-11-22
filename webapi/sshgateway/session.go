@@ -106,6 +106,15 @@ type Server struct {
 	// Optional.
 	Diagnose func(ctx context.Context, key jobssh.Key, err error) error
 
+	// Subsystem serves a subsystem request on a service target's
+	// channel -- "+jobs" and sftp, for instance. A service is served by
+	// this process: nothing is dialed into the pool, so Transport,
+	// Resolve and Diagnose have no part in it.
+	//
+	// Optional. Without it a service target is refused, which is what
+	// an access point that does not offer one should do.
+	Subsystem ServiceSubsystem
+
 	Logger *logging.Logger
 }
 
@@ -259,10 +268,17 @@ func (s *Server) resolve(ctx context.Context, account, user string, report func(
 //
 // Only what can be decided instantly stays in front of Accept.
 func (s *Server) handleSession(ctx context.Context, account, user string, nch ssh.NewChannel) {
-	if _, err := ParseTargetWith(s.JobIDCodec, user); err != nil {
+	target, err := ParseTargetWith(s.JobIDCodec, user)
+	if err != nil {
 		// A username that names nothing is knowable without asking the
 		// pool anything, so it still gets a proper rejection.
 		_ = nch.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+	if target.IsService() {
+		// Served from here, so none of what follows -- the progress
+		// display, the transport, the resolver -- applies.
+		s.handleServiceSession(ctx, account, target, nch)
 		return
 	}
 

@@ -62,6 +62,24 @@ func (h *Handler) mirrorReadVerified(ctx context.Context, r *http.Request) bool 
 	// A separate cache from the bearer one, whose keys are attacker-chosen
 	// strings: a bearer equal to someone's username must not find their
 	// answer.
+	return h.mirrorReadVerifiedAsUser(ctx)
+}
+
+// mirrorReadVerifiedAsUser is mirrorReadVerified for a caller with no
+// HTTP request behind them -- an SSH gateway channel.
+//
+// Same shape as the session-cookie case it shares code with: the
+// credential is minted per channel for one username, so whether the
+// schedd accepts it depends on the username alone, which is what the
+// answer is keyed by. There is no bearer to key on and none to extract.
+func (h *Handler) mirrorReadVerifiedAsUser(ctx context.Context) bool {
+	user := htcondor.GetAuthenticatedUserFromContext(ctx)
+	if user == "" {
+		return false
+	}
+	if _, ok := htcondor.GetSecurityConfigFromContext(ctx); !ok {
+		return false
+	}
 	if actor, ok := h.mirrorReaders.get(user); ok {
 		return actor != ""
 	}

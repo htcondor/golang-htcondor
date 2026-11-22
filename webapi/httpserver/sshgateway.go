@@ -309,6 +309,23 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 		hostCert = signer
 	}
 
+	// The +jobs file service. Offered whenever the gateway is, because it
+	// is strictly less authority than what the gateway already grants: a
+	// shell inside your own job can read the same sandbox, and this is
+	// read-only.
+	//
+	// A failure here does not stop the gateway. Shell access is the
+	// reason the gateway exists, and refusing to start it because a file
+	// cache could not be prepared would trade the feature people depend
+	// on for the one being added.
+	store, err := h.newSandboxStore()
+	if err != nil {
+		h.logger.Warn(logging.DestinationHTTP,
+			"The SSH gateway's job file service is unavailable", "error", err)
+	} else {
+		h.sandboxStore = store
+	}
+
 	listener := &sshgateway.Listener{
 		Addr:     h.sshGatewayAddress,
 		HostKey:  hostKey.Signer,
@@ -325,6 +342,14 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 		},
 		Bans:   bans,
 		Logger: h.logger,
+	}
+
+	if h.sandboxStore != nil {
+		// Set only with a store behind it. A hook that always failed
+		// would accept the channel and then write an error, where a
+		// missing one refuses at channel-open -- which is both cheaper
+		// and what a client reports usefully.
+		listener.Server.Subsystem = h.sshGatewaySubsystem
 	}
 
 	h.sshGateway = listener
@@ -531,7 +556,13 @@ func (h *Handler) sshGatewayCredential(ctx context.Context, account string, scop
 		return nil, fmt.Errorf("no HTCondor credential could be minted for %q; refusing to run the "+
 			"session as this daemon", account)
 	}
-	return cctx, nil
+	// Name the caller as well as crediting them. The credential alone
+	// says what the context may DO, not who it belongs to, and code that
+	// has to check the two agree -- anything caching per account, where
+	// serving one caller's data to another is the failure -- has nothing
+	// to compare against otherwise. The account here is the authenticated
+	// one from the connection's Permissions, never conn.User().
+	return htcondor.WithAuthenticatedUser(cctx, account), nil
 }
 
 // sshGatewayResolve turns a target into a job.
@@ -545,6 +576,13 @@ func (h *Handler) sshGatewayCredential(ctx context.Context, account string, scop
 // The key's credential is the one ctx carries, minted for this channel
 // by sshGatewayCredential; with none the cache refuses the key.
 func (h *Handler) sshGatewayResolve(ctx context.Context, account string, t sshgateway.Target, report func(string)) (jobssh.Key, error) {
+	// A service is served by the gateway itself and has no job behind it,
+	// so there is no key to resolve. Refused here rather than falling
+	// through to the session path, where it would arrive as a session
+	// with an empty name.
+	if t.IsService() {
+		return jobssh.Key{}, fmt.Errorf("+%s is not served by this access point", t.Service)
+	}
 	if h.multi != nil {
 		return h.sshGatewayResolveMultiAP(ctx, account, t, report)
 	}

@@ -106,6 +106,21 @@ type Options struct {
 	// long-standing behavior; the shadow's output-download path sets it true
 	// because a modern starter (PeerDoesTransferAck) sends an ack.
 	ReceiveAck bool
+
+	// OnPreamble, if set, is called with the sender's advertised sandbox
+	// size as soon as the preamble has been read and BEFORE any file
+	// arrives. Returning an error aborts the receive.
+	//
+	// This is the only place a receiver learns the total before paying for
+	// it: the per-file sizes arrive one at a time, just ahead of each
+	// body, so a caller that refuses sandboxes over some size can only
+	// refuse cheaply here. Afterwards the bytes are already moving.
+	//
+	// known is false when the peer sent no xfer_info ad or no SandboxSize
+	// in it (NoXferInfo, or a peer predating 8.1.0), and size is then 0 --
+	// which is not the same as an empty sandbox, so a size limit has
+	// nothing to judge and the caller decides what to do about that.
+	OnPreamble func(size int64, known bool) error
 }
 
 func (o Options) logf(format string, args ...any) {
@@ -159,6 +174,11 @@ type ReceiveResult struct {
 	Files []string
 	// Dirs are the directory names created.
 	Dirs []string
+	// SandboxSize is the total the sender advertised in the preamble, and
+	// SandboxSizeKnown reports whether it sent one at all. Zero with
+	// SandboxSizeKnown false means "not advertised", not "empty".
+	SandboxSize      int64
+	SandboxSizeKnown bool
 }
 
 // SendState tracks whether GO_AHEAD_ALWAYS has been reached so per-file
@@ -437,18 +457,33 @@ func SendFinished(ctx context.Context, st *stream.Stream, opts Options) error {
 // the per-file loop, writing files to sink, until CommandFinished. If
 // opts.ReceiveAck it then does the receiver-side TransferAck exchange.
 func ReceiveStream(ctx context.Context, st *stream.Stream, sink Sink, opts Options) (*ReceiveResult, error) {
+	res := &ReceiveResult{}
+
 	// Preamble: final-transfer flag + optional xfer_info ad, one message.
 	head := message.NewMessageFromStream(st)
 	if _, err := head.GetInt32(ctx); err != nil {
 		return nil, fmt.Errorf("receive final_transfer flag: %w", err)
 	}
 	if !opts.NoXferInfo {
-		if _, err := head.GetClassAd(ctx); err != nil {
+		ad, err := head.GetClassAd(ctx)
+		if err != nil {
 			return nil, fmt.Errorf("receive xfer_info: %w", err)
+		}
+		// A missing or non-integer SandboxSize leaves SandboxSizeKnown
+		// false rather than failing the transfer: the ad is advisory, and
+		// nothing downstream needs it to receive files correctly.
+		if expr, ok := ad.Lookup("SandboxSize"); ok {
+			if size, err := expr.Eval(nil).IntValue(); err == nil && size >= 0 {
+				res.SandboxSize, res.SandboxSizeKnown = size, true
+			}
+		}
+	}
+	if opts.OnPreamble != nil {
+		if err := opts.OnPreamble(res.SandboxSize, res.SandboxSizeKnown); err != nil {
+			return nil, err
 		}
 	}
 
-	res := &ReceiveResult{}
 	state := &recvState{}
 	for {
 		cmdMsg := message.NewMessageFromStream(st)
