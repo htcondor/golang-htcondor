@@ -87,7 +87,7 @@ The tree is small:
 
 | Path | What it is |
 | --- | --- |
-| `outputs/` | one directory per job whose output you can read (see below) |
+| `outputs/` | one directory per completed job still in the queue (see below) |
 | `outputs/12345.0/` | that job's sandbox, as files |
 | `outputs/12345.0.tar` | the same sandbox as one archive |
 
@@ -100,12 +100,22 @@ would fetch every file twice, once loose and once inside the archive.
 Asking for a shell here gets an explanation rather than a bare failure. The
 surface is read-only; writes are refused with a reason.
 
-**A job is reached by naming it**, and that is the contract; the listing of
-`outputs/` is a convenience. It is currently **empty**, because which jobs to
-list is not one question: a finished job stays in the queue for days under
-`LeaveJobInQueue` and then moves to history, so neither source alone answers
-it. Until an index is wired up, `cd outputs/12345.0` and `get -r
-outputs/12345.0` work and `ls outputs/` shows nothing.
+`outputs/` lists your **completed jobs that are still in the queue**, read from
+the [htcondordb mirror](server-config.md). That is not a subset of what you
+might expect — it is the whole set that can be served. Output is read with
+`TRANSFER_DATA`, which matches against the queue, so once a job leaves the
+queue its spool is gone and there is nothing left to transfer. A completed job
+in the history is correctly absent, because asking for its files would fail.
+
+`LeaveJobInQueue` is therefore not an obstacle here but the window: it is
+exactly how long output stays retrievable.
+
+The listing needs the mirror, and says so rather than showing an empty
+directory when it cannot be built — "you have no jobs" and "this access point
+cannot tell you" are different answers. It is also served only once the schedd
+has accepted you at READ, the level of the query the mirror stands in for;
+that check is cached, so it costs one handshake per interval rather than one
+per `ls`. A job is still reachable by naming it either way.
 
 ### What it costs
 

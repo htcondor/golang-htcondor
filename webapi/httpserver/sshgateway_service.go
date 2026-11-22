@@ -125,6 +125,7 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 		Store:   h.sandboxStore,
 		Account: req.Account,
 		Context: ctx,
+		Jobs:    mirrorJobLister{h: h, account: req.Account},
 		Logf: func(format string, args ...any) {
 			h.logger.Debug(logging.DestinationHTTP, fmt.Sprintf(format, args...))
 		},
