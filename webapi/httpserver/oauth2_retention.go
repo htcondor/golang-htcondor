@@ -123,6 +123,14 @@ const unusedClientTTL = 7 * 24 * time.Hour
 // obtained a token. A client an operator has touched -- annotated, given
 // a service identity, or granted client_credentials or token exchange,
 // none of which a registration can declare -- is kept whatever its use.
+//
+// The origin filter is load-bearing and not a nicety. A client somebody
+// CREATED on purpose -- an operator on the admin page, a user as one of
+// their own integrations -- is a thing with an owner who expects to find
+// it where they left it, and "has obtained no token yet" is the normal
+// state of an integration that has been set up but not yet signed in to.
+// Only a self-registration, which costs nothing and leaves nobody
+// waiting for it, is swept. See TestPurgeUnusedClientsSparesCreated.
 func (h *Handler) purgeUnusedClients(ctx context.Context) (int64, error) {
 	if h.oauth2Provider == nil {
 		return 0, nil

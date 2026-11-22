@@ -1429,6 +1429,50 @@ export interface AdminClientUse {
   at: string;
 }
 
+// One of the signed-in user's own OAuth2 clients: the inbound half of a
+// connector, where an outside service holds a credential that lets it act as
+// them here. Distinct from the connectors they grant this server on their
+// accounts elsewhere.
+//
+// No secret field, by design. A client secret exists once, in the reply to
+// the creation that minted it; has_secret says one exists without being one.
+export interface Integration {
+  id: string;
+  name?: string;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  scopes?: string[];
+  public: boolean;
+  has_secret: boolean;
+  created_at: string;
+  last_used_at?: string;
+}
+
+// The URLs an outside service's setup form asks for. Served by the server
+// rather than built here: the OAuth2 paths sit under /mcp/oauth2/ or
+// /oauth2/ depending on configuration, so a guess would 404 on half the
+// deployments.
+export interface IntegrationEndpoints {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  metadata_endpoint: string;
+}
+
+// What a creation hands back. client_secret is present for a confidential
+// client and is the only time it is ever readable.
+export interface IntegrationCreated {
+  id: string;
+  name?: string;
+  client_secret?: string;
+  secret_shown_once?: boolean;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  scopes?: string[];
+  public: boolean;
+  endpoints?: IntegrationEndpoints;
+}
+
 export interface AdminClient {
   id: string;
   redirect_uris?: string[];
@@ -2699,9 +2743,57 @@ export const api = {
       }),
   },
 
+  // The caller's own OAuth2 clients. Session-authenticated on the server
+  // and not reachable with a bearer token, so these are only ever called
+  // from the browser.
+  integrations: {
+    list: (): Promise<{
+      integrations: Integration[];
+      endpoints: IntegrationEndpoints;
+    }> => fetchJSON(`${BASE}/integrations`),
+    // The server narrows what it is asked for: grants to the flows with a
+    // person on the other end, scopes to what this account could consent
+    // to. So the reply is what was actually created, not an echo.
+    create: (body: {
+      name: string;
+      redirect_uris?: string[];
+      grant_types?: string[];
+      scopes?: string[];
+      public?: boolean;
+    }): Promise<IntegrationCreated> =>
+      fetchJSON(`${BASE}/integrations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    // Deletes the client and every token under it, so whatever was using it
+    // stops at once.
+    remove: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/integrations/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+  },
+
   admin: {
     listClients: (): Promise<{ clients: AdminClient[] }> =>
       fetchJSON(`${BASE}/admin/oauth2/clients`),
+    // createClient provisions a client an app cannot register for itself:
+    // client_credentials and token exchange act with no user present, so
+    // dynamic registration refuses them. The secret comes back once.
+    createClient: (body: {
+      name: string;
+      notes?: string;
+      redirect_uris?: string[];
+      grant_types?: string[];
+      scopes?: string[];
+      public?: boolean;
+      service_subject?: string;
+    }): Promise<IntegrationCreated & { origin?: string }> =>
+      fetchJSON(`${BASE}/admin/oauth2/clients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
     deleteClient: (id: string): Promise<void> =>
       fetchJSON(`${BASE}/admin/oauth2/clients/${encodeURIComponent(id)}`, {
         method: "DELETE",

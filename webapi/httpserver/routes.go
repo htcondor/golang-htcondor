@@ -217,6 +217,13 @@ func (h *Handler) setupRoutes() {
 	mux.Handle(sshConsentReadPath, http.HandlerFunc(h.handleSSHConsentRead))
 	mux.Handle(sshConsentApprovePath, http.HandlerFunc(h.handleSSHConsentApprove))
 
+	// A user's own OAuth2 clients -- the inbound half of a connector, where
+	// an outside service holds a credential to act as them here. Gated on
+	// the browser session inside the handlers, never on a bearer token:
+	// see handlers_integrations.go.
+	mux.Handle("/api/v1/integrations", cors(http.HandlerFunc(h.handleIntegrations)))
+	mux.Handle("/api/v1/integrations/", cors(http.HandlerFunc(h.handleIntegrationItem)))
+
 	// Web UI session endpoints (browser-session aware; cookie-only)
 	mux.Handle("/api/v1/auth/me", cors(http.HandlerFunc(h.handleAuthMe)))
 	mux.Handle("/api/v1/auth/logout", cors(http.HandlerFunc(h.handleAuthLogout)))
@@ -276,7 +283,15 @@ func (h *Handler) setupRoutes() {
 	mux.Handle("/api/v1/admin/reservations/health", cors(http.HandlerFunc(h.handleAdminReservationHealth)))
 	mux.Handle("/api/v1/admin/reservations/windows", cors(http.HandlerFunc(h.handleAdminReservationWindowsPreview)))
 	mux.Handle("/api/v1/admin/reservations/", cors(http.HandlerFunc(h.handleAdminReservation)))
-	mux.Handle("/api/v1/admin/oauth2/clients", cors(http.HandlerFunc(h.handleAdminListClients)))
+	// GET lists clients, POST creates one. The two are split here so each
+	// handler stays about one verb, the way the per-client path below is.
+	mux.Handle("/api/v1/admin/oauth2/clients", cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.handleAdminCreateClient(w, r)
+			return
+		}
+		h.handleAdminListClients(w, r)
+	})))
 	// The per-client path carries both the delete and the notes edit;
 	// split here so each handler can stay about one verb.
 	mux.Handle("/api/v1/admin/oauth2/clients/", cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
