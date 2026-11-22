@@ -898,3 +898,58 @@ func TestConnectRoutesAreDocumented(t *testing.T) {
 		}
 	}
 }
+
+// Authorizing now happens in a tab of its own, opened from whatever
+// page needed the credential, so the callback has no caller to go back
+// to -- and the dashboard it used to land on says nothing about whether
+// the authorization worked. It lands on the connectors page, which
+// lists the account, so the person can see the result and close the tab.
+//
+// Deliberately a fixed path: see TestRedirectTargetCannotComeFromTheRequest.
+func TestASuccessfulCallbackLandsOnTheConnectorsPage(t *testing.T) {
+	f := newConnectFixture(t, "smith_lab")
+	c := f.login(t, "alice", "smith_lab")
+
+	// Begin the flow; the 302 carries the state the callback needs.
+	resp := f.get(t, c, "/api/v1/connect/builtin:gdrive", "text/html")
+	_ = resp.Body.Close()
+	authURL, err := resp.Location()
+	if err != nil {
+		t.Fatalf("no provider redirect: %v", err)
+	}
+
+	// The provider authorizes and sends the browser back with a code.
+	plain := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, authURL.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authResp, err := plain.Do(req)
+	if err != nil {
+		t.Fatalf("the stand-in provider refused the authorization: %v", err)
+	}
+	_ = authResp.Body.Close()
+	back, err := authResp.Location()
+	if err != nil {
+		t.Fatalf("the provider sent the browser nowhere: %v", err)
+	}
+
+	// The callback, as the browser would present it.
+	cb := f.get(t, c, back.Path+"?"+back.RawQuery, "text/html")
+	_ = cb.Body.Close()
+	if cb.StatusCode != http.StatusFound {
+		t.Fatalf("callback status %d, want a redirect", cb.StatusCode)
+	}
+	loc, err := cb.Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc.Path != "/connectors" {
+		t.Errorf("callback sent the browser to %q, want /connectors", loc.Path)
+	}
+	if got := loc.Query().Get("connected"); got != "builtin:gdrive" {
+		t.Errorf("connected = %q, want builtin:gdrive", got)
+	}
+}
