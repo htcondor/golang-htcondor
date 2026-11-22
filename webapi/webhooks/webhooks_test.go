@@ -472,10 +472,11 @@ func TestDeleteIsOwnerScopedAndTakesDeliveries(t *testing.T) {
 	if n != 0 {
 		t.Errorf("%d deliveries outlived their destination", n)
 	}
-	// The subscriptions go with it. Explicitly, not by the declared
-	// cascade: this database does not enable PRAGMA foreign_keys, so
-	// the cascade never fires and a subscription left behind would keep
-	// being evaluated against a destination that no longer exists.
+	// The subscriptions go with it -- by the declared cascade now that
+	// appdb enables PRAGMA foreign_keys, and by DeleteEndpoint's own
+	// statement regardless. This store's tests open a database without
+	// that pragma, so what they exercise is the explicit delete, which
+	// is exactly the belt-and-braces the comment there describes.
 	if _, err := s.GetSubscription(ctx, "alice", sub.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a subscription outlived its destination: %v", err)
 	}

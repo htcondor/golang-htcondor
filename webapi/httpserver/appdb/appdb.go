@@ -158,10 +158,37 @@ func dsn(path string, warn WarnFunc) string {
 		// the pool now has several connections that can contend, and a
 		// default is a poor thing to depend on silently.
 		"_pragma=busy_timeout(10000)",
-		// Take the write lock when a transaction begins rather than
-		// when it first writes. Without this, two transactions that
-		// both read and then write can deadlock on the upgrade, and
-		// SQLite does not apply the busy timeout to that case.
+		// Enforce the foreign keys the schema declares. SQLite
+		// ignores them entirely unless asked, so a REFERENCES clause
+		// is documentation until this is set.
+		//
+		// Exactly one relationship exists today
+		// (webhook_subscriptions.endpoint_id -> webhook_endpoints.id,
+		// ON DELETE CASCADE), so the blast radius is that one cascade
+		// and the orphan it used to be possible to insert. Nothing
+		// else in the database references anything, which is also why
+		// the handful of migrations that rebuild a table the long way
+		// round are unaffected: nothing points at the tables they
+		// rebuild.
+		"_pragma=foreign_keys(1)",
+		// Take the write lock when a transaction BEGINS rather than
+		// when it first writes.
+		//
+		// This is the default for every transaction, and the default
+		// has to be this way round. A deferred transaction that reads
+		// and then writes must upgrade, and if any other writer
+		// committed in between, SQLite fails it with
+		// SQLITE_BUSY_SNAPSHOT -- immediately, because the busy
+		// timeout does not apply to that case. Taking the lock up
+		// front cannot hit it.
+		//
+		// A transaction that only reads can opt out and run
+		// concurrently, with sql.TxOptions{ReadOnly: true}. That is an
+		// assertion the caller is making: a "read-only" transaction
+		// that writes is exactly the deferred-upgrade case above, and
+		// nothing stops it at compile time. Classify deliberately, and
+		// see TestAReadOnlyTransactionThatWritesFails for what the
+		// mistake looks like.
 		"_txlock=immediate",
 	}, "&")
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
@@ -486,13 +487,17 @@ func (s *Store) DeleteEndpoint(ctx context.Context, owner, id string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	// Subscriptions and deliveries go explicitly, NOT by the foreign
-	// key's cascade. The schema declares ON DELETE CASCADE, but SQLite
-	// enforces foreign keys only when PRAGMA foreign_keys is on, and
-	// this application database never turns it on -- so the declaration
-	// documents the relationship and enforces nothing. Relying on it
-	// would leave a deleted destination's subscriptions behind, still
-	// live, still evaluated, enqueuing for an endpoint that is gone.
+	// Subscriptions would now go by the foreign key's cascade on their
+	// own -- appdb enables PRAGMA foreign_keys -- but they are deleted
+	// here as well, deliberately. The cascade depends on a connection
+	// pragma set somewhere else entirely, and the cost of a redundant
+	// DELETE that matches nothing is nothing, where the cost of relying
+	// on a pragma that is one day not set is a deleted destination's
+	// subscriptions left live and still being evaluated.
+	//
+	// Deliveries have no foreign key at all -- they carry no reference,
+	// so one can outlive the endpoint long enough to be reported on --
+	// so for those this is the only thing that removes them.
 	//
 	// After the endpoint, so a failure here leaves rows pointing at an
 	// endpoint that no longer exists -- which the claim query cannot see
@@ -571,6 +576,13 @@ func (s *Store) CreateSubscription(ctx context.Context, sub *Subscription) (*Sub
 		cluster, proc, sub.Job.Schedd, sub.BatchID, sub.BatchName, string(events),
 		now, now, expiresAt,
 	); err != nil {
+		// The endpoint was checked above, so reaching a foreign-key
+		// failure here means it was deleted in between. Same answer as
+		// the check gives, rather than a raw constraint message: from
+		// the caller's side the destination is simply not there.
+		if strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+			return nil, fmt.Errorf("no such destination %q", sub.EndpointID)
+		}
 		return nil, fmt.Errorf("storing the subscription: %w", err)
 	}
 

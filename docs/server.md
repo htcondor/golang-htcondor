@@ -288,6 +288,34 @@ Writes are serialized by SQLite to one at a time; reads are not, and do not
 wait for a writer. A writer that finds the lock held waits up to ten seconds
 rather than failing.
 
+**Foreign keys are enforced.** SQLite ignores a `REFERENCES` clause unless
+asked, so this has to be switched on per connection, and now is. One
+relationship exists today -- a webhook subscription's destination, which
+cascades on delete.
+
+### Transactions, for anyone adding code
+
+Every transaction takes the write lock when it **begins**
+(`_txlock=immediate`), and that default is load-bearing:
+
+```go
+tx, err := db.BeginTx(ctx, nil)                              // write: safe
+tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})   // read: concurrent
+```
+
+A transaction that begins deferred, reads, and then writes has to **upgrade**
+to the write lock. If any other writer committed in between, SQLite refuses
+it with `SQLITE_BUSY_SNAPSHOT` -- immediately, and the busy timeout does not
+apply, so it cannot be waited out or retried into success. It is an abrupt
+failure that looks like nothing else.
+
+`ReadOnly: true` is therefore an assertion you are making, not a hint:
+nothing prevents such a transaction from writing, and if it does, this is the
+failure it gets. Mark a transaction read-only only when it is, and leave the
+default alone otherwise -- an unclassified transaction is safe, which is the
+point of that default. `TestAReadOnlyTransactionThatWritesFails` in
+`appdb` demonstrates the failure if you want to see it.
+
 ## Check it works
 
 ```bash

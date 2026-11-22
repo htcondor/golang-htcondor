@@ -82,19 +82,168 @@ func TestEveryConnectionGetsThePragmas(t *testing.T) {
 	}
 }
 
-// TestForeignKeysStayOff pins a thing the pragmas must NOT change.
-//
-// Several stores declare ON DELETE CASCADE and delete the dependent rows
-// themselves, because enforcement has always been off. Turning it on
-// here would make those cascades start firing for the first time.
-func TestForeignKeysStayOff(t *testing.T) {
+// TestForeignKeysAreEnforced: SQLite ignores a REFERENCES clause unless
+// asked, so without this pragma the schema's one declared relationship
+// was documentation and nothing more.
+func TestForeignKeysAreEnforced(t *testing.T) {
 	db := openTemp(t)
 	var on int
 	if err := db.QueryRowContext(t.Context(), `PRAGMA foreign_keys`).Scan(&on); err != nil {
 		t.Fatalf("read foreign_keys: %v", err)
 	}
-	if on != 0 {
-		t.Errorf("foreign_keys = %d; enabling it would start firing cascades that stores already do by hand", on)
+	if on != 1 {
+		t.Errorf("foreign_keys = %d, want 1", on)
+	}
+}
+
+// TestACascadeActuallyCascades proves the pragma does what the schema
+// says, rather than only reporting itself as on.
+func TestACascadeActuallyCascades(t *testing.T) {
+	db := openTemp(t)
+	ctx := t.Context()
+	for _, stmt := range []string{
+		`CREATE TABLE parent (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE child (
+			id TEXT PRIMARY KEY,
+			parent_id TEXT NOT NULL REFERENCES parent(id) ON DELETE CASCADE)`,
+		`INSERT INTO parent (id) VALUES ('p')`,
+		`INSERT INTO child (id, parent_id) VALUES ('c', 'p')`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+
+	// An orphan is refused outright, which it was not before.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO child (id, parent_id) VALUES ('orphan', 'nope')`); err == nil {
+		t.Error("a child referencing a missing parent was accepted")
+	}
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM parent WHERE id = 'p'`); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM child`).Scan(&n); err != nil {
+		t.Fatalf("count children: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("%d children outlived their parent; the cascade did not fire", n)
+	}
+}
+
+// TestAReadOnlyTransactionThatWritesFails documents the trap that makes
+// classifying transactions a decision rather than a formality.
+//
+// sql.TxOptions{ReadOnly: true} begins DEFERRED so it can run alongside
+// a writer. If it then writes, it has to upgrade to the write lock, and
+// if anybody committed since it took its snapshot SQLite refuses --
+// immediately, and NOT after waiting out the busy timeout, which does
+// not cover this case. The failure is abrupt and looks like nothing
+// else.
+//
+// This is why the default is immediate and ReadOnly is opt-in: an
+// unclassified transaction is safe, and only an explicit (and possibly
+// wrong) assertion is not.
+func TestAReadOnlyTransactionThatWritesFails(t *testing.T) {
+	db := openTemp(t)
+	ctx := t.Context()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE t (k INTEGER PRIMARY KEY, v TEXT)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO t (k, v) VALUES (1, 'a')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ro, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("begin read-only: %v", err)
+	}
+	defer func() { _ = ro.Rollback() }()
+
+	// Take the snapshot.
+	var v string
+	if err := ro.QueryRowContext(ctx, `SELECT v FROM t WHERE k = 1`).Scan(&v); err != nil {
+		t.Fatalf("read in tx: %v", err)
+	}
+
+	// Somebody else commits underneath it.
+	if _, err := db.ExecContext(ctx, `UPDATE t SET v = 'b' WHERE k = 1`); err != nil {
+		t.Fatalf("concurrent write: %v", err)
+	}
+
+	// Now the "read-only" transaction tries to write. This is the
+	// upgrade, and it is refused.
+	start := time.Now()
+	_, err = ro.ExecContext(ctx, `UPDATE t SET v = 'c' WHERE k = 1`)
+	if err == nil {
+		t.Fatal("a read-only transaction was allowed to write after another writer committed; " +
+			"if SQLite starts permitting this, the classification rule can be relaxed")
+	}
+	// Abrupt, not after the ten-second busy timeout. The speed IS the
+	// symptom: this error does not wait and cannot be retried into
+	// success.
+	if waited := time.Since(start); waited > 2*time.Second {
+		t.Errorf("the upgrade failure took %s, so it waited out a timeout; "+
+			"that is not the SQLITE_BUSY_SNAPSHOT behaviour this test is pinning", waited)
+	}
+}
+
+// TestAnUnclassifiedTransactionTakesTheWriteLock: the default must be
+// the safe one, because it is what every call site that does not think
+// about this will get.
+//
+// The same read-then-write sequence that fails above succeeds here, and
+// for a reason worth stating: holding the write lock from the start
+// means no other writer CAN commit in the window, so there is no
+// snapshot to invalidate. A concurrent writer is started mid-way to
+// prove that -- it blocks until this transaction commits rather than
+// slipping in front of it.
+func TestAnUnclassifiedTransactionTakesTheWriteLock(t *testing.T) {
+	db := openTemp(t)
+	ctx := t.Context()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE t (k INTEGER PRIMARY KEY, v TEXT)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO t (k, v) VALUES (1, 'a')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var v string
+	if err := tx.QueryRowContext(ctx, `SELECT v FROM t WHERE k = 1`).Scan(&v); err != nil {
+		t.Fatalf("read in tx: %v", err)
+	}
+
+	// Another writer tries to get in between the read and the write.
+	// It must not succeed before this transaction commits; it waits on
+	// the busy timeout instead.
+	other := make(chan error, 1)
+	go func() {
+		_, err := db.ExecContext(ctx, `UPDATE t SET v = 'b' WHERE k = 1`)
+		other <- err
+	}()
+	select {
+	case err := <-other:
+		t.Fatalf("a concurrent writer committed while a transaction held the write lock (err=%v); "+
+			"this transaction began deferred, and its own write is now an upgrade that can fail", err)
+	case <-time.After(300 * time.Millisecond):
+		// Blocked, as it should be.
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE t SET v = 'c' WHERE k = 1`); err != nil {
+		t.Fatalf("an unclassified read-then-write transaction failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := <-other; err != nil {
+		t.Errorf("the waiting writer failed instead of proceeding once the lock was free: %v", err)
 	}
 }
 
