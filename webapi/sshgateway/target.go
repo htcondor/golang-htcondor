@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/htcondor/golang-htcondor/jobid"
+	"github.com/htcondor/golang-htcondor/webapi/interactive"
 )
 
 // Target is what the SSH username asked to connect to.
@@ -39,6 +40,7 @@ import (
 //	                         fronting several (the job id codec's text
 //	                         form; OpenSSH splits at the LAST "@")
 //	ssh +work@gateway      the interactive session called "work"
+//	ssh +jobs@gateway      the gateway's own job-management service
 //	ssh gateway            your default session
 //
 // The leading "+" is required to name a session, and that is the point.
@@ -71,6 +73,14 @@ type Target struct {
 	// Name is set when Raw named an interactive session, explicitly or
 	// by default.
 	Name string
+	// Service is set when Raw named one of the gateway's own services
+	// rather than a job or a session. Lower case, so "+JOBS" and "+jobs"
+	// are the same service.
+	//
+	// A service is served BY the gateway: nothing is dialed into a job,
+	// and there is no job id to report. That is the difference that
+	// matters to every consumer of a Target.
+	Service string
 	// Explicit records that the session was asked for by name rather
 	// than being the default. Only useful for logs -- it is the
 	// difference between "they wanted this one" and "they did not
@@ -78,10 +88,18 @@ type Target struct {
 	Explicit bool
 }
 
-// IsJob reports whether the target named a job id rather than a session.
-func (t Target) IsJob() bool { return t.Name == "" }
+// IsJob reports whether the target named a job id rather than a session
+// or a service.
+func (t Target) IsJob() bool { return t.Name == "" && t.Service == "" }
+
+// IsService reports whether the target named a service the gateway
+// serves itself.
+func (t Target) IsService() bool { return t.Service != "" }
 
 func (t Target) String() string {
+	if t.IsService() {
+		return fmt.Sprintf("service %q", t.Service)
+	}
 	if t.IsJob() {
 		if t.Schedd != "" {
 			return fmt.Sprintf("job %d.%d on %s", t.Cluster, t.Proc, t.Schedd)
@@ -137,11 +155,25 @@ func ParseTarget(user string) (Target, error) {
 			t.Name = DefaultSessionName
 			return t, nil
 		}
-		t.Name = sessionNameFor(rest)
+		// The reserved check runs on the DERIVED name, not on what the
+		// user typed, so no spelling that would produce a reserved
+		// session name can produce a session instead of the service:
+		// sessionNameFor strips leading "-", so "+-jobs" would otherwise
+		// ask for a session called "jobs" that can never be created.
+		name := sessionNameFor(rest)
+		if interactive.IsReservedSessionName(name) {
+			t.Service = strings.ToLower(name)
+			t.Explicit = true
+			return t, nil
+		}
+		t.Name = name
 		t.Explicit = true
 		return t, nil
 	}
 
+	// Unprefixed, including a local login that happens to be called
+	// "jobs": the whole point of the prefix is that nothing your machine
+	// calls you can be read as an explicit request.
 	t.Name = DefaultSessionName
 	return t, nil
 }

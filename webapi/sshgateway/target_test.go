@@ -219,3 +219,115 @@ func TestDerivedNameLengthMatchesTheValidator(t *testing.T) {
 		t.Error("the validator accepts one more than the limit, so the constant is wrong")
 	}
 }
+
+// TestParseTargetServices covers the names the gateway serves itself.
+//
+// Every spelling that would DERIVE a reserved session name has to reach
+// the service, because such a session cannot exist -- see
+// interactive.IsReservedSessionName.
+func TestParseTargetServices(t *testing.T) {
+	for _, tc := range []struct{ in, service string }{
+		{"+jobs", "jobs"},
+		{"+JOBS", "jobs"},
+		{"+Jobs", "jobs"},
+		// sessionNameFor strips leading "._-", so these derive "jobs".
+		{"+-jobs", "jobs"},
+		{"+.jobs", "jobs"},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := ParseTarget(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if !got.IsService() || got.Service != tc.service {
+				t.Fatalf("%q parsed as %v, want service %q", tc.in, got, tc.service)
+			}
+			if got.IsJob() {
+				t.Error("a service also reports IsJob")
+			}
+			if got.Name != "" {
+				t.Errorf("a service also carries session name %q", got.Name)
+			}
+			if !got.Explicit {
+				t.Error("a service was not recorded as explicitly asked for")
+			}
+		})
+	}
+}
+
+// TestParseTargetServiceNeedsThePrefix is the other half of the
+// reservation: a local login called "jobs" means the default session,
+// exactly as every other unprefixed username does. Otherwise somebody
+// whose laptop account is "jobs" would land somewhere they never asked
+// for, which is the bug the "+" prefix exists to prevent.
+func TestParseTargetServiceNeedsThePrefix(t *testing.T) {
+	for _, in := range []string{"jobs", "JOBS", "Jobs"} {
+		t.Run(in, func(t *testing.T) {
+			got, err := ParseTarget(in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got.IsService() {
+				t.Fatalf("%q reached service %q without the prefix", in, got.Service)
+			}
+			if got.Name != DefaultSessionName || got.Explicit {
+				t.Errorf("= %v (explicit=%v), want the default session", got, got.Explicit)
+			}
+		})
+	}
+}
+
+// TestParseTargetNearMissesAreSessions keeps the reservation narrow: a
+// name that merely resembles a service is somebody's session.
+func TestParseTargetNearMissesAreSessions(t *testing.T) {
+	for _, tc := range []struct{ in, name string }{
+		{"+jobsx", "jobsx"},
+		{"+job", "job"},
+		{"+jobs2", "jobs2"},
+		// Derives "jobs-", which is a different name.
+		{"+jobs!", "jobs-"},
+		{"+my-jobs", "my-jobs"},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := ParseTarget(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got.IsService() {
+				t.Fatalf("%q reached service %q, want session %q", tc.in, got.Service, tc.name)
+			}
+			if got.Name != tc.name {
+				t.Errorf("= session %q, want %q", got.Name, tc.name)
+			}
+		})
+	}
+}
+
+// TestReservedSessionNamesCannotBeCreated is what makes the collision
+// impossible rather than merely resolved: every service name must be
+// refused by the session-name validator, in any case. A name that parses
+// as a service here but validates there would be a session the gateway
+// could never reach.
+func TestReservedSessionNamesCannotBeCreated(t *testing.T) {
+	for _, in := range []string{"jobs", "JOBS", "Jobs"} {
+		if err := interactive.ValidateSessionName(in); err == nil {
+			t.Errorf("ValidateSessionName(%q) accepted a reserved name", in)
+		}
+	}
+	// And the reservation stays narrow at the validator too.
+	for _, in := range []string{"jobsx", "job", "my-jobs"} {
+		if err := interactive.ValidateSessionName(in); err != nil {
+			t.Errorf("ValidateSessionName(%q) = %v, want accepted", in, err)
+		}
+	}
+}
+
+func TestTargetStringService(t *testing.T) {
+	got, err := ParseTarget("+jobs")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if want := `service "jobs"`; got.String() != want {
+		t.Errorf("String() = %q, want %q", got.String(), want)
+	}
+}

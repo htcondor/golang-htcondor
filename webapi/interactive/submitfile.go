@@ -542,5 +542,34 @@ func ValidateSessionName(name string) error {
 	if !sessionNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid session name %q: use 1-64 characters of letters, digits, '.', '_' or '-', starting with a letter or digit", name)
 	}
+	if IsReservedSessionName(name) {
+		return fmt.Errorf("session name %q is reserved: the SSH gateway serves it itself", name)
+	}
 	return nil
+}
+
+// reservedSessionNames are served by the SSH gateway itself rather than
+// by a job, so `ssh +<name>@gateway` must not be able to mean somebody's
+// session.
+//
+// Reserved at CREATION rather than resolved by precedence. The gateway
+// could instead prefer the service and leave the session reachable some
+// other way -- which is how a session legitimately named "12345.0" is
+// handled -- but that needs an escape hatch, and the failure while you
+// lack one is bizarre: somebody's shell session quietly becomes a file
+// server. Refusing the name outright makes the collision impossible and
+// needs no escape hatch.
+//
+// Folded to lower case because the gateway normalises a service name
+// that way: if "Jobs" could be created it would be a session nothing
+// could reach.
+var reservedSessionNames = map[string]struct{}{
+	"jobs": {},
+}
+
+// IsReservedSessionName reports whether name is one the gateway serves
+// itself. Case-insensitive.
+func IsReservedSessionName(name string) bool {
+	_, ok := reservedSessionNames[strings.ToLower(name)]
+	return ok
 }

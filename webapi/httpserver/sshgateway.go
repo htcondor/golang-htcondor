@@ -545,6 +545,13 @@ func (h *Handler) sshGatewayCredential(ctx context.Context, account string, scop
 // The key's credential is the one ctx carries, minted for this channel
 // by sshGatewayCredential; with none the cache refuses the key.
 func (h *Handler) sshGatewayResolve(ctx context.Context, account string, t sshgateway.Target, report func(string)) (jobssh.Key, error) {
+	// A service is served by the gateway itself and has no job behind it,
+	// so there is no key to resolve. Refused here rather than falling
+	// through to the session path, where it would arrive as a session
+	// with an empty name.
+	if t.IsService() {
+		return jobssh.Key{}, fmt.Errorf("+%s is not served by this access point", t.Service)
+	}
 	if h.multi != nil {
 		return h.sshGatewayResolveMultiAP(ctx, account, t, report)
 	}
