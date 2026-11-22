@@ -1448,6 +1448,27 @@ export interface Integration {
   last_used_at?: string;
 }
 
+// One connector as the caller sees it: an account at another service that
+// this access point may read or write on their behalf. The THIRD direction on
+// the Connectors page, and the one where the credential being held is ours,
+// not theirs.
+//
+// Mirrors ConnectorStatus in handlers_connect.go. A connector the caller may
+// not use is not in the listing at all, so there is no "available to someone
+// else" state to render.
+export interface ConnectorStatus {
+  id: string;
+  kind: string;
+  connected: boolean;
+  /** A grant exists but the provider will no longer renew it, which wants a
+   *  different sentence from never having connected. */
+  needs_consent?: boolean;
+  last_used_at?: string;
+  /** The fixed entry point. Safe to print and safe to link. */
+  connect_url: string;
+  transfer: string;
+}
+
 // One outbound webhook: this server posts to a service when something
 // happens to the owner's jobs. The opposite direction to an Integration,
 // which lets a service act as the owner here.
@@ -2836,6 +2857,17 @@ export const api = {
       fetchJSON(`${BASE}/integrations/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
+  },
+
+  // Accounts this access point connects TO on the caller's behalf. The
+  // connect flow itself is a browser navigation to connect_url, not a fetch:
+  // it ends at the provider's own consent screen.
+  connect: {
+    list: (): Promise<ConnectorStatus[]> => fetchJSON(`${BASE}/connect`),
+    // Forgets the caller's grant on this server. Revoking at the provider is
+    // the other half and is the user's to do there.
+    disconnect: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/connect/${encodeURIComponent(id)}`, { method: "DELETE" }),
   },
 
   // Outbound webhooks. Session-authenticated on the server, like

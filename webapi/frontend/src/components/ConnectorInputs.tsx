@@ -19,6 +19,7 @@ import {
   partitionPicked,
   type Picker,
 } from '@/lib/picker';
+import { providerNames } from '@/lib/connectorNames';
 
 /** One chosen file, as the submit page holds it. */
 export interface ConnectorInput {
@@ -220,10 +221,6 @@ function labelFor(p: Picker, all: Picker[]): string {
   if (sameProvider > 1) return `${friendly} (${p.name})`;
   return friendly;
 }
-
-const providerNames: Record<string, string> = {
-  gdrive: 'Google Drive',
-};
 
 /**
  * Put the chosen files into a submit body.

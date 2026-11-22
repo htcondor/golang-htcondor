@@ -12,8 +12,8 @@
 //     change state. Nothing outside gains any access; we reach out to it.
 //   - Services you connected. You grant this server access to YOUR account
 //     somewhere else -- Drive and the like -- so a job can read or write
-//     files there. That half lives in the connectors package and is not on
-//     this page yet; it slots in as another section beside these.
+//     files there. We hold the credential, which is why that section
+//     disconnects rather than deletes.
 //
 // Mixing them under one heading without that distinction is how somebody
 // revokes the wrong thing, so each section names who ends up able to do what.
@@ -29,6 +29,7 @@ import {
 import { ChipList } from "@/components/ChipList";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { WebhooksSection } from "./WebhooksSection";
+import { ConnectedServicesSection } from "./ConnectedServicesSection";
 
 // The scopes worth offering as checkboxes. The server narrows whatever is
 // asked for to what the account could consent to, so an unavailable one here
@@ -131,6 +132,10 @@ export default function ConnectorsPage() {
       <hr className="border-gray-200" />
 
       <WebhooksSection />
+
+      {/* Renders nothing where the deployment has no connectors, or in
+          multi-AP mode, which does not serve their endpoints. */}
+      <ConnectedServicesSection />
     </div>
   );
 }

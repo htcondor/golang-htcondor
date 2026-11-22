@@ -127,10 +127,11 @@ func (h *Handler) handleConnectCollection(w http.ResponseWriter, r *http.Request
 
 // handleConnectItem answers the per-connector paths:
 //
-//	GET /api/v1/connect/{ns}:{name}           begin a flow
-//	GET /api/v1/connect/{ns}:{name}/callback  finish one
+//	GET    /api/v1/connect/{ns}:{name}           begin a flow
+//	GET    /api/v1/connect/{ns}:{name}/callback  finish one
+//	DELETE /api/v1/connect/{ns}:{name}           forget this user's grant
 func (h *Handler) handleConnectItem(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
 		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
@@ -167,6 +168,10 @@ func (h *Handler) handleConnectItem(w http.ResponseWriter, r *http.Request) {
 
 	switch tail {
 	case "":
+		if r.Method == http.MethodDelete {
+			h.disconnect(w, r, session, def)
+			return
+		}
 		h.beginConnect(w, r, session, def)
 	case "callback":
 		h.finishConnect(w, r, session, def)
@@ -175,6 +180,41 @@ func (h *Handler) handleConnectItem(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.writeError(w, http.StatusNotFound, "Not found")
 	}
+}
+
+// disconnect forgets this caller's grant on a connector.
+//
+// The store has always been able to do this -- DeleteCredential is what a
+// revocation at the provider amounts to on our side -- and nothing exposed
+// it, so a user who connected an account could not take it back from any
+// page. Revoking at the provider is the other half and is theirs to do; this
+// is the half we own.
+//
+// The identity is the session's, as everywhere else here: the connector id is
+// in the path and the user never is. A parameter that could name a user would
+// make this "forget somebody else's credential".
+//
+// Idempotent. A connector this caller has not connected answers 200 rather
+// than 404: the caller asked for it to be gone and it is gone, and a 404
+// would make a double-click look like a failure.
+func (h *Handler) disconnect(w http.ResponseWriter, r *http.Request, session *SessionData, def connectors.Definition) {
+	store := h.connectorStore()
+	if store == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "Connectors are not available on this server")
+		return
+	}
+	if err := store.DeleteCredential(r.Context(), session.Username, def.ID); err != nil {
+		h.logger.Error(logging.DestinationHTTP, "could not forget a connector credential",
+			"connector", def.ID.String(), "user", session.Username, "error", err)
+		h.writeError(w, http.StatusInternalServerError, "Could not disconnect this account")
+		return
+	}
+	h.logger.Info(logging.DestinationHTTP, "a user disconnected an account",
+		"connector", def.ID.String(), "user", session.Username)
+	h.writeJSON(w, http.StatusOK, map[string]string{
+		"status":    "disconnected",
+		"connector": def.ID.String(),
+	})
 }
 
 // beginConnect sends the browser to the provider.
