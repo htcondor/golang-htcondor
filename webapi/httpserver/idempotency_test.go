@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/htcondor/golang-htcondor/webapi/idempotency"
@@ -183,5 +184,87 @@ func TestOpenAPIDocumentsTheIdempotencyKey(t *testing.T) {
 			t.Errorf("POST /jobs does not document a %s response, which only a keyed "+
 				"submission can produce", code)
 		}
+	}
+}
+
+// The Guard is worth nothing if a submit surface bypasses it, and the
+// three tests below are source-level for the reason
+// TestEverySubmitSiteAppliesThePolicy is: the alternative is standing up
+// a schedd and a mirror per surface, and what actually goes wrong is
+// someone adding a submit path, or reordering a constructor, without
+// knowing this exists.
+
+// TestBothSubmitDoorsCheckTheKey covers the two "one door" functions --
+// this package's and the MCP server's. A surface that reaches a schedd
+// without passing through one of them is not checked at all, and a
+// submission that is silently not checked is the failure this feature
+// exists to prevent.
+func TestBothSubmitDoorsCheckTheKey(t *testing.T) {
+	doors := map[string]string{
+		"httpserver.submitApplied": mustRead(t, "required_creds.go"),
+		"mcpserver.submitApplied":  mustRead(t, "../mcpserver/server.go"),
+	}
+	for name, src := range doors {
+		if !strings.Contains(src, "idempotency.Begin(") {
+			t.Errorf("%s does not call the idempotency Guard; submissions through it carry "+
+				"a key that nothing enforces", name)
+		}
+		// Commit, not just Begin: a door that claims a key and never
+		// settles it leaves every successful submission's key in flight
+		// forever, so the client's own next submission is refused.
+		if !strings.Contains(src, "claim.Commit(") {
+			t.Errorf("%s never commits its claim; a submitted key would stay in flight", name)
+		}
+		if !strings.Contains(src, "defer claim.Abandon()") {
+			t.Errorf("%s does not defer Abandon; a failed submission would hold its key "+
+				"for the whole retention and lock the client out of a retry", name)
+		}
+	}
+}
+
+// TestMCPServerInheritsTheIdempotencyGuard: the agent surface must share
+// THIS handler's Guard, not get its own and not get none. Its own would
+// mean a key used by a POST and then by submit_job passes twice, because
+// the claims that cover the queue-to-history gap would be in two
+// separate maps.
+func TestMCPServerInheritsTheIdempotencyGuard(t *testing.T) {
+	// Whitespace-collapsed, as the submit-policy twin does, because the
+	// field's alignment is gofmt's business.
+	src := strings.Join(strings.Fields(mustRead(t, "handler.go")), " ")
+	if !strings.Contains(src, "Idempotency: h.idempotency,") {
+		t.Error("the MCP server is built without the idempotency Guard; agent submissions " +
+			"would carry a key nothing enforces")
+	}
+}
+
+// TestTheGuardIsBuiltBeforeTheMCPServer pins an ordering that fails
+// silently.
+//
+// Both happen inside NewHandler. If the Guard's assignment ever moves
+// below the MCP server's construction, the MCP server is handed a nil
+// Guard -- which is legal, nil-safe, and enforces nothing. Every test
+// here would still pass and agent submissions would quietly stop being
+// checked.
+func TestTheGuardIsBuiltBeforeTheMCPServer(t *testing.T) {
+	src := mustRead(t, "handler.go")
+	built := strings.Index(src, "h.idempotency = idempotency.NewGuard(")
+	if built < 0 {
+		t.Fatal("NewHandler no longer builds an idempotency Guard")
+	}
+	// Both offsets into the SAME string, so they are comparable; the
+	// whitespace-collapsed copy the test above uses is a different
+	// coordinate system.
+	handed := strings.Index(src, "h.idempotency,")
+	if handed < 0 {
+		t.Fatal("could not find where the Guard is handed to the MCP server")
+	}
+	if built > handed {
+		t.Error("the idempotency Guard is built AFTER it is handed to the MCP server, " +
+			"so the MCP server gets a nil Guard and enforces nothing")
+	}
+	// Guard against both markers resolving to one line, which would make
+	// the comparison above trivially true.
+	if built == handed {
+		t.Fatal("the two markers found the same position; this test is not measuring an order")
 	}
 }
