@@ -10,6 +10,7 @@ import type { Integration, IntegrationEndpoints } from '@/lib/api';
 const list = vi.fn();
 const create = vi.fn();
 const remove = vi.fn();
+const connectList = vi.fn();
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
@@ -32,6 +33,12 @@ vi.mock('@/lib/api', async () => {
         test: () => Promise.reject(new Error("not used here")),
         enable: () => Promise.resolve(),
         deliveries: () => Promise.resolve({ deliveries: [] }),
+      },
+      // Likewise the connected-services section, so the page's section
+      // ORDER can be asserted with all three actually rendered.
+      connect: {
+        list: () => connectList(),
+        disconnect: () => Promise.resolve(),
       },
     },
   };
@@ -59,6 +66,8 @@ describe('the Connectors page', () => {
     list.mockReset();
     create.mockReset();
     remove.mockReset();
+    connectList.mockReset();
+    connectList.mockResolvedValue([]);
     list.mockResolvedValue({ integrations: [], endpoints });
   });
 
@@ -155,5 +164,117 @@ describe('the Connectors page', () => {
     // blank cell reads as a page that failed to load the column.
     expect(screen.getByText('Never')).toBeInTheDocument();
     expect(screen.getByText('client_xyz')).toBeInTheDocument();
+  });
+});
+
+describe('identifying an app on the Connectors page', () => {
+  beforeEach(() => {
+    list.mockReset();
+    connectList.mockReset();
+    connectList.mockResolvedValue([]);
+  });
+
+  const app = (over: Partial<Integration> = {}): Integration =>
+    ({
+      id: 'client_7d530baec75664b1ea504ae344030c87',
+      name: 'inbound-test',
+      scopes: ['openid', 'mcp:read'],
+      public: false,
+      has_secret: true,
+      created_at: new Date().toISOString(),
+      redirect_uris: ['https://zapier.com/dashboard/auth/oauth/return/App123CLIAPI/'],
+      ...over,
+    }) as Integration;
+
+  it('shows the redirect host, which is what says WHICH service this is', async () => {
+    // A name is whatever somebody typed -- "inbound-test" could be
+    // anything -- and the client id says nothing at all. The host is the
+    // one field on the row that reads as "this is the Zapier one".
+    list.mockResolvedValue({ integrations: [app()], endpoints });
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('inbound-test')).toBeInTheDocument());
+    expect(screen.getByText('zapier.com')).toBeInTheDocument();
+  });
+
+  it('keeps the host when the path is too long to show', async () => {
+    list.mockResolvedValue({
+      integrations: [
+        app({
+          redirect_uris: [
+            'https://zapier.com/dashboard/auth/oauth/return/' + 'x'.repeat(200),
+          ],
+        }),
+      ],
+      endpoints,
+    });
+    await renderPage();
+    // The host is never the part that gets cut.
+    await waitFor(() => expect(screen.getByText('zapier.com')).toBeInTheDocument());
+    expect(document.body.textContent).toContain('…');
+  });
+
+  it('counts the rest rather than listing them', async () => {
+    list.mockResolvedValue({
+      integrations: [
+        app({
+          redirect_uris: [
+            'https://zapier.com/a',
+            'https://example.org/b',
+            'https://example.net/c',
+          ],
+        }),
+      ],
+      endpoints,
+    });
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('zapier.com')).toBeInTheDocument());
+    expect(screen.getByText('+2 more')).toBeInTheDocument();
+  });
+
+  it('says so when an app has no sign-in redirect', async () => {
+    // A device-code or client-credentials client. Saying nothing would
+    // leave a gap that reads as a missing value.
+    list.mockResolvedValue({ integrations: [app({ redirect_uris: [] })], endpoints });
+    await renderPage();
+    await waitFor(() =>
+      expect(screen.getByText('No sign-in redirect')).toBeInTheDocument(),
+    );
+  });
+});
+
+describe('the order of the Connectors sections', () => {
+  beforeEach(() => {
+    list.mockReset();
+    connectList.mockReset();
+    list.mockResolvedValue({ integrations: [], endpoints });
+    connectList.mockResolvedValue([
+      {
+        id: 'builtin:gdrive',
+        kind: 'gdrive',
+        connected: true,
+        connect_url: '/api/v1/connect/builtin:gdrive',
+        transfer: 'gdrive',
+      },
+    ]);
+  });
+
+  it('puts the two OAuth2 sections together, with notifications last', async () => {
+    await renderPage();
+    await waitFor(() =>
+      expect(screen.getByText('Services you connected')).toBeInTheDocument(),
+    );
+
+    // Setting an OAuth2 app up is the same job in either direction, so
+    // the two sections sit together; somebody told to "connect an app"
+    // should not scroll past the webhooks to find which one they meant.
+    // They stay two tables because the access runs opposite ways.
+    const headings = Array.from(document.querySelectorAll('h2')).map((h) =>
+      h.textContent?.trim(),
+    );
+    expect(headings).toEqual([
+      'Apps connected to your account',
+      'Services you connected',
+      'Event notifications',
+    ]);
   });
 });

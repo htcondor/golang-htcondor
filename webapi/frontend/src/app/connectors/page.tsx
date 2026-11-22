@@ -8,15 +8,23 @@
 //   - Apps connected to your account. An outside service holds a credential
 //     that lets it act as you HERE. You are the authorization server; it is
 //     the client.
-//   - Event notifications. This server posts to a service when your jobs
-//     change state. Nothing outside gains any access; we reach out to it.
 //   - Services you connected. You grant this server access to YOUR account
 //     somewhere else -- Drive and the like -- so a job can read or write
 //     files there. We hold the credential, which is why that section
 //     disconnects rather than deletes.
+//   - Event notifications. This server posts to a service when your jobs
+//     change state. Nothing outside gains any access; we reach out to it.
 //
-// Mixing them under one heading without that distinction is how somebody
-// revokes the wrong thing, so each section names who ends up able to do what.
+// The two OAuth2 sections are adjacent because setting one up is the same
+// job either way, and somebody who has just been told to "connect an app"
+// should not have to scroll past the webhooks to find out which of the two
+// they meant.
+//
+// They are not ONE table. The access runs opposite ways, and the columns and
+// the verbs differ with it -- permissions against connection state, Delete
+// against Disconnect. Merging them would turn the direction into a column
+// value to skim past, and revoking the wrong thing is the mistake this page
+// exists to prevent.
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -131,11 +139,22 @@ export default function ConnectorsPage() {
 
       <hr className="border-gray-200" />
 
-      <WebhooksSection />
+      {/* Next to the section above, not after the webhooks, because the
+          two are the same job: wiring an OAuth2 app up. They stay two
+          tables rather than one because the access runs OPPOSITE ways --
+          above, an app acts as you here; here, this server acts as you
+          somewhere else -- and the columns and the verbs differ with it
+          (permissions vs connection state, Delete vs Disconnect). One
+          table would make the direction a column value to skim past,
+          which is exactly the confusion this page exists to prevent.
 
-      {/* Renders nothing where the deployment has no connectors, or in
+          Renders nothing where the deployment has no connectors, or in
           multi-AP mode, which does not serve their endpoints. */}
       <ConnectedServicesSection />
+
+      <hr className="border-gray-200" />
+
+      <WebhooksSection />
     </div>
   );
 }
@@ -395,6 +414,58 @@ function CopyField({
   );
 }
 
+// RedirectHint shows where an app is sent back to after a sign-in.
+//
+// Truncated rather than redacted. A redirect URL is not a capability: the
+// user typed it, it is sent in the clear in every authorization request, and
+// the consent screen shows the app it belongs to. What makes it worth
+// showing is the host -- "zapier.com" is the only thing on the row that
+// identifies the service -- so the host is never the part that gets cut.
+function RedirectHint({ uris }: { uris?: string[] }) {
+  if (!uris || uris.length === 0) {
+    // A client registered with no redirect URL is a device-code or
+    // client-credentials client. Say so rather than leaving a gap that
+    // reads as a missing value.
+    return (
+      <div className="text-xs text-gray-500">No sign-in redirect</div>
+    );
+  }
+  const [first, ...rest] = uris;
+  let host = "";
+  try {
+    host = new URL(first).host;
+  } catch {
+    // Not parseable: show it as given rather than hiding it.
+  }
+  return (
+    <div className="text-xs text-gray-600" title={uris.join("\n")}>
+      <span className="font-medium">{host || first}</span>
+      {host && (
+        <span className="ml-1 font-mono text-gray-500">
+          {truncatePath(first)}
+        </span>
+      )}
+      {rest.length > 0 && (
+        <span className="ml-1 text-gray-500">+{rest.length} more</span>
+      )}
+    </div>
+  );
+}
+
+// truncatePath keeps a redirect readable in a table cell: enough of the
+// path to tell two apps on the same host apart, and no more.
+function truncatePath(raw: string): string {
+  let path = "";
+  try {
+    const u = new URL(raw);
+    path = u.pathname + u.search;
+  } catch {
+    return "";
+  }
+  if (path === "/" || path === "") return "";
+  return path.length > 36 ? path.slice(0, 36) + "…" : path;
+}
+
 function IntegrationTable({
   integrations,
   endpoints,
@@ -429,7 +500,16 @@ function IntegrationTable({
               <tr key={it.id}>
                 <td className="px-3 py-2">
                   <div className="text-gray-900">{it.name || it.id}</div>
-                  <div className="font-mono text-xs text-gray-500">{it.id}</div>
+                  {/* The redirect URL, because it is what says WHICH
+                      service this is. A name is whatever somebody typed
+                      -- "inbound-test" could be anything -- and the
+                      client id says nothing at all; the host in the
+                      redirect is the one field that reads as
+                      "zapier.com". It is not a secret: the user supplied
+                      it, it travels in every authorization request, and
+                      it is shown on the consent screen. */}
+                  <RedirectHint uris={it.redirect_uris} />
+                  <div className="font-mono text-xs text-gray-400">{it.id}</div>
                   {!it.has_secret && (
                     <div className="text-xs text-gray-500">No secret</div>
                   )}
