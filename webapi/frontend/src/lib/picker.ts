@@ -50,6 +50,15 @@ export interface PickerAdapter {
     onPicked: (files: PickedFile[]) => void;
     onCancel?: () => void;
     onError?: (message: string) => void;
+    /**
+     * Called once the chooser is on screen and waiting for the person.
+     *
+     * Opening is not instant -- the adapter loads the provider's script
+     * and the provider loads its own UI -- and until this fires the
+     * caller cannot tell "still opening" from "never going to open".
+     * Optional, so a stand-in adapter need not implement it.
+     */
+    onOpened?: () => void;
   }): void;
 }
 
@@ -258,8 +267,15 @@ export type ChooseOutcome =
  *
  * Rejects only on something that went wrong. Cancelling is an outcome,
  * not an error, and so is not being connected yet.
+ *
+ * `hooks.onOpened` fires when the chooser becomes visible, which is a
+ * separate event from the outcome: the promise is still pending while
+ * the person browses their files.
  */
-export async function chooseFiles(p: Picker): Promise<ChooseOutcome> {
+export async function chooseFiles(
+  p: Picker,
+  hooks?: { onOpened?: () => void },
+): Promise<ChooseOutcome> {
   const token = await fetchConnectorToken(p.connector);
   if (!token.connected) {
     return {
@@ -284,6 +300,7 @@ export async function chooseFiles(p: Picker): Promise<ChooseOutcome> {
       onPicked: (files) => resolve({ kind: "picked", files: files ?? [] }),
       onCancel: () => resolve({ kind: "cancelled" }),
       onError: (message) => reject(new Error(message)),
+      onOpened: () => hooks?.onOpened?.(),
     });
   });
 }

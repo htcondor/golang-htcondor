@@ -337,6 +337,45 @@ describe('chooseFiles', () => {
     });
   });
 
+  // Opening is a separate event from the outcome, and the caller needs
+  // it: until the chooser is on screen, "still opening" and "never
+  // going to open" look the same, which is how a failed chooser leaves
+  // a button saying "Opening..." forever.
+  it('reports that the chooser opened, while the outcome is still pending', async () => {
+    withToken();
+    const opened = vi.fn();
+    let settle: ((files: { id: string; name: string }[]) => void) | undefined;
+    stubAdapter({
+      open: (opts) => {
+        opts.onOpened?.();
+        settle = opts.onPicked;
+      },
+    });
+    const pending = chooseFiles(
+      { ...gdrive, script: '/picker/t1a.js' },
+      { onOpened: opened },
+    );
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+    // Still pending: the person is browsing their files.
+    settle!([{ id: 'F', name: 'a.csv' }]);
+    await expect(pending).resolves.toEqual({
+      kind: 'picked',
+      files: [{ id: 'F', name: 'a.csv' }],
+    });
+  });
+
+  // An adapter written before onOpened existed, or a stand-in in a
+  // test, simply does not call it. That must not break choosing.
+  it('works with an adapter that never reports opening', async () => {
+    withToken();
+    const opened = vi.fn();
+    stubAdapter({ open: (opts) => opts.onPicked([{ id: 'G', name: 'b.csv' }]) });
+    await expect(
+      chooseFiles({ ...gdrive, script: '/picker/t1b.js' }, { onOpened: opened }),
+    ).resolves.toEqual({ kind: 'picked', files: [{ id: 'G', name: 'b.csv' }] });
+    expect(opened).not.toHaveBeenCalled();
+  });
+
   it('reports cancelling as an outcome, not an error', async () => {
     withToken();
     stubAdapter({ open: (opts) => opts.onCancel?.() });

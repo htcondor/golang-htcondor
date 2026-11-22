@@ -67,6 +67,10 @@ export function ConnectorInputs({
   const list = pickers.data ?? [];
 
   const [busy, setBusy] = useState<string | null>(null);
+  // Separate from `busy` because the two say different things to the
+  // person waiting: the chooser is being fetched, or it is up and the
+  // next move is theirs.
+  const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refused, setRefused] = useState<Refused[]>([]);
   const [connect, setConnect] = useState<{
@@ -80,8 +84,9 @@ export function ConnectorInputs({
     setRefused([]);
     setConnect(null);
     setBusy(p.name);
+    setChoosing(false);
     try {
-      const out = await chooseFiles(p);
+      const out = await chooseFiles(p, { onOpened: () => setChoosing(true) });
       if (out.kind === 'cancelled') return;
       if (out.kind === 'needs-connect') {
         setConnect({
@@ -111,6 +116,7 @@ export function ConnectorInputs({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setChoosing(false);
     }
   };
 
@@ -128,7 +134,11 @@ export function ConnectorInputs({
             data-testid={`picker-open-${p.name}`}
             className="rounded-sm border border-gray-300 bg-white px-3 py-1.5 hover:bg-gray-100 disabled:opacity-50"
           >
-            {busy === p.name ? 'Opening…' : `Add from ${labelFor(p, list)}…`}
+            {busy === p.name
+              ? choosing
+                ? 'Choosing…'
+                : 'Opening…'
+              : `Add from ${labelFor(p, list)}…`}
           </button>
         ))}
         {list.length > 0 && (
