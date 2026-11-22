@@ -239,8 +239,8 @@ type mcpConfig struct {
 	// default" (1h access, 30d refresh).
 	oauth2AccessTokenLifespan  time.Duration
 	oauth2RefreshTokenLifespan time.Duration
-	// oauth2MaxGrantLifetime caps a grant's total age from consent,
-	// regardless of refreshing. Zero means "use the package default".
+	// oauth2MaxGrantLifetime caps how long a grant may go unused before it
+	// must be consented again. Zero means "use the package default".
 	oauth2MaxGrantLifetime time.Duration
 	// oauth2RevocationOracles selects the refresh-time revocation oracles.
 	// Nil means "use the package defaults"; a non-nil empty slice means
@@ -1685,7 +1685,7 @@ func loadOAuth2Config(cfg *config.Config, config *mcpConfig, listenAddrFromConfi
 	}
 	config.oauth2MaxGrantLifetime = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_MAX_GRANT_LIFETIME", logger)
 	if config.oauth2MaxGrantLifetime > 0 {
-		logger.Info(logging.DestinationHTTP, "OAuth2 maximum grant lifetime", "duration", config.oauth2MaxGrantLifetime)
+		logger.Info(logging.DestinationHTTP, "OAuth2 maximum grant idle time", "duration", config.oauth2MaxGrantLifetime)
 	}
 	config.oauth2RevocationOracles = loadRevocationOracles(cfg, logger)
 }

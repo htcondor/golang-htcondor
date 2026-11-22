@@ -419,11 +419,11 @@ type Handler struct {
 	// jobWatchRecheckInterval. Tests only.
 	jobWatchRecheck time.Duration
 
-	// oauth2MaxGrantLifetime caps how long a single consent can be
-	// stretched by refreshing. Every refresh resets the refresh token's
-	// own expiry, so without this a client that refreshes regularly holds
-	// its grant forever. Measured from Session.AuthTime; zero means
-	// DefaultMaxGrantLifetime. See reauthorizeRefreshGrant.
+	// oauth2MaxGrantLifetime caps how long a grant may go UNUSED before it
+	// must be consented again. Measured from Session.LastUsed, which every
+	// refresh advances, so a grant in regular use is not ended by this;
+	// zero means DefaultMaxGrantLifetime. See reauthorizeGrant for why the
+	// cap is an idle one and what that leaves to the oracles.
 	oauth2MaxGrantLifetime time.Duration
 	// revocationOracles are consulted on every refresh grant to decide
 	// whether the user is still entitled to what they hold. They fail

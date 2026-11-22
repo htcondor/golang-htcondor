@@ -617,7 +617,7 @@ waiting for their refresh token to lapse. Three knobs:
 
 | Config | Default | Effect |
 | --- | --- | --- |
-| `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME` | `720h` (30d) | Caps a grant's total age, measured from consent, no matter how often it is refreshed. Requires a unit suffix. |
+| `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME` | `720h` (30d) | How long a grant may go **unused** before it must be consented again. Measured from the grant's last use, not from consent: a client that refreshes inside the window keeps its grant indefinitely, which is what lets an unattended integration keep working. An abandoned grant still expires. What bounds a grant in active use is the revocation oracles below, which run on every refresh. Requires a unit suffix. |
 | `HTTP_API_OAUTH2_REVOCATION_ORACLES` | `schedd-userrec` | Comma-separated oracle list consulted on each refresh. |
 | `HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN` | `720h` (30d) | Unchanged: how long one refresh token lives. Every refresh resets it, which is why the cap above exists. |
 
