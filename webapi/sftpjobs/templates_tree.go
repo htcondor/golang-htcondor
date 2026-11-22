@@ -231,6 +231,20 @@ func readmeText(t templates.Template) string {
 		row[i] = "value-of-" + c
 	}
 	fmt.Fprintf(&b, "  %s\n\n", strings.Join(row, ","))
+	// Named because they are part of what the job will run, and a
+	// template may have been written by somebody else: whoever is about
+	// to submit it should be able to see that a wrapper script comes
+	// with it without reading job.sub for the transfer list. The bytes
+	// themselves are the library's to serve -- /api/v1/templates
+	// carries them -- not this tree's.
+	if len(t.InputFiles) > 0 {
+		fmt.Fprintf(&b, "These files ship with the template and are sent with every job:\n\n")
+		for _, f := range t.InputFiles {
+			fmt.Fprintf(&b, "  %-20s %d bytes\n", f.Name, len(f.Content))
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
 	fmt.Fprintf(&b, "What happened to an upload is in status/ under the same name.\n")
 	fmt.Fprintf(&b, "Output comes back under /%s once the jobs finish.\n", outputsDir)
 	return b.String()

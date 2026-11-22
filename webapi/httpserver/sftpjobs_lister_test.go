@@ -158,3 +158,50 @@ func TestTemplateSubmitterRefusesABadTemplate(t *testing.T) {
 		t.Errorf("error = %v, want the template contract", err)
 	}
 }
+
+// TestTemplateSubmitterRefusesAnOversizeSpool: every proc of the
+// cluster is spooled the template's input files, so the transfer is the
+// files times the rows -- which a CSV small enough to drop over SFTP
+// can make very large. Refused before the submission, because the only
+// other place to find out is after a cluster has been accepted.
+//
+// No schedd is configured here, and that is the assertion: the refusal
+// lands before anything is dialed.
+func TestTemplateSubmitterRefusesAnOversizeSpool(t *testing.T) {
+	s := templateSubmitter{h: &Handler{logger: testLogger(t), spoolMaxUploadBytes: 1 << 20}}
+	tmpl := templates.Template{
+		ID:       "t",
+		Columns:  []templates.Column{{Name: "x"}},
+		Contents: "executable = /bin/true\ntransfer_executable = false\ntransfer_input_files = big.dat\n",
+		InputFiles: []templates.InputFile{
+			{Name: "big.dat", Content: make([]byte, 256<<10)}, // 256 KiB
+		},
+	}
+	rows := make([]string, 64) // 64 x 256 KiB = 16 MiB, over the 1 MiB limit
+	for i := range rows {
+		rows[i] = "1"
+	}
+	sub := &sftpjobs.Submission{Vars: []string{"x"}, Rows: rows}
+	ctx := htcondor.WithAuthenticatedUser(context.Background(), "alice")
+
+	_, err := s.SubmitRows(ctx, "alice", tmpl, sub)
+	if err == nil {
+		t.Fatal("a submission that would spool 16 MiB under a 1 MiB limit was accepted")
+	}
+	if strings.Contains(err.Error(), "no schedd") {
+		t.Fatalf("the volume check ran after the schedd lookup: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fewer rows") {
+		t.Errorf("error = %v, want it to say what to do instead", err)
+	}
+
+	// The same template with few enough rows gets past the check, and
+	// then fails for the reason this test has deliberately left:
+	// there is no schedd.
+	sub.Rows = rows[:2]
+	if _, err := s.SubmitRows(ctx, "alice", tmpl, sub); err == nil {
+		t.Error("a submission with no schedd configured succeeded")
+	} else if !strings.Contains(err.Error(), "no schedd") {
+		t.Errorf("error = %v, want the schedd lookup to be what stopped it", err)
+	}
+}

@@ -894,11 +894,19 @@ func configureRemoteJobAd(procAd *classad.ClassAd, submitterSetLeaveInQueue bool
 		}
 	}
 
-	// Check TransferInput
-	if !needsSpooling {
-		if val, ok := procAd.EvaluateAttrString("TransferInput"); ok && val != "" {
-			needsSpooling = true
-		}
+	// Check TransferInput -- for the files in it, not for the URLs.
+	//
+	// A URL in transfer_input_files is fetched by the execute node's
+	// transfer plugin, which is why inputFilesAndURLs leaves it out of
+	// the spool's allow-set. Counting one as input to be spooled left
+	// the job in the spooling hold waiting for an upload nothing could
+	// ever send: there was no file to send, the allow-set was empty, and
+	// a caller that tried anyway was told "every entry in TransferInput
+	// is a URL". A job whose inputs are all URLs needs exactly what a
+	// job with no inputs needs -- the empty spool below, which is also
+	// what gets its Iwd pointed at the spool directory.
+	if !needsSpooling && transferInputHasFile(procAd) {
+		needsSpooling = true
 	}
 
 	// A submitter who asked for `hold = true` has to still have a held

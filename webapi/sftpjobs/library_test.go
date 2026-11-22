@@ -41,9 +41,13 @@ func userTemplate(id, owner string, vis templates.Visibility) templates.Template
 	return t
 }
 
-// newFSWithCatalog builds a view over a catalog.
-func newFSWithCatalog(t *testing.T, account string, cat fakeCatalog) *FS {
+// newFSWithCatalog builds testAccount's view over a catalog. The owner
+// names in the catalogs below are written out, so a template owned by
+// the caller and one owned by somebody else read differently at a
+// glance.
+func newFSWithCatalog(t *testing.T, cat fakeCatalog) *FS {
 	t.Helper()
+	account := testAccount
 	store, err := sandboxfs.New(newFakeSandbox(nil), sandboxfs.Config{Logf: t.Logf})
 	if err != nil {
 		t.Fatalf("sandboxfs.New: %v", err)
@@ -75,7 +79,7 @@ func TestTheTreeOffersWhatTheLibraryOffers(t *testing.T) {
 			userTemplate("ours", "bob", templates.VisibilityShared),
 		},
 	}
-	f := newFSWithCatalog(t, "alice", cat)
+	f := newFSWithCatalog(t, cat)
 
 	got := listNames(t, f, "/templates")
 	want := []string{"blast/", "mine/", "ours/"}
@@ -110,7 +114,7 @@ func TestListingAndOpeningAgree(t *testing.T) {
 			userTemplate("shadowed", "alice", templates.VisibilityPrivate),
 		},
 	}
-	f := newFSWithCatalog(t, "alice", cat)
+	f := newFSWithCatalog(t, cat)
 
 	if got := listNames(t, f, "/templates"); len(got) != 1 || got[0] != "shadowed/" {
 		t.Fatalf("/templates = %v, want one entry", got)
@@ -135,7 +139,7 @@ func TestTemplateWithNoColumnsIsRefusedBeforeTheUpload(t *testing.T) {
 	bare := blastTemplate()
 	bare.ID = "nocols"
 	bare.Columns = nil
-	f := newFSWithCatalog(t, "alice", fakeCatalog{public: []templates.Template{bare}})
+	f := newFSWithCatalog(t, fakeCatalog{public: []templates.Template{bare}})
 
 	_, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/templates/nocols/submit/x.csv"})
 	if err == nil {
@@ -146,28 +150,42 @@ func TestTemplateWithNoColumnsIsRefusedBeforeTheUpload(t *testing.T) {
 	}
 }
 
-// TestTemplateWithInputFilesIsRefused: the web submit page posts a
-// template's input files to /api/v1/jobs/{id}/input after submitting. An
-// SFTP drop has no second call, so the files would never arrive and the
-// job would fail as though the script were wrong.
-func TestTemplateWithInputFilesIsRefused(t *testing.T) {
+// TestARefusalIsReadableBeforeTheUpload: a template this service
+// cannot submit has to say so where somebody reads it, not in status/
+// after a CSV has been uploaded and turned into nothing.
+//
+// The case here is a template shipping a file its submit description
+// never asks for -- see TestAFileNobodyAsksForIsRefused for why that is
+// refused rather than tolerated.
+func TestARefusalIsReadableBeforeTheUpload(t *testing.T) {
 	withFiles := blastTemplate()
 	withFiles.InputFiles = []templates.InputFile{{Name: "run.sh", Content: []byte("#!/bin/sh\n")}}
 
 	err := ValidateTemplate(withFiles)
 	if err == nil {
-		t.Fatal("a template whose input files cannot be delivered was accepted")
+		t.Fatal("a template shipping a file nothing asks for was accepted")
 	}
 	if !strings.Contains(err.Error(), "run.sh") {
 		t.Errorf("error = %v, want it to name the file", err)
 	}
 
-	// And the README says so, so it is readable before anything is
-	// uploaded rather than discovered in status/ afterwards.
 	readme := readmeText(withFiles)
 	if !strings.Contains(readme, "cannot be submitted") || !strings.Contains(readme, "run.sh") {
 		t.Errorf("README = %q, want the refusal in it", readme)
 	}
+
+	// And the drop point is closed, so the refusal costs no transfer.
+	if _, err := openDropPoint(t, withFiles); err == nil {
+		t.Error("an upload was accepted for a template that cannot be submitted")
+	}
+}
+
+// openDropPoint opens a template's submit/ drop point, which is where
+// an upload is refused before its first byte.
+func openDropPoint(t *testing.T, tmpl templates.Template) (any, error) {
+	t.Helper()
+	f := newFSWithCatalog(t, fakeCatalog{public: []templates.Template{tmpl}})
+	return f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/templates/" + tmpl.ID + "/submit/x.csv"})
 }
 
 // TestReadmeDescribesTheColumns: the README is generated from the

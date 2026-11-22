@@ -463,6 +463,7 @@ func (s *Schedd) spoolJobFilesFromFS(ctx context.Context, jobAds []*classad.Clas
 		// true (the default). This lets minimal jobs — those whose only
 		// transferable file is the executable itself — spool successfully.
 		fileSet, skippedURLs := inputFilesAndURLs(ad)
+		logSpoolAllowSet(ad, fileSet, skippedURLs)
 		if len(fileSet) == 0 {
 			// Distinguish the two ways of having nothing to spool. A
 			// job whose inputs are all URLs is not misconfigured --
@@ -748,7 +749,8 @@ func parseJobAdsForSpooling(jobAds []*classad.ClassAd) ([]procID, map[procID]*jo
 		jobIDs[i] = id
 
 		// Get list of input files for this job
-		inputFileSet := getInputFilesFromJobAd(ad)
+		inputFileSet, skippedURLs := inputFilesAndURLs(ad)
+		logSpoolAllowSet(ad, inputFileSet, skippedURLs)
 
 		jobInfoMap[id] = &jobInfo{
 			ad:         ad,
@@ -844,18 +846,14 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 	// satisfied by uploading its basename, which is exactly what
 	// submitlint tells a caller to do.
 	transferExe := true // default is true
-	transferExePresent := false
 	if expr, ok := ad.Lookup("TransferExecutable"); ok {
-		transferExePresent = true
 		val := expr.Eval(nil)
 		if b, err := val.BoolValue(); err == nil {
 			transferExe = b
 		}
 	}
 	cmdValue := ""
-	cmdPresent := false
 	if expr, ok := ad.Lookup("Cmd"); ok {
-		cmdPresent = true
 		val := expr.Eval(nil)
 		if cmd, err := val.StringValue(); err == nil {
 			cmdValue = cmd
@@ -865,17 +863,53 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 		inputFileSet[path.Base(cmdValue)] = true
 	}
 
-	// Log the inputs that went into building the allow-set. Without
-	// this it's nearly impossible to tell from a held-job postmortem
-	// whether the proc ad's TransferInput was empty, whether Cmd was
-	// missing from the projection, or whether Cmd was absolute and
-	// therefore (intentionally) excluded. The cluster.proc isn't on
-	// the ad at this point, but the caller's logging usually carries
-	// it via the surrounding context.
-	log.Printf("spool allow-set source: TransferInput=%q Cmd=%q (present=%v) TransferExecutable=%v (present=%v) urls_skipped=%v → set=%v",
-		transferInputRaw, cmdValue, cmdPresent, transferExe, transferExePresent, urls, inputFileSet)
-
 	return inputFileSet, urls
+}
+
+// logSpoolAllowSet records the inputs that went into building a spool's
+// allow-set.
+//
+// Without it it is nearly impossible to tell from a held-job postmortem
+// whether the proc ad's TransferInput was empty, whether Cmd was missing
+// from the projection, or whether Cmd was absolute and therefore
+// (intentionally) excluded. The cluster.proc isn't on the ad at this
+// point, but the caller's logging usually carries it via the
+// surrounding context.
+//
+// Called by the two spool paths rather than by inputFilesAndURLs
+// itself, because the set is also computed to ANSWER questions --
+// SpoolInputAllowSet, which the share-URL mint path and the SFTP
+// template service call to find out which names a job would accept.
+// Logging there put a spool diagnostic in the daemon log for a
+// directory listing.
+func logSpoolAllowSet(ad *classad.ClassAd, set map[string]bool, urls []string) {
+	transferInputRaw, _ := ad.EvaluateAttrString("TransferInput")
+	cmdValue, cmdPresent := ad.EvaluateAttrString("Cmd")
+	transferExe, transferExePresent := ad.EvaluateAttrBool("TransferExecutable")
+	if !transferExePresent {
+		transferExe = true // the default inputFilesAndURLs applies
+	}
+	log.Printf("spool allow-set source: TransferInput=%q Cmd=%q (present=%v) TransferExecutable=%v (present=%v) urls_skipped=%v → set=%v",
+		transferInputRaw, cmdValue, cmdPresent, transferExe, transferExePresent, urls, set)
+}
+
+// transferInputHasFile reports whether TransferInput names anything this
+// access point would have to upload.
+//
+// The question configureRemoteJobAd asks before deciding a submission
+// needs an input spool at all, and it is not the same as "TransferInput
+// is non-empty": a list of URLs is work for the execute node, not for
+// the submitter. Shares isURL with inputFilesAndURLs so that the job
+// held for spooling and the allow-set it is waiting on cannot disagree
+// about what a URL is.
+func transferInputHasFile(ad *classad.ClassAd) bool {
+	raw, _ := ad.EvaluateAttrString("TransferInput")
+	for _, f := range parseFileList(raw) {
+		if !isURL(f) {
+			return true
+		}
+	}
+	return false
 }
 
 // SpoolInputAllowSet returns, sorted, the filenames the schedd will

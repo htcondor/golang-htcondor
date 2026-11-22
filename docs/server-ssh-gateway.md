@@ -160,7 +160,7 @@ sftp -P 2222 +jobs@ap.example.edu
 | --- | --- |
 | `templates/<id>/` | one directory per template you can use, named by its template id |
 | `.../job.sub` | the submit description |
-| `.../README` | generated: the template's name, description and columns |
+| `.../README` | generated: the template's name, description, columns and any files it ships |
 | `.../submit/` | drop a CSV here; write-only |
 | `.../status/` | one entry per upload |
 
@@ -194,8 +194,8 @@ something other than what the spreadsheet says.
 
 A template is shared with the web submit page, which can do things this
 surface cannot, so a template that works there may be refused here. The
-`README` says so, and so does `status/` if you drop a file anyway. Three
-requirements, all enforced before an upload is accepted:
+`README` says so, and so does `status/` if you drop a file anyway. These
+requirements are enforced before an upload is accepted:
 
 - **Columns are required.** The CSV's header names them and its rows fill
   them. A template with none has nothing for a CSV to vary; the submit page's
@@ -209,16 +209,35 @@ requirements, all enforced before an upload is accepted:
   in the queue long enough to fetch. But a spooling job whose executable needs
   transferring waits on `HoldReasonCode 16` for an upload a CSV never carries,
   and waits forever. Put the executable on the execute node or in a container.
+- **The template's input files and the files its body asks for must be the
+  same set.** A template may ship files with it — a wrapper script, a small
+  config — which the library stores alongside the submit description. Those
+  are delivered: they are spooled to the schedd, from memory, in the same
+  call that releases the jobs from their spooling hold. (The web submit page
+  delivers them with a second call, to `/api/v1/jobs/{id}/input`; a dropped
+  CSV has no second call.) Each one therefore has to be a name the body asks
+  for in `transfer_input_files`, and each name the body asks for has to be
+  one the template ships. A file nothing asks for is dropped silently on its
+  way to the schedd and the job runs without it; a name nothing ships leaves
+  the jobs waiting on `HoldReasonCode 16` for an upload that is not coming.
 
-A template's **input files** cannot be delivered here, and such a template is
-refused. The submit page posts them after submitting; an SFTP drop has no
-second call, and a job whose script never arrived fails in a way that looks
-like the script is wrong. Use the web page for those.
+A **URL** in `transfer_input_files` is outside that set and needs no delivery:
+the execute node fetches it. That is how a template delivers input too large
+to ship with it — an `https://` or `osdf://` path, or an object store. A
+plain path is not: `transfer_input_files` means "upload this from the
+submitting machine", and here there is no submitting machine to upload from.
 
-The same reasoning applies to inputs named in the body: a CSV carries no
-files, so anything in `transfer_input_files` has to be reachable from the
-execute node — a URL, an `osdf://` path, or shared storage. This is not
-enforced, because a URL there is both legitimate and common.
+A column can name an input too — `transfer_input_files = $(reads)` — and then
+what each row names decides. A row naming a URL is fine; a row naming a plain
+file cannot be delivered, and because that is only knowable once the row is
+filled in, the whole cluster is **withdrawn** rather than left holding. The
+refusal in `status/` names the row's file and says the jobs were removed.
+
+How much a CSV may spool is bounded: the template's files are sent once per
+row, so `HTTP_API_SPOOL_MAX_UPLOAD_BYTES` (1000 MiB by default, the same
+ceiling the REST upload endpoints answer to) applies to the files times the
+rows. Over it, the submission is refused before anything is submitted, naming
+the total.
 
 Every job carries `SFTPJobTemplate = "<id>"`, so `condor_q -af
 SFTPJobTemplate` says which template a cluster came from.

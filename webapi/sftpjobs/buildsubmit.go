@@ -145,19 +145,20 @@ var transferExecutableFalse = regexp.MustCompile(
 // it waits forever. With the executable already on the execute node the
 // spool is empty and the job is released at once.
 //
-// A template's InputFiles cannot be delivered here. The submit page
-// posts them to /api/v1/jobs/{id}/input after submitting; an SFTP drop
-// has no second call, and spooling them would need the files to reach
-// the schedd with the submission. Refused rather than silently dropped,
-// because a job whose script never arrived fails in a way that looks
-// like the script is wrong.
+// A template's input files and the files its body asks for must be the
+// same set. The library ships the first; this service spools them, so
+// each one has to be a name the job actually asks for, and each name
+// the job asks for has to be one the library ships. See
+// matchInputFiles for what each mismatch does to a submission.
 //
-// The same reasoning applies to spooled INPUT named in the body: a CSV
-// carries no files, so a template's inputs have to be reachable from the
-// execute node -- a URL, or shared storage. That is not checked here,
-// because transfer_input_files naming a URL is both legitimate and
-// common, and refusing every input would refuse most real templates. It
-// is in the documentation instead.
+// A URL in transfer_input_files is not in that set and never has to be:
+// the execute node fetches it. That is both legitimate and common, and
+// it is how a template delivers input too large to ship with it.
+//
+// The body must also parse. It is parsed here anyway -- the two sets
+// above come from the parser, not from reading the text -- so a
+// template whose submit description is malformed is refused when
+// somebody reads its README rather than after they upload a CSV.
 func ValidateTemplate(t templates.Template) error {
 	if strings.TrimSpace(t.Contents) == "" {
 		return fmt.Errorf("template %s has no submit description", t.ID)
@@ -177,14 +178,15 @@ func ValidateTemplate(t templates.Template) error {
 			"a CSV never carries. Put the executable on the execute node or in the container",
 			t.ID)
 	}
-	if len(t.InputFiles) > 0 {
-		names := make([]string, 0, len(t.InputFiles))
-		for _, f := range t.InputFiles {
-			names = append(names, f.Name)
-		}
-		return fmt.Errorf("template %s ships input files (%s), which this service cannot deliver: "+
-			"use the web submit page for this template, or one whose inputs are reachable from "+
-			"the execute node", t.ID, strings.Join(names, ", "))
+	// Last, and after the transfer_executable rule above: with the
+	// executable transferred, its basename is in the allow-set too, and
+	// the mismatch reported would be about a file no library ships.
+	allow, byColumn, err := templateSpoolNames(t)
+	if err != nil {
+		return fmt.Errorf("template %s: %w", t.ID, err)
+	}
+	if err := matchInputFiles(t, allow, !byColumn); err != nil {
+		return fmt.Errorf("template %s: %w", t.ID, err)
 	}
 	return nil
 }
