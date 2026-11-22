@@ -126,3 +126,32 @@ describe('ConnectorInputs while a chooser is open', () => {
     await screen.findByRole('button', { name: /Add from/ });
   });
 });
+
+// Authorizing used to replace the submit page, which threw away the
+// template, the table and everything else already filled in -- so the
+// only safe route was to visit the Connectors page FIRST and come back.
+// It opens a tab of its own now.
+describe('ConnectorInputs when the account is not connected yet', () => {
+  beforeEach(() => {
+    vi.mocked(fetchPickers).mockResolvedValue([drive]);
+    vi.mocked(chooseFiles).mockReset();
+  });
+
+  it('offers authorization in a new tab, so the batch being described survives', async () => {
+    vi.mocked(chooseFiles).mockResolvedValue({
+      kind: 'needs-connect',
+      connectUrl: '/api/v1/connect/builtin:gdrive',
+      needsConsent: false,
+    });
+
+    renderInputs();
+    fireEvent.click(await screen.findByRole('button', { name: /Add from/ }));
+
+    const link = await screen.findByRole('link', { name: 'Authorize it' });
+    expect(link).toHaveAttribute('href', '/api/v1/connect/builtin:gdrive');
+    expect(link).toHaveAttribute('target', '_blank');
+    // Without noopener the new tab can navigate this one, which is the
+    // same loss of work by another route.
+    expect(link.getAttribute('rel')).toContain('noopener');
+  });
+});
