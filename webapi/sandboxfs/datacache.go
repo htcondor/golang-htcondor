@@ -16,6 +16,8 @@ package sandboxfs
 
 import (
 	"container/list"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -59,7 +61,7 @@ type dataCache struct {
 }
 
 type entryKey struct {
-	job  jobKey
+	job  Job
 	name string
 }
 
@@ -67,6 +69,10 @@ type dataEntry struct {
 	key  entryKey
 	size int64
 }
+
+// jobKeyFields is a compile-time reminder that an entryKey carries the
+// account: dropping it would make the cache cross-account.
+var _ = Job{}.Account
 
 // stagingDir holds partial writes. A leading dot keeps it out of the
 // job-directory scan, and keeping it out of the job directories entirely
@@ -131,7 +137,10 @@ func (c *dataCache) pathFor(key entryKey) (string, error) {
 		}
 	}
 
-	jobDir := filepath.Join(c.dir, key.job.String())
+	jobDir, err := c.jobDir(key.job)
+	if err != nil {
+		return "", err
+	}
 	full := filepath.Join(jobDir, filepath.FromSlash(key.name))
 	if !strings.HasPrefix(full, jobDir+string(filepath.Separator)) {
 		return "", fmt.Errorf("sandboxfs: refusing cache path for %q", key.name)
@@ -307,8 +316,45 @@ func (c *dataCache) Evict(key entryKey) {
 	c.evictLocked(key)
 }
 
+// jobDir is where one account's copy of one job lives.
+//
+// The account is a directory level of its own, so an operator can see
+// whose bytes are held -- and so two accounts reading the same job keep
+// separate files, which is what makes the cache safe to serve without
+// an authorisation check.
+//
+// An account name is used verbatim when it is a plain token and replaced
+// by a digest otherwise. The mapping has to be INJECTIVE: folding odd
+// characters to dashes would be the usual answer and would let two
+// distinct accounts land in one directory, which is a cross-account leak
+// rather than a cosmetic problem. "=" is excluded from the safe set, so
+// the two branches cannot collide either.
+func (c *dataCache) jobDir(job Job) (string, error) {
+	if job.Account == "" {
+		return "", fmt.Errorf("sandboxfs: refusing a cache path with no account")
+	}
+	return filepath.Join(c.dir, accountDir(job.Account), job.String()), nil
+}
+
+func accountDir(account string) string {
+	safe := len(account) <= 64
+	for _, r := range account {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-', r == '@':
+		default:
+			safe = false
+		}
+	}
+	if safe {
+		return account
+	}
+	sum := sha256.Sum256([]byte(account))
+	return "=" + hex.EncodeToString(sum[:16])
+}
+
 // EvictJob removes every cached entry of one job.
-func (c *dataCache) EvictJob(job jobKey) {
+func (c *dataCache) EvictJob(job Job) {
 	if !c.enabled() {
 		return
 	}
@@ -322,7 +368,9 @@ func (c *dataCache) EvictJob(job jobKey) {
 	// The job's now-empty directories are tidied best-effort; a failure
 	// leaves an empty directory, which costs nothing and is removed with
 	// the rest at the next start.
-	_ = os.RemoveAll(filepath.Join(c.dir, job.String()))
+	if dir, err := c.jobDir(job); err == nil {
+		_ = os.RemoveAll(dir)
+	}
 }
 
 func (c *dataCache) evictLocked(key entryKey) {

@@ -33,7 +33,7 @@ type Fetcher interface {
 	// transfer and FetchSandbox returns it. known is false when the
 	// sender advertised nothing, and size is then 0 rather than meaning
 	// an empty sandbox.
-	FetchSandbox(ctx context.Context, cluster, proc int, w io.Writer,
+	FetchSandbox(ctx context.Context, job Job, w io.Writer,
 		onPreamble func(size int64, known bool) error) error
 }
 
@@ -172,17 +172,45 @@ type Store struct {
 	fill  singleflight.Group
 
 	mu      sync.Mutex
-	index   map[jobKey]*list.Element
+	index   map[Job]*list.Element
 	lru     *list.List // front = most recently used; values are *cacheEntry
 	entries int
 }
 
-type jobKey struct{ cluster, proc int }
+// Job identifies a sandbox to read: the job id AND the account reading
+// it.
+//
+// The account is part of the identity because it is part of the cache
+// key. A schedd refuses a sandbox to anybody but its owner, so the FETCH
+// is authorised -- but a cache keyed on the job id alone would then hand
+// what it fetched to the next caller who asked, whoever that was. Making
+// the account part of the key makes that impossible rather than relying
+// on every caller to check first, which is the kind of second opinion
+// that can only ever be wrong in the direction of letting somebody in.
+//
+// The cost is that two accounts legitimately reading one job each pay
+// for their own pass. That is rare, and the alternative is an
+// authorisation check in front of a cache.
+type Job struct {
+	// Account is the identity whose credential the fetch will use.
+	Account       string
+	Cluster, Proc int
+}
 
-func (k jobKey) String() string { return fmt.Sprintf("%d.%d", k.cluster, k.proc) }
+// String names the job for a person. The account is logged separately
+// rather than folded in here, because this ends up in messages that go
+// back to the caller, who knows who they are.
+func (j Job) String() string { return fmt.Sprintf("%d.%d", j.Cluster, j.Proc) }
+
+// cacheKey is the singleflight key: it has to carry the account, or two
+// accounts asking at once would share one pass, and the pass would run
+// with whichever credential got there first.
+func (j Job) cacheKey() string {
+	return fmt.Sprintf("%s\x00%d.%d", j.Account, j.Cluster, j.Proc)
+}
 
 type cacheEntry struct {
-	key    jobKey
+	key    Job
 	layout *Layout
 }
 
@@ -200,7 +228,7 @@ func New(f Fetcher, cfg Config) (*Store, error) {
 		fetcher: f,
 		cfg:     cfg,
 		data:    data,
-		index:   map[jobKey]*list.Element{},
+		index:   map[Job]*list.Element{},
 		lru:     list.New(),
 	}, nil
 }
@@ -210,25 +238,24 @@ func New(f Fetcher, cfg Config) (*Store, error) {
 //
 // A finished job's sandbox does not change, so a cached layout needs no
 // expiry; Forget drops one when a caller knows better.
-func (s *Store) Layout(ctx context.Context, cluster, proc int) (*Layout, error) {
-	key := jobKey{cluster, proc}
-	if l, ok := s.cached(key); ok {
+func (s *Store) Layout(ctx context.Context, job Job) (*Layout, error) {
+	if l, ok := s.cached(job); ok {
 		return l, nil
 	}
 
 	// singleflight shares one pass; Do returns the same result to every
 	// waiter, and the shared flag is not interesting here because the
 	// layout is immutable.
-	v, err, _ := s.group.Do(key.String(), func() (any, error) {
+	v, err, _ := s.group.Do(job.cacheKey(), func() (any, error) {
 		// Another caller may have finished while this one waited.
-		if l, ok := s.cached(key); ok {
+		if l, ok := s.cached(job); ok {
 			return l, nil
 		}
-		l, err := s.build(ctx, key)
+		l, err := s.build(ctx, job)
 		if err != nil {
 			return nil, err
 		}
-		s.store(key, l)
+		s.store(job, l)
 		return l, nil
 	})
 	if err != nil {
@@ -238,12 +265,11 @@ func (s *Store) Layout(ctx context.Context, cluster, proc int) (*Layout, error) 
 }
 
 // Forget drops everything cached for a job: its layout and its bytes.
-func (s *Store) Forget(cluster, proc int) {
-	key := jobKey{cluster, proc}
+func (s *Store) Forget(job Job) {
 	s.mu.Lock()
-	s.removeLocked(key)
+	s.removeLocked(job)
 	s.mu.Unlock()
-	s.data.EvictJob(key)
+	s.data.EvictJob(job)
 }
 
 // CachedBytes is what the byte cache believes it holds.
@@ -257,7 +283,7 @@ func (s *Store) CachedEntries() int {
 	return s.entries
 }
 
-func (s *Store) cached(key jobKey) (*Layout, bool) {
+func (s *Store) cached(key Job) (*Layout, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	el, ok := s.index[key]
@@ -268,7 +294,7 @@ func (s *Store) cached(key jobKey) (*Layout, bool) {
 	return el.Value.(*cacheEntry).layout, true
 }
 
-func (s *Store) store(key jobKey, l *Layout) {
+func (s *Store) store(key Job, l *Layout) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.removeLocked(key)
@@ -288,7 +314,7 @@ func (s *Store) store(key jobKey, l *Layout) {
 	}
 }
 
-func (s *Store) removeLocked(key jobKey) {
+func (s *Store) removeLocked(key Job) {
 	el, ok := s.index[key]
 	if !ok {
 		return
@@ -300,12 +326,12 @@ func (s *Store) removeLocked(key jobKey) {
 
 // build makes one pass over the sandbox, recording names and sizes and
 // keeping no bytes.
-func (s *Store) build(ctx context.Context, key jobKey) (*Layout, error) {
+func (s *Store) build(ctx context.Context, job Job) (*Layout, error) {
 	var (
 		advertised int64
 		known      bool
 	)
-	enforce := s.gate(key)
+	enforce := s.gate(job)
 	gate := func(size int64, sizeKnown bool) error {
 		advertised, known = size, sizeKnown
 		return enforce(size, sizeKnown)
@@ -313,7 +339,7 @@ func (s *Store) build(ctx context.Context, key jobKey) (*Layout, error) {
 
 	pr, pw := io.Pipe()
 	go func() {
-		err := s.fetcher.FetchSandbox(ctx, key.cluster, key.proc, pw, gate)
+		err := s.fetcher.FetchSandbox(ctx, job, pw, gate)
 		// CloseWithError(nil) is a plain Close, so the reader sees EOF on
 		// success and the refusal or transport error otherwise.
 		_ = pw.CloseWithError(err)
@@ -329,7 +355,7 @@ func (s *Store) build(ctx context.Context, key jobKey) (*Layout, error) {
 	_ = pr.Close()
 
 	l.Advertised, l.AdvertisedKnown = advertised, known
-	s.cfg.logf("sandboxfs: job %s layout: %d entries, %d bytes (advertised %d, known=%v)",
-		key, len(l.Entries), l.Bytes(), advertised, known)
+	s.cfg.logf("sandboxfs: %s job %s layout: %d entries, %d bytes (advertised %d, known=%v)",
+		job.Account, job, len(l.Entries), l.Bytes(), advertised, known)
 	return l, nil
 }

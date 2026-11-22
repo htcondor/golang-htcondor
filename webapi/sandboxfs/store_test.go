@@ -62,7 +62,7 @@ func newFakeFetcher(files map[string][]byte, dirs ...string) *fakeFetcher {
 	return f
 }
 
-func (f *fakeFetcher) FetchSandbox(_ context.Context, _, _ int, w io.Writer,
+func (f *fakeFetcher) FetchSandbox(_ context.Context, _ Job, w io.Writer,
 	onPreamble func(int64, bool) error) error {
 	f.calls.Add(1)
 	if f.entered != nil {
@@ -135,6 +135,12 @@ func sortedKeys(m map[string][]byte) []string {
 	return out
 }
 
+// tjob is the job every test reads, under one account. The account is
+// part of the cache key, so it has to be spelled somewhere.
+func tjob(cluster, proc int) Job {
+	return Job{Account: "tester", Cluster: cluster, Proc: proc}
+}
+
 // newStore builds a Store, failing the test rather than returning an
 // error at every call site.
 func newStore(t *testing.T, f Fetcher, cfg Config) *Store {
@@ -166,7 +172,7 @@ func TestLayoutRecordsNamesAndSizes(t *testing.T) {
 	}, "sub")
 	s := newStore(t, f, Config{Logf: t.Logf})
 
-	l, err := s.Layout(context.Background(), 12, 0)
+	l, err := s.Layout(context.Background(), tjob(12, 0))
 	if err != nil {
 		t.Fatalf("Layout: %v", err)
 	}
@@ -199,7 +205,7 @@ func TestLayoutIsCached(t *testing.T) {
 	s := newStore(t, f, Config{Logf: t.Logf})
 
 	for i := 0; i < 4; i++ {
-		if _, err := s.Layout(context.Background(), 7, 1); err != nil {
+		if _, err := s.Layout(context.Background(), tjob(7, 1)); err != nil {
 			t.Fatalf("Layout %d: %v", i, err)
 		}
 	}
@@ -207,8 +213,8 @@ func TestLayoutIsCached(t *testing.T) {
 		t.Errorf("fetched %d times, want 1", got)
 	}
 
-	s.Forget(7, 1)
-	if _, err := s.Layout(context.Background(), 7, 1); err != nil {
+	s.Forget(tjob(7, 1))
+	if _, err := s.Layout(context.Background(), tjob(7, 1)); err != nil {
 		t.Fatalf("Layout after Forget: %v", err)
 	}
 	if got := f.calls.Load(); got != 2 {
@@ -228,7 +234,7 @@ func TestLayoutSharesOnePass(t *testing.T) {
 	errs := make(chan error, callers)
 	ask := func() {
 		defer wg.Done()
-		_, err := s.Layout(context.Background(), 9, 0)
+		_, err := s.Layout(context.Background(), tjob(9, 0))
 		errs <- err
 	}
 
@@ -264,7 +270,7 @@ func TestOversizedSandboxRefusedBeforeAnyBytes(t *testing.T) {
 	f.advertise = 1 << 20
 	s := newStore(t, f, Config{MaxSandboxBytes: 1024, Logf: t.Logf})
 
-	_, err := s.Layout(context.Background(), 3, 2)
+	_, err := s.Layout(context.Background(), tjob(3, 2))
 	var tooLarge *TooLargeError
 	if !errors.As(err, &tooLarge) {
 		t.Fatalf("Layout error = %v, want a TooLargeError", err)
@@ -300,7 +306,7 @@ func TestUnadvertisedSizeRefusedUnlessAllowed(t *testing.T) {
 			f.advertise = 0
 			s := newStore(t, f, Config{MaxSandboxBytes: 1 << 20, ServeUnadvertisedSize: tc.serve, Logf: t.Logf})
 
-			l, err := s.Layout(context.Background(), 1, 0)
+			l, err := s.Layout(context.Background(), tjob(1, 0))
 			var unknown *SizeUnknownError
 			switch {
 			case tc.serve:
@@ -332,7 +338,7 @@ func TestNoLimitServesAnySize(t *testing.T) {
 	f := newFakeFetcher(sandbox(2))
 	f.advertise = 1 << 50
 	s := newStore(t, f, Config{MaxSandboxBytes: -1, Logf: t.Logf})
-	if _, err := s.Layout(context.Background(), 1, 0); err != nil {
+	if _, err := s.Layout(context.Background(), tjob(1, 0)); err != nil {
 		t.Fatalf("Layout: %v", err)
 	}
 }
@@ -343,7 +349,7 @@ func TestTooManyEntriesRefused(t *testing.T) {
 	f := newFakeFetcher(sandbox(50))
 	s := newStore(t, f, Config{MaxEntriesPerJob: 10, Logf: t.Logf})
 
-	_, err := s.Layout(context.Background(), 1, 0)
+	_, err := s.Layout(context.Background(), tjob(1, 0))
 	if !errors.Is(err, ErrTooManyEntries) {
 		t.Fatalf("Layout error = %v, want ErrTooManyEntries", err)
 	}
@@ -361,7 +367,7 @@ func TestLayoutCacheEvictsByEntryCount(t *testing.T) {
 
 	// Three jobs of four entries each is twelve, over the ten budget.
 	for _, proc := range []int{0, 1, 2} {
-		if _, err := s.Layout(ctx, 1, proc); err != nil {
+		if _, err := s.Layout(ctx, tjob(1, proc)); err != nil {
 			t.Fatalf("Layout 1.%d: %v", proc, err)
 		}
 	}
@@ -370,13 +376,13 @@ func TestLayoutCacheEvictsByEntryCount(t *testing.T) {
 	}
 	// 1.0 was the least recently used, so it is the one that went.
 	before := f.calls.Load()
-	if _, err := s.Layout(ctx, 1, 2); err != nil {
+	if _, err := s.Layout(ctx, tjob(1, 2)); err != nil {
 		t.Fatalf("Layout 1.2: %v", err)
 	}
 	if f.calls.Load() != before {
 		t.Error("the most recently used layout was evicted")
 	}
-	if _, err := s.Layout(ctx, 1, 0); err != nil {
+	if _, err := s.Layout(ctx, tjob(1, 0)); err != nil {
 		t.Fatalf("Layout 1.0: %v", err)
 	}
 	if f.calls.Load() != before+1 {
@@ -390,13 +396,13 @@ func TestOneOversizedLayoutIsStillCached(t *testing.T) {
 	f := newFakeFetcher(sandbox(20))
 	s := newStore(t, f, Config{MaxCachedEntries: 5, Logf: t.Logf})
 
-	if _, err := s.Layout(context.Background(), 1, 0); err != nil {
+	if _, err := s.Layout(context.Background(), tjob(1, 0)); err != nil {
 		t.Fatalf("Layout: %v", err)
 	}
 	if got := s.CachedEntries(); got != 20 {
 		t.Fatalf("cache holds %d entries, want the 20 of the only layout", got)
 	}
-	if _, err := s.Layout(context.Background(), 1, 0); err != nil {
+	if _, err := s.Layout(context.Background(), tjob(1, 0)); err != nil {
 		t.Fatalf("Layout again: %v", err)
 	}
 	if got := f.calls.Load(); got != 1 {
@@ -473,7 +479,7 @@ func TestSkippedEntryTypes(t *testing.T) {
 func TestFetchErrorPropagates(t *testing.T) {
 	boom := errors.New("schedd went away")
 	s := newStore(t, errFetcher{boom}, Config{Logf: t.Logf})
-	if _, err := s.Layout(context.Background(), 1, 0); !errors.Is(err, boom) {
+	if _, err := s.Layout(context.Background(), tjob(1, 0)); !errors.Is(err, boom) {
 		t.Fatalf("Layout error = %v, want %v", err, boom)
 	}
 	if got := s.CachedEntries(); got != 0 {
@@ -483,7 +489,7 @@ func TestFetchErrorPropagates(t *testing.T) {
 
 type errFetcher struct{ err error }
 
-func (e errFetcher) FetchSandbox(_ context.Context, _, _ int, _ io.Writer,
+func (e errFetcher) FetchSandbox(_ context.Context, _ Job, _ io.Writer,
 	onPreamble func(int64, bool) error) error {
 	if onPreamble != nil {
 		if err := onPreamble(10, true); err != nil {

@@ -49,11 +49,11 @@ func TestTarSizeIsExact(t *testing.T) {
 	s := newStore(t, newFakeFetcher(files, "sub"), Config{})
 	ctx := context.Background()
 
-	want, err := s.TarSize(ctx, 1, 0)
+	want, err := s.TarSize(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("TarSize: %v", err)
 	}
-	r, size, err := s.OpenTar(ctx, 1, 0)
+	r, size, err := s.OpenTar(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("OpenTar: %v", err)
 	}
@@ -109,11 +109,11 @@ func TestTarSizeIsExact(t *testing.T) {
 func TestTarSizeIsStableAcrossCalls(t *testing.T) {
 	s := newStore(t, newFakeFetcher(awkward(), "sub"), Config{})
 	ctx := context.Background()
-	first, err := s.TarSize(ctx, 1, 0)
+	first, err := s.TarSize(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("TarSize: %v", err)
 	}
-	second, err := s.TarSize(ctx, 1, 0)
+	second, err := s.TarSize(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("TarSize again: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestOpenCachedFileSupportsRandomAccess(t *testing.T) {
 		CacheBytes: 1 << 20,
 	})
 
-	r, err := s.Open(context.Background(), 1, 0, "f.dat")
+	r, err := s.Open(context.Background(), tjob(1, 0), "f.dat")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestOpenFillsTheCacheOnce(t *testing.T) {
 	ctx := context.Background()
 
 	// One pass builds the layout; one more fills the cache.
-	r, err := s.Open(ctx, 1, 0, "a.dat")
+	r, err := s.Open(ctx, tjob(1, 0), "a.dat")
 	if err != nil {
 		t.Fatalf("Open a: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestOpenFillsTheCacheOnce(t *testing.T) {
 	}
 
 	for _, name := range []string{"a.dat", "b.dat", "c.dat"} {
-		r, err := s.Open(ctx, 1, 0, name)
+		r, err := s.Open(ctx, tjob(1, 0), name)
 		if err != nil {
 			t.Fatalf("Open %s: %v", name, err)
 		}
@@ -195,7 +195,7 @@ func TestOpenStreamsWithoutACache(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"b.dat", "a.dat", "b.dat"} {
-		r, err := s.Open(ctx, 1, 0, name)
+		r, err := s.Open(ctx, tjob(1, 0), name)
 		if err != nil {
 			t.Fatalf("Open %s: %v", name, err)
 		}
@@ -214,7 +214,7 @@ func TestOpenStreamsWhatTheCacheWillNotHold(t *testing.T) {
 	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1024})
 	ctx := context.Background()
 
-	r, err := s.Open(ctx, 1, 0, "big.dat")
+	r, err := s.Open(ctx, tjob(1, 0), "big.dat")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -228,10 +228,10 @@ func TestOpenMissingAndNotRegular(t *testing.T) {
 	s := newStore(t, newFakeFetcher(map[string][]byte{"a.dat": []byte("a")}, "sub"), Config{})
 	ctx := context.Background()
 
-	if _, err := s.Open(ctx, 1, 0, "nope.dat"); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := s.Open(ctx, tjob(1, 0), "nope.dat"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Open of a missing name = %v, want fs.ErrNotExist", err)
 	}
-	if _, err := s.Open(ctx, 1, 0, "sub"); !errors.Is(err, ErrNotRegular) {
+	if _, err := s.Open(ctx, tjob(1, 0), "sub"); !errors.Is(err, ErrNotRegular) {
 		t.Errorf("Open of a directory = %v, want ErrNotRegular", err)
 	}
 }
@@ -245,12 +245,12 @@ func TestOpenRefusesASizeThatChanged(t *testing.T) {
 	ctx := context.Background()
 
 	// Build the layout, then change the sandbox underneath it.
-	if _, err := s.Layout(ctx, 1, 0); err != nil {
+	if _, err := s.Layout(ctx, tjob(1, 0)); err != nil {
 		t.Fatalf("Layout: %v", err)
 	}
 	f.setFiles(map[string][]byte{"f.dat": []byte("a different length entirely")})
 
-	if _, err := s.Open(ctx, 1, 0, "f.dat"); err == nil {
+	if _, err := s.Open(ctx, tjob(1, 0), "f.dat"); err == nil {
 		t.Fatal("Open served a file whose size no longer matched the layout")
 	} else if !strings.Contains(err.Error(), "layout") {
 		t.Errorf("error = %v, want it to name the disagreement with the layout", err)
@@ -265,13 +265,13 @@ func TestOpenTarRefusesASizeThatChanged(t *testing.T) {
 	s := newStore(t, f, Config{})
 	ctx := context.Background()
 
-	size, err := s.TarSize(ctx, 1, 0)
+	size, err := s.TarSize(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("TarSize: %v", err)
 	}
 	f.setFiles(map[string][]byte{"f.dat": []byte("a different length entirely")})
 
-	r, declared, err := s.OpenTar(ctx, 1, 0)
+	r, declared, err := s.OpenTar(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("OpenTar: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestMaterializeFillsTheCache(t *testing.T) {
 	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
 	ctx := context.Background()
 
-	if err := s.Materialize(ctx, 1, 0); err != nil {
+	if err := s.Materialize(ctx, tjob(1, 0)); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 	if want := int64(5); s.CachedBytes() != want {
@@ -300,7 +300,7 @@ func TestMaterializeFillsTheCache(t *testing.T) {
 	}
 	passes := f.calls.Load()
 	for name, body := range files {
-		r, err := s.Open(ctx, 1, 0, name)
+		r, err := s.Open(ctx, tjob(1, 0), name)
 		if err != nil {
 			t.Fatalf("Open %s: %v", name, err)
 		}
@@ -321,13 +321,13 @@ func TestForgetDropsBytesToo(t *testing.T) {
 	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
 	ctx := context.Background()
 
-	if err := s.Materialize(ctx, 1, 0); err != nil {
+	if err := s.Materialize(ctx, tjob(1, 0)); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 	if s.CachedBytes() == 0 || s.CachedEntries() == 0 {
 		t.Fatal("nothing was cached")
 	}
-	s.Forget(1, 0)
+	s.Forget(tjob(1, 0))
 	if s.CachedBytes() != 0 {
 		t.Errorf("byte cache holds %d bytes after Forget", s.CachedBytes())
 	}
@@ -346,13 +346,13 @@ func TestOversizedSandboxRefusesEveryRead(t *testing.T) {
 	ctx := context.Background()
 
 	var tooLarge *TooLargeError
-	if _, err := s.Open(ctx, 1, 0, "a"); !errors.As(err, &tooLarge) {
+	if _, err := s.Open(ctx, tjob(1, 0), "a"); !errors.As(err, &tooLarge) {
 		t.Errorf("Open = %v, want a TooLargeError", err)
 	}
-	if _, _, err := s.OpenTar(ctx, 1, 0); !errors.As(err, &tooLarge) {
+	if _, _, err := s.OpenTar(ctx, tjob(1, 0)); !errors.As(err, &tooLarge) {
 		t.Errorf("OpenTar = %v, want a TooLargeError", err)
 	}
-	if err := s.Materialize(ctx, 1, 0); !errors.As(err, &tooLarge) {
+	if err := s.Materialize(ctx, tjob(1, 0)); !errors.As(err, &tooLarge) {
 		t.Errorf("Materialize = %v, want a TooLargeError", err)
 	}
 }
@@ -365,7 +365,7 @@ func TestCloseEndsTheTransferEarly(t *testing.T) {
 	s := newStore(t, f, Config{})
 	ctx := context.Background()
 
-	r, _, err := s.OpenTar(ctx, 1, 0)
+	r, _, err := s.OpenTar(ctx, tjob(1, 0))
 	if err != nil {
 		t.Fatalf("OpenTar: %v", err)
 	}
@@ -391,5 +391,154 @@ func mustRead(t *testing.T, r io.ReadCloser, want []byte) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("read %d bytes, want %d", len(got), len(want))
+	}
+}
+
+// TestCachesAreNotSharedBetweenAccounts is the reason Job carries one.
+// A schedd refuses a sandbox to anybody but its owner, so each fetch is
+// authorised -- but a cache keyed on the job id alone would hand what it
+// fetched to whoever asked next.
+func TestCachesAreNotSharedBetweenAccounts(t *testing.T) {
+	body := []byte("someone else's output")
+	f := newFakeFetcher(map[string][]byte{"secret.dat": body})
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+	ctx := context.Background()
+
+	alice := Job{Account: "alice", Cluster: 42, Proc: 0}
+	bob := Job{Account: "bob", Cluster: 42, Proc: 0}
+
+	if err := s.Materialize(ctx, alice); err != nil {
+		t.Fatalf("Materialize for alice: %v", err)
+	}
+	passes := f.calls.Load()
+	if passes == 0 {
+		t.Fatal("alice's materialize did no pass")
+	}
+
+	// Bob asking for the same job id must do his own fetch, under his
+	// own credential, rather than reading what alice cached.
+	if _, err := s.Open(ctx, bob, "secret.dat"); err != nil {
+		t.Fatalf("Open for bob: %v", err)
+	}
+	if f.calls.Load() <= passes {
+		t.Error("bob was served from alice's cache without a fetch of his own")
+	}
+
+	// And alice's own reads still come from her cache.
+	before := f.calls.Load()
+	r, err := s.Open(ctx, alice, "secret.dat")
+	if err != nil {
+		t.Fatalf("Open for alice: %v", err)
+	}
+	mustRead(t, r, body)
+	if f.calls.Load() != before {
+		t.Error("alice's cached read cost a pass")
+	}
+
+	// Forgetting one account leaves the other alone.
+	s.Forget(alice)
+	before = f.calls.Load()
+	if _, err := s.Open(ctx, bob, "secret.dat"); err != nil {
+		t.Fatalf("Open for bob after forgetting alice: %v", err)
+	}
+	if f.calls.Load() != before {
+		t.Error("forgetting alice dropped bob's cache too")
+	}
+}
+
+// TestAccountsDoNotShareOnePass: two accounts arriving together must not
+// be merged by singleflight, because the pass runs with one credential
+// and it would be whichever got there first.
+func TestAccountsDoNotShareOnePass(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"a.dat": []byte("a")})
+	f.block = make(chan struct{})
+	f.entered = make(chan struct{})
+	s := newStore(t, f, Config{})
+	ctx := context.Background()
+
+	done := make(chan error, 2)
+	go func() { _, err := s.Layout(ctx, Job{Account: "alice", Cluster: 1}); done <- err }()
+	<-f.entered
+	go func() { _, err := s.Layout(ctx, Job{Account: "bob", Cluster: 1}); done <- err }()
+	close(f.block)
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("Layout: %v", err)
+		}
+	}
+	if got := f.calls.Load(); got != 2 {
+		t.Errorf("two accounts cost %d passes, want 2", got)
+	}
+}
+
+// TestAccountDirIsInjective: folding odd characters to dashes would be
+// the usual answer and would let two distinct accounts share a cache
+// directory, which is a cross-account leak rather than a cosmetic
+// problem.
+func TestAccountDirIsInjective(t *testing.T) {
+	accounts := []string{
+		"alice",
+		"alice@example.org",
+		"alice/../bob",
+		"alice/bob",
+		"alice\\bob",
+		"alice bob",
+		"=alice",
+		strings.Repeat("a", 65),
+		strings.Repeat("a", 66),
+		"",
+	}
+	seen := map[string]string{}
+	for _, a := range accounts {
+		d := accountDir(a)
+		if prev, dup := seen[d]; dup {
+			t.Errorf("accounts %q and %q both map to %q", prev, a, d)
+		}
+		seen[d] = a
+		if strings.ContainsAny(d, `/\`) || d == "." || d == ".." {
+			t.Errorf("accountDir(%q) = %q, which is not one safe path element", a, d)
+		}
+	}
+}
+
+// TestCachePathNeedsAnAccount: an entry with no account has no directory
+// to live in, and silently putting it somewhere shared is the bug this
+// refuses.
+func TestCachePathNeedsAnAccount(t *testing.T) {
+	c := testCache(t, 1<<20)
+	if _, err := c.pathFor(entryKey{job: Job{Cluster: 1}, name: "a"}); err == nil {
+		t.Error("pathFor accepted an entry with no account")
+	}
+}
+
+// TestAccountsGetSeparateCacheFiles checks the on-disk shape, so an
+// operator can see whose bytes are held.
+func TestAccountsGetSeparateCacheFiles(t *testing.T) {
+	c := testCache(t, 1<<20)
+	alice := entryKey{job: Job{Account: "alice", Cluster: 1}, name: "f.dat"}
+	bob := entryKey{job: Job{Account: "bob", Cluster: 1}, name: "f.dat"}
+
+	put(t, c, alice, []byte("alice's"))
+	put(t, c, bob, []byte("bob's"))
+
+	ap, err := c.pathFor(alice)
+	if err != nil {
+		t.Fatalf("pathFor alice: %v", err)
+	}
+	bp, err := c.pathFor(bob)
+	if err != nil {
+		t.Fatalf("pathFor bob: %v", err)
+	}
+	if ap == bp {
+		t.Fatalf("both accounts share the path %q", ap)
+	}
+	for who, path := range map[string]string{"alice's": ap, "bob's": bp} {
+		b, err := os.ReadFile(path) //nolint:gosec // test-built path
+		if err != nil {
+			t.Fatalf("reading %q: %v", path, err)
+		}
+		if string(b) != who {
+			t.Errorf("%q holds %q, want %q", path, b, who)
+		}
 	}
 }

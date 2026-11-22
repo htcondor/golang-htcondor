@@ -46,9 +46,9 @@ var ErrNotRegular = errors.New("sandboxfs: not a regular file")
 // file. That is the point: a client walking a sandbox file by file would
 // otherwise pay a full pass per file, since a spooled sandbox has no
 // ranged read.
-func (s *Store) Open(ctx context.Context, cluster, proc int, name string) (io.ReadCloser, error) {
-	key := entryKey{job: jobKey{cluster, proc}, name: path.Clean(name)}
-	l, err := s.Layout(ctx, cluster, proc)
+func (s *Store) Open(ctx context.Context, job Job, name string) (io.ReadCloser, error) {
+	key := entryKey{job: job, name: path.Clean(name)}
+	l, err := s.Layout(ctx, job)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (s *Store) Open(ctx context.Context, cluster, proc int, name string) (io.Re
 	// pass costs the same either way and the alternative is paying it
 	// again for the next name.
 	if s.data.enabled() && e.Size <= s.data.budget {
-		if err := s.materialize(ctx, key.job, l); err != nil {
+		if err := s.materialize(ctx, job, l); err != nil {
 			return nil, err
 		}
 		if f, hit := s.data.Open(key); hit {
@@ -78,7 +78,7 @@ func (s *Store) Open(ctx context.Context, cluster, proc int, name string) (io.Re
 		// Evicted between filling and opening, or never cacheable.
 		// Falling through streams it, which is the miss path working.
 	}
-	return s.streamEntry(ctx, key.job, e)
+	return s.streamEntry(ctx, job, e)
 }
 
 // Materialize streams a job's sandbox once and spills what fits into the
@@ -87,12 +87,12 @@ func (s *Store) Open(ctx context.Context, cluster, proc int, name string) (io.Re
 // Worth calling when a client is about to read a sandbox rather than one
 // file of it -- entering a directory, say -- so the pass happens once and
 // deliberately instead of once per file by accident.
-func (s *Store) Materialize(ctx context.Context, cluster, proc int) error {
-	l, err := s.Layout(ctx, cluster, proc)
+func (s *Store) Materialize(ctx context.Context, job Job) error {
+	l, err := s.Layout(ctx, job)
 	if err != nil {
 		return err
 	}
-	return s.materialize(ctx, jobKey{cluster, proc}, l)
+	return s.materialize(ctx, job, l)
 }
 
 // materialize does one pass, caching every regular file that fits.
@@ -100,14 +100,14 @@ func (s *Store) Materialize(ctx context.Context, cluster, proc int) error {
 // Errors on individual entries are not fatal: a file that could not be
 // staged is simply not cached, and reading it later streams instead.
 // Only a failure of the pass itself is returned.
-func (s *Store) materialize(ctx context.Context, job jobKey, l *Layout) error {
+func (s *Store) materialize(ctx context.Context, job Job, l *Layout) error {
 	if !s.data.enabled() {
 		return nil
 	}
-	_, err, _ := s.fill.Do(job.String(), func() (any, error) {
+	_, err, _ := s.fill.Do(job.cacheKey(), func() (any, error) {
 		pr, pw := io.Pipe()
 		go func() {
-			_ = pw.CloseWithError(s.fetcher.FetchSandbox(ctx, job.cluster, job.proc, pw, s.gate(job)))
+			_ = pw.CloseWithError(s.fetcher.FetchSandbox(ctx, job, pw, s.gate(job)))
 		}()
 		defer func() { _ = pr.Close() }()
 
@@ -165,10 +165,10 @@ func (s *Store) spill(key entryKey, size int64, r io.Reader) {
 //
 // The pass runs for as long as the caller reads and is torn down by
 // Close, so a caller that stops early does not leave a transfer running.
-func (s *Store) streamEntry(ctx context.Context, job jobKey, want Entry) (io.ReadCloser, error) {
+func (s *Store) streamEntry(ctx context.Context, job Job, want Entry) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 	go func() {
-		_ = pw.CloseWithError(s.fetcher.FetchSandbox(ctx, job.cluster, job.proc, pw, s.gate(job)))
+		_ = pw.CloseWithError(s.fetcher.FetchSandbox(ctx, job, pw, s.gate(job)))
 	}()
 
 	tr := tar.NewReader(pr)
@@ -213,7 +213,7 @@ func (r *streamReader) Close() error {
 }
 
 // gate is the size limit as a preamble hook, shared by every pass.
-func (s *Store) gate(job jobKey) func(int64, bool) error {
+func (s *Store) gate(job Job) func(int64, bool) error {
 	return func(size int64, known bool) error {
 		limit := s.cfg.maxSandboxBytes()
 		if limit <= 0 {
@@ -223,10 +223,10 @@ func (s *Store) gate(job jobKey) func(int64, bool) error {
 			if s.cfg.ServeUnadvertisedSize {
 				return nil
 			}
-			return &SizeUnknownError{Cluster: job.cluster, Proc: job.proc}
+			return &SizeUnknownError{Cluster: job.Cluster, Proc: job.Proc}
 		}
 		if size > limit {
-			return &TooLargeError{Cluster: job.cluster, Proc: job.proc, Size: size, Limit: limit}
+			return &TooLargeError{Cluster: job.Cluster, Proc: job.Proc, Size: size, Limit: limit}
 		}
 		return nil
 	}
@@ -243,8 +243,8 @@ func (s *Store) gate(job jobKey) func(int64, bool) error {
 // a counter, rather than by reimplementing the format's rules about when
 // a long name needs an extended header. The body is then accounted
 // analytically, since its padding is the one part of tar that is simple.
-func (s *Store) TarSize(ctx context.Context, cluster, proc int) (int64, error) {
-	l, err := s.Layout(ctx, cluster, proc)
+func (s *Store) TarSize(ctx context.Context, job Job) (int64, error) {
+	l, err := s.Layout(ctx, job)
 	if err != nil {
 		return 0, err
 	}
@@ -275,9 +275,8 @@ func tarSize(l *Layout) (int64, error) {
 // TarSize measured: the sender's own framing is not this format and its
 // choices are not ours to predict. Nothing is buffered and nothing is
 // cached -- a single sequential read is what streaming is for.
-func (s *Store) OpenTar(ctx context.Context, cluster, proc int) (io.ReadCloser, int64, error) {
-	job := jobKey{cluster, proc}
-	l, err := s.Layout(ctx, cluster, proc)
+func (s *Store) OpenTar(ctx context.Context, job Job) (io.ReadCloser, int64, error) {
+	l, err := s.Layout(ctx, job)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -288,7 +287,7 @@ func (s *Store) OpenTar(ctx context.Context, cluster, proc int) (io.ReadCloser, 
 
 	srcR, srcW := io.Pipe()
 	go func() {
-		_ = srcW.CloseWithError(s.fetcher.FetchSandbox(ctx, cluster, proc, srcW, s.gate(job)))
+		_ = srcW.CloseWithError(s.fetcher.FetchSandbox(ctx, job, srcW, s.gate(job)))
 	}()
 
 	outR, outW := io.Pipe()

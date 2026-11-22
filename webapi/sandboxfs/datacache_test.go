@@ -32,7 +32,7 @@ func testCache(t *testing.T, budget int64) *dataCache {
 }
 
 func key(cluster, proc int, name string) entryKey {
-	return entryKey{job: jobKey{cluster, proc}, name: name}
+	return entryKey{job: tjob(cluster, proc), name: name}
 }
 
 // put stages and commits an entry, failing the test on any error.
@@ -316,7 +316,7 @@ func TestDataCacheEvictJob(t *testing.T) {
 	put(t, c, key(1, 0, "sub/b"), body)
 	put(t, c, key(2, 0, "a"), body)
 
-	c.EvictJob(jobKey{1, 0})
+	c.EvictJob(tjob(1, 0))
 
 	for _, k := range []entryKey{key(1, 0, "a"), key(1, 0, "sub/b")} {
 		if f, ok := c.Open(k); ok {
