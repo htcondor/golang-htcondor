@@ -2372,6 +2372,14 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	webuiCustomCSS, _ := cfg.Get("HTTP_API_WEBUI_CUSTOM_CSS")
 	webuiFavicon, _ := cfg.Get("HTTP_API_WEBUI_FAVICON")
 
+	// The site's policy pages, served at /privacy and /terms. Unset
+	// serves neither and puts no link in the footer; a policy page
+	// nobody has written is worse than none. See httpserver/policy.go.
+	webuiPrivacyFile, _ := cfg.Get("HTTP_API_WEBUI_PRIVACY_FILE")
+	webuiPrivacyURL, _ := cfg.Get("HTTP_API_WEBUI_PRIVACY_URL")
+	webuiTermsFile, _ := cfg.Get("HTTP_API_WEBUI_TERMS_FILE")
+	webuiTermsURL, _ := cfg.Get("HTTP_API_WEBUI_TERMS_URL")
+
 	// Superuser mode is gated on its own group, not on the admin-UI group:
 	// reading the admin pages and acting as any user on the access point are
 	// different privileges and an operator has to opt into the second one.
@@ -2699,6 +2707,10 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		WebUIBrandingDir:           webuiBrandingDir,
 		WebUICustomCSS:             webuiCustomCSS,
 		WebUIFavicon:               webuiFavicon,
+		WebUIPrivacyFile:           webuiPrivacyFile,
+		WebUIPrivacyURL:            webuiPrivacyURL,
+		WebUITermsFile:             webuiTermsFile,
+		WebUITermsURL:              webuiTermsURL,
 		SuperuserGroup:             strings.TrimSpace(superuserGroup),
 		ProjectLeadsFile:           strings.TrimSpace(projectLeadsFile),
 		ProjectLeadsGroup:          strings.TrimSpace(projectLeadsGroup),

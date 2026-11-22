@@ -66,4 +66,35 @@ describe('Footer', () => {
     await waitFor(() => expect(screen.getByText(/Powered by/)).toBeInTheDocument());
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
+
+  // A link to a policy page the operator never wrote would 404, and a
+  // reader who follows it concludes the policy is missing rather than
+  // unconfigured.
+  it('says nothing about policies a site has not configured', async () => {
+    renderFooter(site);
+    await waitFor(() => expect(screen.getByText(/Powered by/)).toBeInTheDocument());
+    expect(screen.queryByRole('link', { name: 'Privacy' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Terms of Use' })).not.toBeInTheDocument();
+  });
+
+  it("links the site's policy pages when it has them", async () => {
+    renderFooter({ ...site, privacy_url: '/privacy', terms_url: '/terms' });
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'Privacy' })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
+    expect(screen.getByRole('link', { name: 'Terms of Use' })).toHaveAttribute('href', '/terms');
+  });
+
+  // A site whose privacy notice is its institution's gets a link
+  // straight there, so hovering shows the reader where it really goes.
+  it('links an external policy at its own address', async () => {
+    const notice = 'https://www.wisc.edu/privacy-notice/';
+    renderFooter({ ...site, privacy_url: notice });
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'Privacy' })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', notice);
+    expect(screen.queryByRole('link', { name: 'Terms of Use' })).not.toBeInTheDocument();
+  });
 });

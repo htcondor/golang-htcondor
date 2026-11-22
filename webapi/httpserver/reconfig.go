@@ -283,6 +283,27 @@ func (h *Handler) SetWebUIFavicon(v string) {
 	h.branding.update(func(o *brandingOptions) { o.Favicon = v })
 }
 
+// SetWebUIPrivacyFile installs the privacy notice served at /privacy.
+func (h *Handler) SetWebUIPrivacyFile(v string) {
+	h.branding.update(func(o *brandingOptions) { o.PrivacyFile = v })
+}
+
+// SetWebUIPrivacyURL installs where /privacy redirects, for a site
+// whose privacy notice lives elsewhere.
+func (h *Handler) SetWebUIPrivacyURL(v string) {
+	h.branding.update(func(o *brandingOptions) { o.PrivacyURL = v })
+}
+
+// SetWebUITermsFile installs the terms of use served at /terms.
+func (h *Handler) SetWebUITermsFile(v string) {
+	h.branding.update(func(o *brandingOptions) { o.TermsFile = v })
+}
+
+// SetWebUITermsURL installs where /terms redirects.
+func (h *Handler) SetWebUITermsURL(v string) {
+	h.branding.update(func(o *brandingOptions) { o.TermsURL = v })
+}
+
 // SetSuperuserGroups installs the groups permitted to use superuser mode.
 //
 // Membership only. Superuser mode builds a policy object and a signing

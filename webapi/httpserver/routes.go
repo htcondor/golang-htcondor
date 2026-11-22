@@ -104,6 +104,14 @@ func (h *Handler) setupRoutes() {
 	mux.HandleFunc(webui.CSSPath, h.handleBrandingCSS)
 	mux.HandleFunc(brandingAssetPrefix, h.handleBrandingAsset)
 
+	// The site's policy pages, on the same terms: registered always,
+	// 404 until an operator configures one. Unauthenticated, because
+	// the people they are written for -- someone deciding whether to
+	// use the service, and the reviewer of an application that
+	// integrates with it -- do not have accounts here.
+	mux.HandleFunc(webui.PrivacyPath, h.handlePrivacyPage)
+	mux.HandleFunc(webui.TermsPath, h.handleTermsPage)
+
 	// Site apps: operator-deployed static web apps, each gated on the
 	// groups its policy file names. Registered only when a bundle
 	// directory is configured, so a server not using the feature

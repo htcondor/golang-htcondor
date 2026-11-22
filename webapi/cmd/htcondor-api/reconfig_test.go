@@ -41,6 +41,10 @@ func (f *fakeTarget) SetWebUIFooterLogos(v string)   { f.record("webui_footer_lo
 func (f *fakeTarget) SetWebUIBrandingDir(v string)   { f.record("webui_branding_dir", v) }
 func (f *fakeTarget) SetWebUICustomCSS(v string)     { f.record("webui_custom_css", v) }
 func (f *fakeTarget) SetWebUIFavicon(v string)       { f.record("webui_favicon", v) }
+func (f *fakeTarget) SetWebUIPrivacyFile(v string)   { f.record("webui_privacy_file", v) }
+func (f *fakeTarget) SetWebUIPrivacyURL(v string)    { f.record("webui_privacy_url", v) }
+func (f *fakeTarget) SetWebUITermsFile(v string)     { f.record("webui_terms_file", v) }
+func (f *fakeTarget) SetWebUITermsURL(v string)      { f.record("webui_terms_url", v) }
 func (f *fakeTarget) SetSuperuserGroups(v string)    { f.record("superuser", v) }
 func (f *fakeTarget) SetMCPSkillsDir(v string)       { f.record("skills_dir", v) }
 
