@@ -93,6 +93,19 @@ type Config struct {
 	// the operator's business, not the template author's.
 	Limits CSVLimits
 
+	// SpoolBufferDir is where a dropped archive is buffered, and is the
+	// operator's HTTP_API_SPOOL_BUFFER_DIR. Empty holds it in memory
+	// instead, which is why it also decides the ceiling: see
+	// MaxArchiveBytes.
+	SpoolBufferDir string
+
+	// MaxArchiveBytes is the largest archive /submit accepts. Zero
+	// takes Limits.MaxBytes -- the limit this service already applies
+	// to an upload -- which is the right ceiling for an archive held in
+	// memory and a small one for a buffer directory that could take a
+	// gigabyte.
+	MaxArchiveBytes int64
+
 	// Window is the retention for a streamed read. Zero takes
 	// sandboxfs.DefaultWindow.
 	Window int
@@ -186,7 +199,10 @@ func (f *FS) Fileread(req *sftp.Request) (io.ReaderAt, error) {
 	case kindRoot, kindOutputs, kindJobDir:
 		return nil, &os.PathError{Op: "open", Path: req.Filepath, Err: syscall.EISDIR}
 	}
-	if r.kind >= kindTemplates {
+	if r.kind.inDrop() {
+		return f.readDrop(r, req.Filepath)
+	}
+	if r.kind.inTemplates() {
 		return f.readTemplates(r, req.Filepath)
 	}
 	return nil, fmt.Errorf("%q: %w", req.Filepath, fs.ErrNotExist)
@@ -215,6 +231,9 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 		out := listerAt{dirInfo(outputsDir, time.Time{})}
 		if f.templatesEnabled() {
 			out = append(out, dirInfo(templatesDir, time.Time{}))
+		}
+		if f.dropEnabled() {
+			out = append(out, dirInfo(submitDir, time.Time{}))
 		}
 		return out, nil
 
@@ -255,7 +274,10 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 	case kindJobTar:
 		return nil, &os.PathError{Op: "readdir", Path: p, Err: syscall.ENOTDIR}
 	}
-	if r.kind >= kindTemplates {
+	if r.kind.inDrop() {
+		return f.listDrop(r, p)
+	}
+	if r.kind.inTemplates() {
 		return f.listTemplates(r, p)
 	}
 	return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
@@ -355,7 +377,10 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 			mode: 0o444,
 		}}, nil
 	}
-	if r.kind >= kindTemplates {
+	if r.kind.inDrop() {
+		return f.statDrop(r, p)
+	}
+	if r.kind.inTemplates() {
 		return f.statTemplates(r, p)
 	}
 	return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
@@ -389,8 +414,11 @@ func (f *FS) Filewrite(req *sftp.Request) (io.WriterAt, error) {
 	if err != nil {
 		return nil, err
 	}
-	if r.kind == kindSubmitFile {
+	switch r.kind {
+	case kindSubmitFile:
 		return f.writeTemplates(r, req.Filepath)
+	case kindDropFile:
+		return f.writeDrop(r, req.Filepath)
 	}
 	return nil, &os.PathError{Op: "write", Path: req.Filepath, Err: syscall.EROFS}
 }

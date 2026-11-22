@@ -22,9 +22,11 @@
 //	/outputs/                      one directory per readable job
 //	/outputs/<cluster>.<proc>/     that job's sandbox
 //	/outputs/<cluster>.<proc>.tar  the same sandbox as one archive
-//	/templates/<ns>/<name>/        a submit description to drop a CSV on
-//	/templates/<ns>/<name>/submit/ drop it here; one job per row
-//	/templates/<ns>/<name>/status/ what happened to each upload
+//	/templates/<id>/               a submit description to drop a CSV on
+//	/templates/<id>/submit/        drop it here; one job per row
+//	/templates/<id>/status/        what happened to each upload
+//	/submit/                       drop a tarball holding a job.sub
+//	/submit/status/                what happened to each one
 //
 // The archive is addressable but NOT listed, which is the one surprising
 // thing here and is on purpose twice over. Listing it would mean knowing
@@ -46,9 +48,16 @@ import (
 )
 
 // The top-level directories.
+//
+// submitDir is the drop point for a whole submission: a tarball with a
+// job.sub in it, for work no template describes. It is the same word as
+// submitDirName inside a template directory, and deliberately so --
+// "put it here to submit it" is one habit, whether what you are putting
+// there is a CSV for somebody's template or a job of your own.
 const (
 	outputsDir   = "outputs"
 	templatesDir = "templates"
+	submitDir    = "submit"
 )
 
 // Names inside a template directory.
@@ -69,8 +78,8 @@ const (
 	kindJobFile
 	kindJobTar
 
-	// The templates tree. kindTemplates stays first: fs.go dispatches
-	// on `kind >= kindTemplates`.
+	// The templates tree. Bounded by kindTemplates and kindDrop rather
+	// than compared against directly; see inTemplates.
 	kindTemplates    // /templates
 	kindTemplate     // /templates/<id>
 	kindTemplateFile // job.sub or README inside it
@@ -78,7 +87,24 @@ const (
 	kindSubmitFile   // .../submit/<name>
 	kindStatusDir    // .../status
 	kindStatusFile   // .../status/<name>
+
+	// The tarball drop point. Last, so inDrop is the tail of the range.
+	kindDrop           // /submit
+	kindDropReadme     // /submit/README
+	kindDropFile       // /submit/<name>
+	kindDropStatusDir  // /submit/status
+	kindDropStatusFile // /submit/status/<name>
 )
+
+// inTemplates and inDrop say which tree a kind belongs to.
+//
+// Predicates rather than the bare comparisons they replace: the
+// templates kinds used to be everything from kindTemplates upwards, so
+// adding a kind after them silently joined that tree -- the handlers
+// would have dispatched a tarball drop into the template code and
+// answered ENOENT for it.
+func (k kind) inTemplates() bool { return k >= kindTemplates && k < kindDrop }
+func (k kind) inDrop() bool      { return k >= kindDrop }
 
 // ref is a parsed request path.
 type ref struct {
@@ -108,6 +134,8 @@ func parsePath(p string) (ref, error) {
 	case outputsDir:
 	case templatesDir:
 		return parseTemplatePath(p, parts[1:])
+	case submitDir:
+		return parseDropPath(p, parts[1:])
 	default:
 		return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 	}
@@ -183,6 +211,38 @@ func parseTemplatePath(p string, rest []string) (ref, error) {
 		case statusDirName:
 			return ref{kind: kindStatusFile, tid: id, name: tail[1]}, nil
 		}
+	}
+	return missing()
+}
+
+// parseDropPath reads what follows /submit.
+//
+// Flat on purpose. A drop point with a tree would invite somebody to
+// upload the pieces of a submission separately and wonder when it goes;
+// one archive is the unit, and the only other thing here is where its
+// outcome is written.
+func parseDropPath(p string, rest []string) (ref, error) {
+	missing := func() (ref, error) { return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist) }
+
+	switch len(rest) {
+	case 0:
+		return ref{kind: kindDrop}, nil
+	case 1:
+		switch rest[0] {
+		case ReadmeFileName:
+			return ref{kind: kindDropReadme}, nil
+		case statusDirName:
+			return ref{kind: kindDropStatusDir}, nil
+		}
+		if checkUploadName(rest[0]) != nil {
+			return missing()
+		}
+		return ref{kind: kindDropFile, name: rest[0]}, nil
+	case 2:
+		if rest[0] != statusDirName || checkUploadName(rest[1]) != nil {
+			return missing()
+		}
+		return ref{kind: kindDropStatusFile, name: rest[1]}, nil
 	}
 	return missing()
 }

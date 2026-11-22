@@ -56,11 +56,19 @@ type TemplateSource interface {
 	Get(id, owner string) (templates.Template, bool)
 }
 
-// Submitter turns a template and a CSV into one cluster of jobs.
+// Submitter turns a dropped file into one cluster of jobs.
+//
+// Two ways in, because there are two things somebody can drop: a CSV
+// onto a template the library already holds, or a whole submission of
+// their own in an archive. Both end at the same schedd as the same
+// account; what differs is who wrote the submit description.
 type Submitter interface {
 	// SubmitRows submits sub against t on account's behalf and returns
 	// the cluster id.
 	SubmitRows(ctx context.Context, account string, t templates.Template, sub *Submission) (int, error)
+	// SubmitTarball submits the job.sub found in a dropped archive and
+	// spools the archive to every proc it created.
+	SubmitTarball(ctx context.Context, account string, sub *TarballSubmission) (int, error)
 }
 
 // ErrNoTemplate is what a lookup returns for a template an account

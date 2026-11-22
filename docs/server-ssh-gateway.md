@@ -75,7 +75,8 @@ waiting for and how long it has been waiting. Ctrl-C stops waiting; it does
 ## The file service
 
 `ssh +jobs@gateway` is not a shell — it serves your finished jobs' output over
-SFTP, so any client you already have reaches it:
+SFTP, and takes work in the same way, so any client you already have reaches
+it:
 
 ```sh
 sftp -P 2222 +jobs@ap.example.edu
@@ -91,6 +92,7 @@ The tree is small:
 | `outputs/12345.0/` | that job's sandbox, as files |
 | `outputs/12345.0.tar` | the same sandbox as one archive |
 | `templates/` | submit descriptions to drop a CSV on (see [Job templates](#job-templates)) |
+| `submit/` | drop a tarball holding a `job.sub` (see [Submitting a job of your own](#submitting-a-job-of-your-own)) |
 
 The archive is reachable by name but does **not** appear in a listing of
 `outputs/`, on purpose. Listing it would mean knowing its length, and that
@@ -242,6 +244,90 @@ the total.
 Every job carries `SFTPJobTemplate = "<id>"`, so `condor_q -af
 SFTPJobTemplate` says which template a cluster came from.
 
+## Submitting a job of your own
+
+A template answers "run this known work over my data". `/submit/` answers the
+other half: you have a submit description and the files it names, and you want
+them run.
+
+Put a submit description called `job.sub`, and every file it needs, in one
+archive, and drop the archive in:
+
+```sh
+sftp -P 2222 +jobs@ap.example.edu
+# sftp> get /submit/README           # the contract, in full
+# sftp> put run.tar.gz /submit/
+# sftp> get /submit/status/run.tar.gz
+```
+
+| Path | What it is |
+| --- | --- |
+| `submit/` | drop an archive here; write-only |
+| `submit/README` | the contract |
+| `submit/status/` | one entry per archive |
+
+`job.sub` must be at the **top level** of the archive — `tar czf run.tar.gz
+job.sub run.sh`, not `tar czf run.tar.gz mydir`. Plain and gzipped tar are
+both accepted, decided by the file's first bytes rather than its name. One
+archive is the unit: a submit description is useless without the files it
+names, so there is no way to upload them separately and no half-submission to
+wonder about.
+
+This is **more** than a template can do, in the way that matters most: the
+archive can carry the **executable**, so `transfer_executable` may be true and
+the job can run a program of yours. A dropped CSV carries no files, which is
+why a template cannot.
+
+Every file the submit description transfers has to be in the archive under the
+name it asks for. A name the jobs ask for that the archive does not carry is
+**refused** rather than submitted — HTCondor's tar spool drops an unexpected
+name in silence, so the jobs would leave their hold and fail at run time on a
+missing file, which looks like a success at every step except the job's.
+Anything the archive carries that the submit description does not ask for is
+ignored, so packing a whole directory is fine. A URL in
+`transfer_input_files` is fetched by the execute node and does not belong in
+the archive.
+
+`queue N` works, and so does the inline item form:
+
+```
+queue sample from ((
+HG001
+HG002
+))
+```
+
+The archive is spooled **once per proc** — HTCondor spools input per job — so
+`HTTP_API_SPOOL_MAX_UPLOAD_BYTES` bounds the archive times the procs, exactly
+as it does for the REST upload endpoints. A submission needing more procs than
+one upload may serve is refused with its jobs withdrawn rather than left
+half-spooled.
+
+Your submit description is parsed **without access to the access point**, the
+same as one posted to `/api/v1/jobs`. `include`, `include command`, `$ENV()`
+and `queue ... from <file>` therefore do not work — the first two would run as
+the API server, and the last would read its filesystem. Use the inline item
+form above.
+
+The submission happens when your client closes the file, so an interrupted
+transfer submits nothing and the same archive dropped twice is one submission.
+Nothing is submitted until the archive is complete and checked, and if the
+spool fails after the jobs exist they are withdrawn: there is no outcome where
+jobs sit waiting for input that is not coming.
+
+### What it costs the access point
+
+With `HTTP_API_SPOOL_BUFFER_DIR` set, an archive is buffered to a file there
+and nothing but the write in flight is held in memory; the ceiling is
+`HTTP_API_SPOOL_MAX_UPLOAD_BYTES`. **Without** it the archive is held in
+memory, and the ceiling is the much smaller limit the file service already
+applies to an upload. Set the buffer directory if you want people submitting
+archives of any size.
+
+`/submit/` needs no configuration of its own and is there whenever the file
+service is: a dropped archive carries its own submit description, so unlike
+`templates/` there is no catalog to enable.
+
 ## The approval screen
 
 Where the web UI is built into the binary, the approval link opens a screen
@@ -320,6 +406,8 @@ belongs to one database, so replicas would present different host keys.
 | `HTTP_API_SANDBOX_CACHE_DIR` | Where `+jobs` keeps output it has already fetched. Unset means no cache: every read fetches the sandbox again. Must be real local storage with room for the budget below — on `tmpfs` the "cache" is memory the kernel cannot reclaim. Its contents are discarded at every start and may be deleted by hand while the server runs. |
 | `HTTP_API_SANDBOX_CACHE_MB` | That cache's budget in megabytes. Default 4096. Negative disables the cache. |
 | `HTTP_API_SANDBOX_MAX_GB` | Largest job sandbox `+jobs` will serve. Default 8. Negative means no limit. |
+| `HTTP_API_SPOOL_BUFFER_DIR` | Where an archive dropped in `/submit/` is buffered, shared with the REST upload endpoints. Unset holds it in memory under a much smaller ceiling; see [What it costs the access point](#what-it-costs-the-access-point). |
+| `HTTP_API_SPOOL_MAX_UPLOAD_BYTES` | Ceiling for one upload that ends in a spool, shared with the REST endpoints. Default 1000 MiB. It bounds a dropped archive times the procs it is spooled to, and a template's input files times the rows of a CSV. |
 
 The gateway needs OAuth2, which is served whenever the web UI or MCP is
 enabled (see [When OAuth2 is served](server-auth.md#when-oauth2-is-served)), since the device

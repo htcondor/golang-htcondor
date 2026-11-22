@@ -32,11 +32,12 @@ import (
 
 // recordingSubmitter stands in for the schedd.
 type recordingSubmitter struct {
-	mu      sync.Mutex
-	calls   []*Submission
-	tmpls   []templates.Template
-	next    int
-	failErr error
+	mu       sync.Mutex
+	calls    []*Submission
+	tmpls    []templates.Template
+	archives []archiveCall
+	next     int
+	failErr  error
 }
 
 func (s *recordingSubmitter) SubmitRows(_ context.Context, _ string, t templates.Template, sub *Submission) (int, error) {
@@ -49,6 +50,43 @@ func (s *recordingSubmitter) SubmitRows(_ context.Context, _ string, t templates
 	s.tmpls = append(s.tmpls, t)
 	s.next += 100
 	return s.next, nil
+}
+
+// SubmitTarball records a dropped archive the same way, keeping the
+// archive's contents rather than the handle: the submitter is the last
+// thing to read the source, so a test that checked it afterwards would
+// be reading a closed sink.
+func (s *recordingSubmitter) SubmitTarball(_ context.Context, _ string, sub *TarballSubmission) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failErr != nil {
+		return 0, s.failErr
+	}
+	s.archives = append(s.archives, archiveCall{Submit: sub.Submit, Files: sub.Files, Size: sub.Source.Size()})
+	s.next += 100
+	return s.next, nil
+}
+
+// archiveCall is what one SubmitTarball call was given.
+type archiveCall struct {
+	Submit string
+	Files  []string
+	Size   int64
+}
+
+func (s *recordingSubmitter) archiveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.archives)
+}
+
+func (s *recordingSubmitter) lastArchive() (archiveCall, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.archives) == 0 {
+		return archiveCall{}, false
+	}
+	return s.archives[len(s.archives)-1], true
 }
 
 func (s *recordingSubmitter) count() int {
@@ -98,8 +136,18 @@ const blastDir = "/templates/blast"
 func TestTemplateTreeShape(t *testing.T) {
 	f := newTriggerFS(t)
 
-	if got := listNames(t, f.FS, "/"); len(got) != 2 {
-		t.Errorf("/ = %v, want outputs and templates", got)
+	// Three top-level directories: output to read, templates to drop a
+	// CSV on, and /submit for a submission of one's own.
+	wantTop := []string{"outputs/", "templates/", "submit/"}
+	if got := listNames(t, f.FS, "/"); len(got) != len(wantTop) {
+		t.Errorf("/ = %v, want %v", got, wantTop)
+	} else {
+		for i := range wantTop {
+			if got[i] != wantTop[i] {
+				t.Errorf("/ = %v, want %v", got, wantTop)
+				break
+			}
+		}
 	}
 	// One directory per template, named by its library id -- the same id
 	// the web submit page and /api/v1/templates use.

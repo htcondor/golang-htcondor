@@ -97,25 +97,45 @@ func TestReadableJobsSaysWhyItCannotAnswer(t *testing.T) {
 	}
 }
 
-// TestJobTemplatesOffOrOnTogether: a template source without a
-// submitter would offer a drop point that cannot submit, which is worse
-// than offering nothing.
+// TestTheTemplatesTreeFollowsTheLibrary: the file service has no
+// template configuration of its own, so an access point that offers
+// templates on the web page offers the same ones here, and one with no
+// library offers none.
 //
-// Both halves follow the shared library, so the file service needs no
-// template configuration of its own -- an access point that offers
-// templates on the web page offers the same ones here.
-func TestJobTemplatesOffOrOnTogether(t *testing.T) {
+// The submitter is deliberately not gated with it. A dropped archive
+// carries its own submit description, so /submit needs a schedd and
+// nothing else -- gating the submitter on the library would have taken
+// the drop point away from every access point that curates no
+// templates, which is most of them.
+func TestTheTemplatesTreeFollowsTheLibrary(t *testing.T) {
 	off := &Handler{logger: testLogger(t)}
-	if off.jobTemplates() != nil || off.jobTemplateSubmitter() != nil {
+	if off.jobTemplates() != nil {
 		t.Error("templates are offered with no library built")
+	}
+	if off.jobSubmitter() == nil {
+		t.Error("no submitter without a template library, so /submit would be absent")
 	}
 	lib, err := templates.NewLibrary(templates.LibraryConfig{})
 	if err != nil {
 		t.Fatalf("NewLibrary: %v", err)
 	}
 	on := &Handler{logger: testLogger(t), templateLibrary: lib}
-	if on.jobTemplates() == nil || on.jobTemplateSubmitter() == nil {
+	if on.jobTemplates() == nil || on.jobSubmitter() == nil {
 		t.Error("a built library did not produce both halves")
+	}
+}
+
+// TestTheArchiveLimitFollowsTheBufferDirectory: an archive with
+// nowhere to spill is held in memory, so it must not be allowed the
+// spool ceiling -- a gigabyte of resident upload per SSH channel.
+func TestTheArchiveLimitFollowsTheBufferDirectory(t *testing.T) {
+	inMemory := &Handler{logger: testLogger(t), spoolMaxUploadBytes: 1 << 30}
+	if got := inMemory.archiveDropLimit(); got != 0 {
+		t.Errorf("limit = %d with no buffer directory, want 0 so sftpjobs applies its own", got)
+	}
+	spilling := &Handler{logger: testLogger(t), spoolMaxUploadBytes: 1 << 30, spoolBufferDir: t.TempDir()}
+	if got := spilling.archiveDropLimit(); got != 1<<30 {
+		t.Errorf("limit = %d with a buffer directory, want the operator's spool ceiling", got)
 	}
 }
 

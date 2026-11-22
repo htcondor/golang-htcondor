@@ -51,6 +51,93 @@ func dial(t *testing.T, f *testFS) *sftp.Client {
 	return client
 }
 
+// dialFS is dial for a view built elsewhere -- the trigger tests build
+// one with a submitter, which newTestFS does not.
+func dialFS(t *testing.T, f *FS) *sftp.Client {
+	t.Helper()
+	c1, c2 := net.Pipe()
+	srv := sftp.NewRequestServer(c2, f.Handlers())
+	go func() {
+		if err := srv.Serve(); err != nil && !errors.Is(err, io.EOF) {
+			t.Logf("serve ended: %v", err)
+		}
+	}()
+	client, err := sftp.NewClientPipe(c1, c1)
+	if err != nil {
+		t.Fatalf("NewClientPipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = srv.Close()
+	})
+	return client
+}
+
+// TestClientDropsAnArchive is the upload path through a real client,
+// which is the only way to find out what a real client does around a
+// write: pkg/sftp's own Create/Write/Close, with the FSETSTAT it sends
+// after writing -- against handlers that refuse every Filecmd. A direct
+// call to Filewrite skips all of it, so every other upload test here
+// would pass on a surface no client could actually put a file on.
+func TestClientDropsAnArchive(t *testing.T) {
+	f := newTriggerFS(t)
+	c := dialFS(t, f.FS)
+
+	content := tarBytes(t,
+		archiveFile{Name: SubmitFileName, Body: ownSubmit},
+		archiveFile{Name: "run.sh", Body: "#!/bin/sh\nexit 0\n"})
+
+	w, err := c.Create("/submit/run.tar")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := w.Write(content); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	// The commit point, and the only place a refusal can be reported.
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Read the outcome back the way somebody would.
+	st, err := c.Open("/submit/status/run.tar")
+	if err != nil {
+		t.Fatalf("opening the status entry: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+	text, err := io.ReadAll(st)
+	if err != nil {
+		t.Fatalf("reading the status entry: %v", err)
+	}
+	if !bytes.Contains(text, []byte("state: submitted")) {
+		t.Errorf("status = %q, want a submitted state", text)
+	}
+	if f.sub.archiveCount() != 1 {
+		t.Errorf("the submitter saw %d archives, want 1", f.sub.archiveCount())
+	}
+}
+
+// TestClientDropsACSV is the same for a template's submit directory:
+// the CSV path had no real-client upload test either.
+func TestClientDropsACSV(t *testing.T) {
+	f := newTriggerFS(t)
+	c := dialFS(t, f.FS)
+
+	w, err := c.Create(blastDir + "/submit/runs.csv")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := w.Write([]byte("sample,reads\nHG001,a.fastq\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if f.sub.count() != 1 {
+		t.Fatalf("the submitter saw %d CSVs, want 1", f.sub.count())
+	}
+}
+
 func TestClientWalksTheTree(t *testing.T) {
 	f := newTestFS(t, true, fixedJobs{{Cluster: 12, Proc: 0}, {Cluster: 7, Proc: 3}})
 	c := dial(t, f)

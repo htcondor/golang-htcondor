@@ -126,10 +126,17 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 		Account: req.Account,
 		Context: ctx,
 		Jobs:    mirrorJobLister{h: h, account: req.Account},
-		// Both or neither: without a submitter the tree would offer a
-		// drop point that cannot submit.
+		// The templates tree needs the library; /submit needs only the
+		// submitter, because a dropped archive describes itself. So an
+		// access point with no template library still offers /submit,
+		// which is the whole of what this service can do without one.
 		Templates: h.jobTemplates(),
-		Submitter: h.jobTemplateSubmitter(),
+		Submitter: h.jobSubmitter(),
+		// Where a dropped archive is buffered. With no buffer directory
+		// configured it is held in memory, and sftpjobs applies its own
+		// upload ceiling instead of this one.
+		SpoolBufferDir:  h.spoolBufferDir,
+		MaxArchiveBytes: h.archiveDropLimit(),
 		Logf: func(format string, args ...any) {
 			h.logger.Debug(logging.DestinationHTTP, fmt.Sprintf(format, args...))
 		},
@@ -162,13 +169,30 @@ func (h *Handler) jobTemplates() sftpjobs.TemplateSource {
 	return h.templateLibrary
 }
 
-// jobTemplateSubmitter pairs with it. Returned nil together with the
-// source, so the tree is absent rather than half-present.
-func (h *Handler) jobTemplateSubmitter() sftpjobs.Submitter {
-	if h.templateLibrary == nil {
-		return nil
-	}
+// jobSubmitter is what turns a dropped file into jobs.
+//
+// Not gated on the template library, unlike jobTemplates: a tarball
+// drop carries its own submit description, so the only thing it needs
+// is a schedd -- which this gateway already needs to run a workspace.
+// A missing schedd is reported in the drop's status entry rather than
+// by hiding the directory, because "there is nowhere to submit" and
+// "this access point does not do that" are different answers.
+func (h *Handler) jobSubmitter() sftpjobs.Submitter {
 	return templateSubmitter{h: h}
+}
+
+// archiveDropLimit is how large an archive the file service accepts.
+//
+// The operator's spool ceiling, which is what bounds every other upload
+// that ends in a spool -- but only where there is a buffer directory to
+// put it. Without one the archive is held in memory, and sftpjobs falls
+// back to its own upload limit rather than being told it may take a
+// gigabyte of it.
+func (h *Handler) archiveDropLimit() int64 {
+	if h.spoolBufferDir == "" {
+		return 0
+	}
+	return h.spoolLimits().MaxVolume
 }
 
 // fmtSandboxScope is the constraint for one account's own job.

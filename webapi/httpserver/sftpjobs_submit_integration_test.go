@@ -17,9 +17,14 @@
 package httpserver
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os/exec"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -292,4 +297,180 @@ func newClusters(before, after map[int]bool) []int {
 		}
 	}
 	return out
+}
+
+// archiveSource is a dropped archive as the submitter consumes it:
+// readable once per proc. The real one is sftpjobs' own sink, which
+// spills to the operator's buffer directory; here the bytes are in
+// hand, and what matters is that every reader starts at the beginning.
+type archiveSource []byte
+
+func (a archiveSource) Reader() (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(a)), nil
+}
+func (a archiveSource) Size() int64  { return int64(len(a)) }
+func (a archiveSource) Close() error { return nil }
+
+// tarArchive packs entries the way `tar cf` would.
+func tarArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		body := files[name]
+		mode := int64(0o600)
+		if strings.HasSuffix(name, ".sh") {
+			mode = 0o700
+		}
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatalf("WriteHeader: %v", err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar Close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// What a dropped archive does to a real schedd.
+//
+// Two things here that no unit test can answer, and that the template
+// path cannot do at all:
+//
+//   - The archive carries the EXECUTABLE. transfer_executable is true,
+//     so the file the job runs is one the client packed, spooled into
+//     the sandbox and then executed -- proved by its own exit code.
+//   - `queue 2` means the same archive is spooled TWICE. HTCondor
+//     spools per job, and a flat tar serves one proc per call, so this
+//     is the fan-out's contract: both procs run the file, or one of
+//     them exits 127 having never received it.
+func TestDroppedArchiveRunsItsOwnExecutable(t *testing.T) {
+	t.Parallel()
+	env := setupSFTPSubmit(t)
+
+	t.Run("the packed executable runs on every proc", func(t *testing.T) {
+		archive := tarArchive(t, map[string]string{
+			"job.sub": "universe = vanilla\n" +
+				"executable = run.sh\n" +
+				"arguments = packed\n" +
+				"output = out.$(ProcId)\n" +
+				"error = err.$(ProcId)\n" +
+				"request_cpus = 1\n" +
+				"request_memory = 64\n" +
+				"request_disk = 64\n" +
+				"queue 2\n",
+			// 23 is reached only by running the packed file: a sandbox
+			// without it leaves the starter with nothing to execute.
+			"run.sh": "#!/bin/sh\necho \"ran as $1\"\nexit 23\n",
+		})
+
+		sub := &sftpjobs.TarballSubmission{
+			Submit: submitTextFrom(t, archive),
+			Files:  []string{"job.sub", "run.sh"},
+			Source: archiveSource(archive),
+		}
+
+		ctx, cancel := context.WithTimeout(env.ctx, 5*time.Minute)
+		defer cancel()
+
+		cluster, err := env.sub.SubmitTarball(ctx, env.account, sub)
+		if err != nil {
+			env.harness.PrintScheddLog()
+			t.Fatalf("SubmitTarball: %v", err)
+		}
+		t.Logf("cluster %d, 2 procs", cluster)
+		defer func() {
+			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, _ = env.schedd.RemoveJobs(c, fmt.Sprintf("ClusterId == %d", cluster), "test cleanup")
+		}()
+
+		waitNoneHeld(t, ctx, env.schedd, cluster)
+		waitAllExited(t, ctx, env.schedd, cluster, 2, 23)
+	})
+
+	// A queue item that names a file the archive does not carry. The
+	// pre-submit check cannot see it -- $(extra) names nothing until
+	// the item is substituted -- so the cluster is already in the queue
+	// when the gap is found, and has to come back out. Left behind, the
+	// procs would sit on HoldReasonCode 16 for an upload that is gone.
+	//
+	// This also pins the inline queue form working at all: a dropped
+	// submit file is parsed without access to this host, so the
+	// from-a-file form is refused and ((rows)) is what is left.
+	t.Run("an item naming a file not in the archive withdraws the cluster", func(t *testing.T) {
+		archive := tarArchive(t, map[string]string{
+			"job.sub": "universe = vanilla\n" +
+				"executable = /bin/true\n" +
+				"transfer_executable = false\n" +
+				"transfer_input_files = $(extra)\n" +
+				"request_memory = 64\n" +
+				"queue extra from ((\nnobody-ships-this.dat\n))\n",
+		})
+		sub := &sftpjobs.TarballSubmission{
+			Submit: submitTextFrom(t, archive),
+			Files:  []string{"job.sub"},
+			Source: archiveSource(archive),
+		}
+
+		ctx, cancel := context.WithTimeout(env.ctx, 2*time.Minute)
+		defer cancel()
+
+		before := clusterIDs(t, ctx, env.schedd)
+		if _, err := env.sub.SubmitTarball(ctx, env.account, sub); err == nil {
+			t.Fatal("an item naming a file the archive does not carry was submitted")
+		} else if !strings.Contains(err.Error(), "nobody-ships-this.dat") {
+			t.Errorf("error = %v, want it to name the file", err)
+		} else if !strings.Contains(err.Error(), "withdrawn") {
+			t.Errorf("error = %v, want it to say the jobs were withdrawn", err)
+		}
+
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			leftover := newClusters(before, clusterIDs(t, ctx, env.schedd))
+			if len(leftover) == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("clusters %v were left in the queue, held for input that is gone", leftover)
+			}
+			time.Sleep(time.Second)
+		}
+	})
+}
+
+// submitTextFrom reads job.sub back out of an archive, so the text the
+// submitter is given is the one the client packed rather than a second
+// copy this test keeps in step by hand.
+func submitTextFrom(t *testing.T, archive []byte) string {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading the archive: %v", err)
+		}
+		if h.Name == "job.sub" {
+			body, err := io.ReadAll(tr)
+			if err != nil {
+				t.Fatalf("reading job.sub: %v", err)
+			}
+			return string(body)
+		}
+	}
+	t.Fatal("the test archive has no job.sub in it")
+	return ""
 }

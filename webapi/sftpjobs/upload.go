@@ -123,11 +123,16 @@ func (u *upload) Close() error {
 }
 
 // uploadStatus is what a status entry says.
+//
+// Shared by the two things somebody can drop. A CSV fills in Template
+// and Rows; an archive fills in Files. Text prints what it was given
+// and leaves out the rest, so neither carries a line about the other.
 type uploadStatus struct {
 	// State is "submitted", "refused", "incomplete" or "duplicate".
 	State    string
 	Template string
 	Rows     int
+	Files    int
 	Cluster  int
 	Digest   string
 	Err      string
@@ -138,12 +143,17 @@ type uploadStatus struct {
 func (s uploadStatus) Text() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "state: %s\n", s.State)
-	fmt.Fprintf(&b, "template: %s\n", s.Template)
+	if s.Template != "" {
+		fmt.Fprintf(&b, "template: %s\n", s.Template)
+	}
 	if !s.At.IsZero() {
 		fmt.Fprintf(&b, "at: %s\n", s.At.UTC().Format(time.RFC3339))
 	}
 	if s.Rows > 0 {
 		fmt.Fprintf(&b, "rows: %d\n", s.Rows)
+	}
+	if s.Files > 0 {
+		fmt.Fprintf(&b, "files: %d\n", s.Files)
 	}
 	if s.Cluster > 0 {
 		fmt.Fprintf(&b, "cluster: %d\n", s.Cluster)

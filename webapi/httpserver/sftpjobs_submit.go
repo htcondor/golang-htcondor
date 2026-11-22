@@ -20,9 +20,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/PelicanPlatform/classad/classad"
+
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
+	"github.com/htcondor/golang-htcondor/webapi/spool"
 	"github.com/htcondor/golang-htcondor/webapi/templates"
 )
 
@@ -118,4 +121,107 @@ func (s templateSubmitter) withdrawCluster(ctx context.Context, cluster int, why
 		s.h.logger.Warn(logging.DestinationHTTP, "withdrawing a template submission failed",
 			"cluster", cluster, "reason", why, "error", err)
 	}
+}
+
+// SubmitTarball implements sftpjobs.Submitter.
+//
+// The same spooling submission as a template's, with the submit
+// description coming out of the archive instead of the library -- and
+// with one difference that matters: the archive can carry the
+// executable, so transfer_executable may be true here. That is the
+// whole point of the drop point. A template cannot do it, because a CSV
+// carries no files.
+//
+// The archive goes to every proc. HTCondor spools input per job, so a
+// `queue 20` submission needs the same tar sent twenty times, which is
+// what webapi/spool's fan-out is for -- the same code the REST
+// cluster-upload endpoint uses, with the same limits and the same
+// per-proc accounting.
+func (s templateSubmitter) SubmitTarball(ctx context.Context, account string,
+	sub *sftpjobs.TarballSubmission) (int, error) {
+	// As in SubmitRows, and first for the same reason.
+	if who := htcondor.GetAuthenticatedUserFromContext(ctx); who != account {
+		return 0, fmt.Errorf("asked to submit as %q on a context authenticated as %q", account, who)
+	}
+	if sub == nil || sub.Source == nil {
+		return 0, errors.New("there is no archive to submit")
+	}
+	schedd := s.h.getSchedd()
+	if schedd == nil {
+		return 0, errors.New("no schedd is configured")
+	}
+
+	cluster, procs, err := schedd.SubmitRemote(ctx, sub.Submit)
+	if err != nil {
+		return 0, err
+	}
+
+	// From here on the jobs exist, so every failure takes them with it.
+	if err := sftpjobs.ArchiveMissing(procs, sub.Files); err != nil {
+		s.withdrawCluster(ctx, cluster, "the archive does not carry the jobs' input files")
+		return 0, fmt.Errorf("%w; the %d jobs were withdrawn", err, len(procs))
+	}
+
+	src, ok := sub.Source.(spool.Source)
+	if !ok {
+		s.withdrawCluster(ctx, cluster, "the archive cannot be read back")
+		return 0, fmt.Errorf("the archive cannot be spooled; the %d jobs were withdrawn", len(procs))
+	}
+
+	// Jobs that need no spool at all -- every input a URL, nothing to
+	// transfer -- were released by SubmitRemote and must not be spooled
+	// to: the schedd has nothing waiting for them.
+	awaiting := procsAwaitingInput(procs)
+	if len(awaiting) == 0 {
+		s.h.logger.Info(logging.DestinationHTTP, "Submitted a dropped archive",
+			"account", account, "cluster", cluster, "procs", len(procs), "spooled", 0)
+		return cluster, nil
+	}
+
+	lim := s.h.spoolLimits()
+	attempt, planned, err := spool.Plan(awaiting, src.Size(), lim)
+	if err != nil {
+		s.withdrawCluster(ctx, cluster, "the archive is too large to spool to these jobs")
+		return 0, fmt.Errorf("%w; the %d jobs were withdrawn", err, len(procs))
+	}
+	if planned.Capped {
+		// Partial progress is the right answer for a REST caller, who
+		// can call again with the same tar. It is the wrong one here:
+		// the archive is gone when this returns, so the procs left
+		// behind would hold forever.
+		s.withdrawCluster(ctx, cluster, "more jobs than one upload may spool")
+		return 0, fmt.Errorf("this submission needs %d procs spooled, more than one upload may "+
+			"serve (%d, or %d bytes in all); submit fewer jobs at a time, or use URLs in "+
+			"transfer_input_files; the %d jobs were withdrawn",
+			len(awaiting), lim.MaxProcs, lim.MaxVolume, len(procs))
+	}
+
+	res := spool.FanOut(ctx, attempt, src, lim, schedd.SpoolJobFilesFromTar)
+	if n := res.Remaining(); n > 0 {
+		s.withdrawCluster(ctx, cluster, "spooling the archive failed")
+		return 0, fmt.Errorf("the schedd accepted the submission but %d of %d jobs could not be "+
+			"spooled (%v); the %d jobs were withdrawn",
+			n, len(awaiting), res.Failed, len(procs))
+	}
+
+	s.h.logger.Info(logging.DestinationHTTP, "Submitted a dropped archive",
+		"account", account, "cluster", cluster, "procs", len(procs),
+		"spooled", len(res.Spooled), "bytes", src.Size(), "files", len(sub.Files))
+	return cluster, nil
+}
+
+// procsAwaitingInput is the procs still held for input spooling.
+//
+// SubmitRemote releases the ones with nothing to spool itself, and a
+// spool call aimed at a released job fails -- so the fan-out has to be
+// told which jobs are actually waiting rather than being handed the
+// whole cluster.
+func procsAwaitingInput(procs []*classad.ClassAd) []*classad.ClassAd {
+	out := make([]*classad.ClassAd, 0, len(procs))
+	for _, ad := range procs {
+		if len(htcondor.SpoolInputAllowSet(ad)) > 0 {
+			out = append(out, ad)
+		}
+	}
+	return out
 }
