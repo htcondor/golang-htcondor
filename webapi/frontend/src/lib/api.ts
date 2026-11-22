@@ -1593,6 +1593,67 @@ export interface AdminCondorConfigResponse {
 // The wire-format key (`htca-v1-...`) is NEVER on this type — it
 // only appears once, in AdminAPIKeyCreateResponse.key.
 // One site app as the admin page shows it.
+// --- connectors -------------------------------------------------------
+//
+// Accounts this access point connects TO on a user's behalf. Not to be
+// confused with AdminClient, which is the opposite direction:
+// applications connecting to this server's identity provider.
+
+export interface AdminConnector {
+  id: string;
+  kind: string;
+  /** Which decision published it: a configuration parameter, or stored here. */
+  origin: string;
+  /** Stored here rather than in the HTCondor configuration. The difference
+   *  between a change that takes effect now and one needing condor_reconfig. */
+  stored_here: boolean;
+  editable: boolean;
+  /** A stored connector the configuration also declares, and so overrides.
+   *  Shown rather than hidden: a row that silently loses is an operator
+   *  editing a form to no effect. */
+  shadowed?: boolean;
+  enabled: boolean;
+  groups: string[];
+  scopes: string[];
+  transfer: string;
+  client_id?: string;
+  /** Whether a secret is held. The secret itself is NEVER sent. */
+  secret_set: boolean;
+  secret_updated_at?: string;
+  /** The path the configuration names. The path is public; the bytes are not. */
+  secret_file?: string;
+  users: number;
+  last_used_at?: string;
+  transfer_method?: string;
+}
+
+export interface AdminConnectorUser {
+  subject: string;
+  obtained_at: string;
+  last_used_at?: string;
+}
+
+export interface AdminConnectorTest {
+  id: string;
+  usable: boolean;
+  problems: string[];
+}
+
+export interface AdminConnectorRequest {
+  id: string;
+  kind?: string;
+  client_id?: string;
+  /** Omit to leave a stored secret alone; "" clears it. Sending "" for an
+   *  untouched field would wipe a working connector on an unrelated edit. */
+  client_secret?: string;
+  authorization_url?: string;
+  token_url?: string;
+  scopes?: string[];
+  groups?: string[];
+  transfer?: string;
+  enabled?: boolean;
+}
+
 export interface AdminSiteApp {
   id: string;
   name: string;
@@ -2744,6 +2805,29 @@ export const api = {
     // Site apps: what this access point publishes under /site/, what
     // it has published before, and -- where the site allows it --
     // publishing one.
+    listConnectors: (): Promise<AdminConnector[]> =>
+      fetchJSON(`${BASE}/admin/connectors`),
+    saveConnector: (req: AdminConnectorRequest): Promise<{ id: string; saved: boolean }> =>
+      fetchJSON(`${BASE}/admin/connectors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      }),
+    deleteConnector: (
+      id: string,
+    ): Promise<{ id: string; deleted: boolean; credentials_destroyed: number }> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    // Drops every grant and leaves the connector: what to do when a
+    // client secret has leaked or rotated. Stays available on a
+    // configuration-declared connector, because the credentials are
+    // this server's own state even when the definition is not.
+    revokeConnector: (id: string): Promise<{ id: string; revoked: number }> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
+    testConnector: (id: string): Promise<AdminConnectorTest> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/test`, { method: "POST" }),
+    connectorUsers: (id: string): Promise<AdminConnectorUser[]> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/users`),
+
     listSiteApps: (): Promise<AdminSiteApps> =>
       fetchJSON(`${BASE}/admin/site-apps`),
     siteAppHistory: (id: string): Promise<{ id: string; history: AdminSiteAppHistory[] }> =>

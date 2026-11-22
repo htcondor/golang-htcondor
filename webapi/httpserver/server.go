@@ -18,7 +18,6 @@ import (
 	"github.com/bbockelm/cedar/security"
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/config"
-	"github.com/htcondor/golang-htcondor/droppriv"
 	"github.com/htcondor/golang-htcondor/idmap"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/apikey"
@@ -1029,32 +1028,6 @@ func (s *Server) ServeMCPListener(ln net.Listener, certFile, keyFile string) err
 // to land if one is ever wanted.
 func (s *Server) certReloadInterval() time.Duration {
 	return defaultCertReloadInterval
-}
-
-// loadKeyPairMaybeAsRoot reads a TLS certificate and key through the
-// privileged credential path.
-//
-// http.Server.ServeTLS(ln, certFile, keyFile) reads those files itself,
-// with a plain os.ReadFile under the process's current identity. On an
-// access point the key is root-owned -- /etc/pki/tls/private/... is the
-// normal posture -- while the daemon has dropped to the condor account,
-// so the handshake setup fails at startup with "permission denied", the
-// same way the KEK and the token signing key did before they were
-// routed through droppriv.
-func loadKeyPairMaybeAsRoot(certFile, keyFile string) (tls.Certificate, error) {
-	certPEM, err := droppriv.ReadFileMaybeAsRoot(certFile)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("reading TLS certificate %s: %w", certFile, err)
-	}
-	keyPEM, err := droppriv.ReadFileMaybeAsRoot(keyFile)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("reading TLS key %s: %w", keyFile, err)
-	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parsing TLS keypair (%s, %s): %w", certFile, keyFile, err)
-	}
-	return cert, nil
 }
 
 // serveTLSWithCredentials is ServeTLS with the keypair read through the

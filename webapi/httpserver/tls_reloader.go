@@ -74,6 +74,18 @@ func newCertReloader(certFile, keyFile string, interval time.Duration, logger *l
 }
 
 // read loads and parses the keypair without touching the served state.
+//
+// Through droppriv rather than a plain os.ReadFile, which is the whole
+// reason this is not http.Server.ServeTLS(ln, certFile, keyFile):
+// ServeTLS opens those paths itself under the process's current
+// identity. On an access point the key is root-owned --
+// /etc/pki/tls/private/... is the normal posture -- while the daemon has
+// dropped to the condor account, so the handshake setup would fail at
+// startup with "permission denied", the same way the KEK and the token
+// signing key did before they were routed through droppriv.
+//
+// The PEM bytes come back alongside the parsed keypair because that is
+// how refresh tells a renewal from a re-read of the same files.
 func (r *certReloader) read() ([]byte, []byte, *tls.Certificate, error) {
 	certPEM, err := droppriv.ReadFileMaybeAsRoot(r.certFile)
 	if err != nil {

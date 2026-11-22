@@ -61,6 +61,10 @@ type reconfigTarget interface {
 	// value: an app's policy is several parameters, and which apps
 	// exist is not known until they are read.
 	SetSiteAppPolicy(*config.Config)
+	// SetConnectorConfig takes the configuration itself for the same
+	// reason SetSiteAppPolicy does: a diff cannot see a connector that
+	// was not there before.
+	SetConnectorConfig(*config.Config)
 	SetMCPDisabledTools(string)
 	SetMCPReadOnly(string)
 	SetMCPConfirmSubmitOver(string)
@@ -474,6 +478,12 @@ func (w *reconfigWatcher) reconfigure(cfg *config.Config) {
 	// and the bundle directory rescanned on every reconfigure. This is
 	// also how an operator makes a policy edit take effect now rather
 	// than at the end of the reload interval.
+	// Connector definitions are spread over a parameter per connector
+	// per setting, and declaring a new one adds names nothing was
+	// watching, so the whole lot is re-read on every reconfigure. Same
+	// shape as site app policy directly above, and for the same reason.
+	w.srv.SetConnectorConfig(cfg)
+
 	w.srv.SetSiteAppPolicy(cfg)
 
 	// Same for the project leads file: its contents live outside the

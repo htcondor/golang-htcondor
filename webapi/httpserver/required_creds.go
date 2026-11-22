@@ -309,6 +309,10 @@ func (s *Handler) submitJob(ctx context.Context, submitFile string) (int, []*cla
 // credential bootstrap submitJob exists to guarantee is here, not above
 // it, so neither path can skip it.
 func (s *Handler) submitApplied(ctx context.Context, submitFile string) (int, []*classad.ClassAd, error) {
+	submitFile, err := s.prepareConnectorInputs(submitFile)
+	if err != nil {
+		return 0, nil, err
+	}
 	s.ensureRequiredCredentials(ctx)
 	// scheddFor: the one schedd, or in multi-AP mode the AP the
 	// submission was assigned and routed to.

@@ -42,6 +42,11 @@ import { SubmitTarget } from '@/components/SubmitTarget';
 import { SubmittedDialog } from '@/components/SubmittedDialog';
 import { Dropzone, type DroppedFile } from '@/components/Dropzone';
 import {
+  applyConnectorInputs,
+  ConnectorInputs,
+  type ConnectorInput,
+} from '@/components/ConnectorInputs';
+import {
   ResourceRequestPanel,
   DEFAULT_RESOURCE_REQUEST,
   type ResourceRequest,
@@ -373,6 +378,10 @@ export default function SubmitPage() {
 
   // --- Inputs section state -----------------------------------------
   const [files, setFiles] = useState<DroppedFile[]>([]);
+  // Files chosen out of a third-party account. Not uploads: these go
+  // into the submit body as references and the access point fetches
+  // them. See components/ConnectorInputs.
+  const [connectorInputs, setConnectorInputs] = useState<ConnectorInput[]>([]);
 
   // --- Resources section state --------------------------------------
   // Per-field override mask: which of cpus/memory/disk/gpus the user
@@ -568,6 +577,12 @@ export default function SubmitPage() {
       let effectiveContents = anyOverride
         ? applyResourcesToBody(active.contents, resources, overrideFields)
         : active.contents;
+
+      // Chosen third-party files become transfer_input_files entries.
+      // Done here rather than live on the draft, because the reference
+      // is not something to edit by hand and a user who cleared it from
+      // the textarea would have the list below contradict the body.
+      effectiveContents = applyConnectorInputs(effectiveContents, connectorInputs);
 
       // The auto-wiring of executable= / transfer_executable= and of
       // transfer_input_files for upload mode now happens *live* on
@@ -1436,7 +1451,13 @@ export default function SubmitPage() {
       )}
 
       <ChatHighlight active={recentlyChanged.has('inputs')}>
-        <InputsSection files={files} setFiles={setFiles} disabled={submit.isPending} />
+        <InputsSection
+          files={files}
+          setFiles={setFiles}
+          connectorInputs={connectorInputs}
+          setConnectorInputs={setConnectorInputs}
+          disabled={submit.isPending}
+        />
       </ChatHighlight>
 
       <ChatHighlight active={recentlyChanged.has('resources')}>
@@ -3499,10 +3520,14 @@ function parseCSV(input: string): string[][] {
 function InputsSection({
   files,
   setFiles,
+  connectorInputs,
+  setConnectorInputs,
   disabled,
 }: {
   files: DroppedFile[];
   setFiles: (f: DroppedFile[]) => void;
+  connectorInputs: ConnectorInput[];
+  setConnectorInputs: (next: ConnectorInput[]) => void;
   disabled: boolean;
 }) {
   return (
@@ -3510,7 +3535,14 @@ function InputsSection({
       title="3. Common Inputs"
       subtitle="Files attached to every job in the batch. (Per-job files come from step 2's upload mode if you used it.)"
     >
-      <Dropzone files={files} onChange={setFiles} disabled={disabled} />
+      <div className="space-y-3">
+        <Dropzone files={files} onChange={setFiles} disabled={disabled} />
+        <ConnectorInputs
+          value={connectorInputs}
+          onChange={setConnectorInputs}
+          disabled={disabled}
+        />
+      </div>
     </SectionCard>
   );
 }

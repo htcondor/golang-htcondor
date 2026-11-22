@@ -169,6 +169,19 @@ func (h *Handler) setupRoutes() {
 	// themselves are registered through MCP.
 	mux.Handle("/api/v1/watches/", cors(h.requireCondorScope(http.HandlerFunc(h.handleWatchPath))))
 
+	// Connectors: a browser session grants this server access to a
+	// third-party account. Deliberately NOT behind requireCondorScope:
+	// these are session-only (see connectCaller), because a browser is
+	// the only thing that can complete the flow, and a bearer-token
+	// gate here would be the wrong gate rather than a stricter one.
+	mux.HandleFunc("/api/v1/pickers", h.handlePickers)
+	// The adapter is served from THIS origin, which is what lets the
+	// page's script-src stay 'self' for it; the adapter is what loads
+	// the provider's script, and that is the origin the policy names.
+	mux.HandleFunc("/picker/", h.handlePickerScript)
+	mux.HandleFunc("/api/v1/connect", h.handleConnectCollection)
+	mux.HandleFunc("/api/v1/connect/", h.handleConnectItem)
+
 	mux.Handle("/api/v1/creds/user", cors(h.requireCondorScope(http.HandlerFunc(h.handleUserCredential))))
 	mux.Handle("/api/v1/creds/service", cors(h.requireCondorScope(http.HandlerFunc(h.handleServiceCredentialCollection))))
 	mux.Handle("/api/v1/creds/service/", cors(h.requireCondorScope(http.HandlerFunc(h.handleServiceCredentialItem))))
@@ -286,6 +299,8 @@ func (h *Handler) setupRoutes() {
 	// site allows it -- publishing one. Registered whatever
 	// HTTP_API_SITE_APPS_DIR says, so the page can explain that the
 	// feature is off rather than 404.
+	mux.Handle("/api/v1/admin/connectors", cors(http.HandlerFunc(h.handleAdminConnectors)))
+	mux.Handle("/api/v1/admin/connectors/", cors(http.HandlerFunc(h.handleAdminConnectors)))
 	mux.Handle("/api/v1/admin/site-apps", cors(http.HandlerFunc(h.handleAdminSiteApps)))
 	mux.Handle("/api/v1/admin/site-apps/", cors(http.HandlerFunc(h.handleAdminSiteApps)))
 	// API key management (admin-only). The collection path covers
