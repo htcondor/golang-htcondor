@@ -1408,7 +1408,7 @@ const openAPISchema = `{
         "responses": {
           "201": {"description": "Created. signing_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
             "webhook": {"$ref": "#/components/schemas/Webhook"},
-            "signing_secret": {"type": "string", "description": "Hex. HMAC-SHA256 key over \"<timestamp>.<idempotency key>.<body>\". Not recoverable later."},
+            "signing_secret": {"type": "string", "description": "The HMAC-SHA256 key over \"<timestamp>.<idempotency key>.<body>\", hex-encoded. DECODE IT before use: the key is the 32 raw bytes, not this 64-character string. Getting that wrong fails silently, since the wrong key still yields a well-formed signature that never matches. Not recoverable later."},
             "secret_shown_once": {"type": "boolean"},
             "signature_header": {"type": "string"},
             "idempotency_header": {"type": "string"}
