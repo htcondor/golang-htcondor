@@ -44,6 +44,7 @@ target instead:
 | --- | --- |
 | `12345.0`, or `12345` | that job, proc 0 if omitted |
 | `+work` | your interactive session called `work`, **started if you have none** |
+| `+jobs` | the **file service**: your finished jobs' output over SFTP |
 | anything else, including a bare `ssh gateway` | your **default** session |
 
 The `+` is required to name a session, and a bare `ssh gateway` reaches the
@@ -60,9 +61,69 @@ none.
 It also reaches a session whose name looks like a job id, which is otherwise
 unreachable because job ids are tried first: `ssh +12345.0@gateway`.
 
+`+jobs` is **reserved**: a session cannot be created with that name, so the
+service can never shadow somebody's shell. The reservation is
+case-insensitive, and it covers every spelling that would derive the same name
+— `+-jobs` reaches the service rather than asking for a session that cannot
+exist. A bare `ssh jobs@gateway` is unaffected and still means your default
+session, because the prefix is what makes a request explicit.
+
 While a newly created session waits in the queue, the terminal shows what it is
 waiting for and how long it has been waiting. Ctrl-C stops waiting; it does
 **not** remove the job, so reconnecting picks the session up once it starts.
+
+## The file service
+
+`ssh +jobs@gateway` is not a shell — it serves your finished jobs' output over
+SFTP, so any client you already have reaches it:
+
+```sh
+sftp -P 2222 +jobs@ap.example.edu
+# sftp> get -r outputs/12345.0
+rsync -av -e 'ssh -p 2222' +jobs@ap.example.edu:outputs/12345.0/ ./results/
+```
+
+The tree is small:
+
+| Path | What it is |
+| --- | --- |
+| `outputs/` | one directory per job whose output you can read (see below) |
+| `outputs/12345.0/` | that job's sandbox, as files |
+| `outputs/12345.0.tar` | the same sandbox as one archive |
+
+The archive is reachable by name but does **not** appear in a listing of
+`outputs/`, on purpose. Listing it would mean knowing its length, and that
+needs the job's file list — so an `ls outputs/` would have to fetch every
+job's sandbox to answer. Inside the job directory it would be worse: `get -r`
+would fetch every file twice, once loose and once inside the archive.
+
+Asking for a shell here gets an explanation rather than a bare failure. The
+surface is read-only; writes are refused with a reason.
+
+**A job is reached by naming it**, and that is the contract; the listing of
+`outputs/` is a convenience. It is currently **empty**, because which jobs to
+list is not one question: a finished job stays in the queue for days under
+`LeaveJobInQueue` and then moves to history, so neither source alone answers
+it. Until an index is wired up, `cd outputs/12345.0` and `get -r
+outputs/12345.0` work and `ls outputs/` shows nothing.
+
+### What it costs
+
+A spooled sandbox can only be read whole — there is no ranged read, and a
+file's size arrives just ahead of its bytes. So the first time you enter a job
+directory, the whole sandbox is transferred once: that pass both learns the
+file list and fills the cache, after which every read of that job is local.
+Without `HTTP_API_SANDBOX_CACHE_DIR` there is no cache, and each file read
+transfers the sandbox again.
+
+That one unavoidable pass is what `HTTP_API_SANDBOX_MAX_GB` protects. A job
+over the limit is refused before any byte moves, because the total size is
+advertised before the first file.
+
+A download that streams — an archive, or any read without a cache — must be
+read **forwards**. A client that seeks backwards more than a few megabytes is
+told so rather than quietly triggering a second full transfer. Ordinary
+clients read forwards.
 
 ## The approval screen
 
@@ -139,6 +200,9 @@ belongs to one database, so replicas would present different host keys.
 | `HTTP_API_SSH_GATEWAY_SESSION_CPUS` | CPUs a session created on demand requests. Default 1. |
 | `HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB` | Memory for the same. Default 1024. |
 | `HTTP_API_SSH_GATEWAY_SESSION_DISK_MB` | Disk for the same. Default 8192 — a VS Code Remote server does not fit in less. |
+| `HTTP_API_SANDBOX_CACHE_DIR` | Where `+jobs` keeps output it has already fetched. Unset means no cache: every read fetches the sandbox again. Must be real local storage with room for the budget below — on `tmpfs` the "cache" is memory the kernel cannot reclaim. Its contents are discarded at every start and may be deleted by hand while the server runs. |
+| `HTTP_API_SANDBOX_CACHE_MB` | That cache's budget in megabytes. Default 4096. Negative disables the cache. |
+| `HTTP_API_SANDBOX_MAX_GB` | Largest job sandbox `+jobs` will serve. Default 8. Negative means no limit. |
 
 The gateway needs OAuth2, which is served whenever the web UI or MCP is
 enabled (see [When OAuth2 is served](server-auth.md#when-oauth2-is-served)), since the device

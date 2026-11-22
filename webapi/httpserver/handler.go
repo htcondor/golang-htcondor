@@ -47,6 +47,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/poolpolicy"
 	"github.com/htcondor/golang-htcondor/webapi/reservation"
 	"github.com/htcondor/golang-htcondor/webapi/runtimeest"
+	"github.com/htcondor/golang-htcondor/webapi/sandboxfs"
 	"github.com/htcondor/golang-htcondor/webapi/shareurl"
 	"github.com/htcondor/golang-htcondor/webapi/siteapps"
 	"github.com/htcondor/golang-htcondor/webapi/sshgateway"
@@ -693,6 +694,10 @@ type Handler struct {
 	sshGatewayIssuer     string
 	sshHostKeyFile       string
 	sshGatewayPublicHost string
+	sandboxCacheDir      string
+	sandboxCacheMB       int
+	sandboxMaxGB         int
+	sandboxStore         *sandboxfs.Store
 	sshCAKeyFile         string
 	// What a session created on demand asks for; zero fields mean
 	// the interactive package's own defaults.
@@ -1102,6 +1107,27 @@ type HandlerConfig struct {
 	// web UI simply does not print an ssh command, which is better
 	// than printing one that does not work.
 	SSHGatewayPublicHost string
+	// SandboxCacheDir is where the +jobs file service keeps job output
+	// it has already fetched. Empty means no byte cache, so every read
+	// streams the sandbox again -- correct, but a client walking a job's
+	// files pays a full transfer per file, because a spooled sandbox has
+	// no ranged read.
+	//
+	// Its contents are discarded at every start and may be deleted by
+	// hand at any time; nothing depends on them.
+	SandboxCacheDir string
+	// SandboxCacheMB is that cache's budget in megabytes. Zero takes a
+	// default, negative disables the cache.
+	SandboxCacheMB int
+	// SandboxMaxGB is the largest job sandbox the file service will
+	// serve, in gigabytes. Zero takes a default, negative means no
+	// limit.
+	//
+	// The limit guards the one unavoidable full-bandwidth read: learning
+	// a sandbox's file list means receiving all of it, because the sizes
+	// arrive one per file just ahead of each body. A job over the limit
+	// is refused before any byte moves.
+	SandboxMaxGB int
 
 	// SSHGatewayLockout refuses connections from a source that keeps
 	// failing to log in. The zero value is enabled with defaults,
@@ -2124,6 +2150,9 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h.sshHostKeyFile = strings.TrimSpace(cfg.SSHHostKeyFile)
 	h.sshCAKeyFile = strings.TrimSpace(cfg.SSHCAKeyFile)
 	h.sshGatewayPublicHost = strings.TrimSpace(cfg.SSHGatewayPublicHost)
+	h.sandboxCacheDir = strings.TrimSpace(cfg.SandboxCacheDir)
+	h.sandboxCacheMB = cfg.SandboxCacheMB
+	h.sandboxMaxGB = cfg.SandboxMaxGB
 	h.sshGatewayLockout = cfg.SSHGatewayLockout
 	h.sshGatewaySessionSpec = sshGatewaySessionSize{
 		Cpus:     cfg.SSHGatewaySessionCpus,

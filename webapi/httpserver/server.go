@@ -323,6 +323,11 @@ type Config struct {
 	SSHCAKeyFile   string
 	// SSHGatewayPublicHost is the name users ssh to; see HandlerConfig.
 	SSHGatewayPublicHost string
+	// SandboxCacheDir, SandboxCacheMB and SandboxMaxGB tune the +jobs
+	// file service's reads. See httpserver.Config.
+	SandboxCacheDir string
+	SandboxCacheMB  int
+	SandboxMaxGB    int
 	// SSHGatewayLockout refuses connections from a source that keeps
 	// failing to log in; see HandlerConfig.
 	SSHGatewayLockout SSHGatewayLockoutConfig
@@ -646,6 +651,9 @@ func NewServer(cfg Config) (*Server, error) {
 		SSHHostKeyFile:              cfg.SSHHostKeyFile,
 		SSHCAKeyFile:                cfg.SSHCAKeyFile,
 		SSHGatewayPublicHost:        cfg.SSHGatewayPublicHost,
+		SandboxCacheDir:             cfg.SandboxCacheDir,
+		SandboxCacheMB:              cfg.SandboxCacheMB,
+		SandboxMaxGB:                cfg.SandboxMaxGB,
 		SSHGatewayLockout:           cfg.SSHGatewayLockout,
 		SSHGatewaySessionCpus:       cfg.SSHGatewaySessionCpus,
 		SSHGatewaySessionMemoryMB:   cfg.SSHGatewaySessionMemoryMB,

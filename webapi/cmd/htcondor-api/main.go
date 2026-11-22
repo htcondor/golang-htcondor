@@ -220,6 +220,9 @@ type mcpConfig struct {
 	sshHostKeyFile    string
 	sshCAKeyFile      string
 	sshGatewayHost    string
+	sandboxCacheDir   string
+	sandboxCacheMB    int
+	sandboxMaxGB      int
 	sshLockout        httpserver.SSHGatewayLockoutConfig
 	sshSessionCpus    int
 	sshSessionMemMB   int
@@ -1399,6 +1402,9 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 	mcpCfg.sshHostKeyFile, _ = cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
 	mcpCfg.sshCAKeyFile, _ = cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
 	mcpCfg.sshGatewayHost, _ = cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
+	mcpCfg.sandboxCacheDir, _ = cfg.Get("HTTP_API_SANDBOX_CACHE_DIR")
+	mcpCfg.sandboxCacheMB = intParam(cfg, "HTTP_API_SANDBOX_CACHE_MB")
+	mcpCfg.sandboxMaxGB = intParam(cfg, "HTTP_API_SANDBOX_MAX_GB")
 	mcpCfg.sshLockout = loadSSHGatewayLockout(cfg, logger)
 	mcpCfg.sshSessionCpus = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_CPUS", logger)
 	mcpCfg.sshSessionMemMB = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB", logger)
@@ -1468,6 +1474,23 @@ func mcpEnabled(cfg *config.Config) bool {
 //
 // Read as a boolean rather than compared against "true", since HTCondor
 // configuration is conventionally written `HTTP_API_RESERVATIONS = True`.
+// intParam reads an integer setting, 0 when unset.
+//
+// A value that is not a number stops the server rather than defaulting:
+// a typo in a size limit is the kind of mistake that is invisible until
+// the limit fails to apply.
+func intParam(cfg *config.Config, key string) int {
+	raw, ok := cfg.Get(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return 0
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		log.Fatalf("invalid %s=%q: must be an integer", key, raw)
+	}
+	return v
+}
+
 func reservationsEnabled(cfg *config.Config) bool {
 	raw, ok := cfg.Get("HTTP_API_RESERVATIONS")
 	if !ok || strings.TrimSpace(raw) == "" {
@@ -2660,6 +2683,9 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		SSHHostKeyFile:             mcpCfg.sshHostKeyFile,
 		SSHCAKeyFile:               mcpCfg.sshCAKeyFile,
 		SSHGatewayPublicHost:       mcpCfg.sshGatewayHost,
+		SandboxCacheDir:            mcpCfg.sandboxCacheDir,
+		SandboxCacheMB:             mcpCfg.sandboxCacheMB,
+		SandboxMaxGB:               mcpCfg.sandboxMaxGB,
 		SSHGatewayLockout:          mcpCfg.sshLockout,
 		SSHGatewaySessionCpus:      mcpCfg.sshSessionCpus,
 		SSHGatewaySessionMemoryMB:  mcpCfg.sshSessionMemMB,

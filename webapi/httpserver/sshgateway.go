@@ -309,6 +309,23 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 		hostCert = signer
 	}
 
+	// The +jobs file service. Offered whenever the gateway is, because it
+	// is strictly less authority than what the gateway already grants: a
+	// shell inside your own job can read the same sandbox, and this is
+	// read-only.
+	//
+	// A failure here does not stop the gateway. Shell access is the
+	// reason the gateway exists, and refusing to start it because a file
+	// cache could not be prepared would trade the feature people depend
+	// on for the one being added.
+	store, err := h.newSandboxStore()
+	if err != nil {
+		h.logger.Warn(logging.DestinationHTTP,
+			"The SSH gateway's job file service is unavailable", "error", err)
+	} else {
+		h.sandboxStore = store
+	}
+
 	listener := &sshgateway.Listener{
 		Addr:     h.sshGatewayAddress,
 		HostKey:  hostKey.Signer,
@@ -325,6 +342,14 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 		},
 		Bans:   bans,
 		Logger: h.logger,
+	}
+
+	if h.sandboxStore != nil {
+		// Set only with a store behind it. A hook that always failed
+		// would accept the channel and then write an error, where a
+		// missing one refuses at channel-open -- which is both cheaper
+		// and what a client reports usefully.
+		listener.Server.Subsystem = h.sshGatewaySubsystem
 	}
 
 	h.sshGateway = listener
