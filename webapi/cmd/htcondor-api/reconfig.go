@@ -53,6 +53,10 @@ type reconfigTarget interface {
 	SetWebUIBrandingDir(string)
 	SetWebUICustomCSS(string)
 	SetWebUIFavicon(string)
+	SetWebUIPrivacyFile(string)
+	SetWebUIPrivacyURL(string)
+	SetWebUITermsFile(string)
+	SetWebUITermsURL(string)
 	SetSuperuserGroups(string)
 	SetProjectLeadsFile(string)
 	SetProjectLeadsGroup(string)
@@ -61,6 +65,10 @@ type reconfigTarget interface {
 	// value: an app's policy is several parameters, and which apps
 	// exist is not known until they are read.
 	SetSiteAppPolicy(*config.Config)
+	// SetConnectorConfig takes the configuration itself for the same
+	// reason SetSiteAppPolicy does: a diff cannot see a connector that
+	// was not there before.
+	SetConnectorConfig(*config.Config)
 	SetMCPDisabledTools(string)
 	SetMCPReadOnly(string)
 	SetMCPConfirmSubmitOver(string)
@@ -272,6 +280,26 @@ var reconfigParams = []reconfigParam{
 		name:  "HTTP_API_WEBUI_FAVICON",
 		apply: func(s reconfigTarget, v string) { s.SetWebUIFavicon(v) },
 	},
+	// The site's policy pages. Reloadable on the same terms: the
+	// document is read when the page is served, so an operator
+	// correcting a sentence does not need a restart -- and neither
+	// does one turning a page on for the first time.
+	{
+		name:  "HTTP_API_WEBUI_PRIVACY_FILE",
+		apply: func(s reconfigTarget, v string) { s.SetWebUIPrivacyFile(v) },
+	},
+	{
+		name:  "HTTP_API_WEBUI_PRIVACY_URL",
+		apply: func(s reconfigTarget, v string) { s.SetWebUIPrivacyURL(v) },
+	},
+	{
+		name:  "HTTP_API_WEBUI_TERMS_FILE",
+		apply: func(s reconfigTarget, v string) { s.SetWebUITermsFile(v) },
+	},
+	{
+		name:  "HTTP_API_WEBUI_TERMS_URL",
+		apply: func(s reconfigTarget, v string) { s.SetWebUITermsURL(v) },
+	},
 	// Membership only: superuser mode is built at startup, so this cannot
 	// switch it on in a running daemon. Emptying it does switch it off.
 	{
@@ -345,6 +373,16 @@ var reconfigParams = []reconfigParam{
 	// Submit-time policy, compiled into the submit policy at startup.
 	{name: "HTTP_API_SUBMIT_FILE_DEFAULTS"},
 	{name: "HTTP_API_SUBMIT_FILE_OVERRIDES"},
+
+	// Idempotency-key enforcement, folded into the Guard at startup.
+	// Restart-only on purpose rather than for want of a setter: the
+	// Guard holds the claims, and rebuilding it would drop every key
+	// claimed in the retention window -- turning a reconfig into a
+	// window in which a retry is accepted twice.
+	{name: "HTTP_API_IDEMPOTENCY_KEY_CHECK"},
+	{name: "HTTP_API_IDEMPOTENCY_KEY_RETENTION"},
+	{name: "HTTP_API_IDEMPOTENCY_KEY_TIMEOUT"},
+	{name: "HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW"},
 	{name: "HTTP_API_INTERACTIVE_REQUIREMENTS"},
 	{name: "HTTP_API_DAGMAN_PATH"},
 	{name: "HTTP_API_DAGMAN_ENVIRONMENT"},
@@ -474,6 +512,12 @@ func (w *reconfigWatcher) reconfigure(cfg *config.Config) {
 	// and the bundle directory rescanned on every reconfigure. This is
 	// also how an operator makes a policy edit take effect now rather
 	// than at the end of the reload interval.
+	// Connector definitions are spread over a parameter per connector
+	// per setting, and declaring a new one adds names nothing was
+	// watching, so the whole lot is re-read on every reconfigure. Same
+	// shape as site app policy directly above, and for the same reason.
+	w.srv.SetConnectorConfig(cfg)
+
 	w.srv.SetSiteAppPolicy(cfg)
 
 	// Same for the project leads file: its contents live outside the

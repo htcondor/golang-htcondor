@@ -123,6 +123,14 @@ const unusedClientTTL = 7 * 24 * time.Hour
 // obtained a token. A client an operator has touched -- annotated, given
 // a service identity, or granted client_credentials or token exchange,
 // none of which a registration can declare -- is kept whatever its use.
+//
+// The origin filter is load-bearing and not a nicety. A client somebody
+// CREATED on purpose -- an operator on the admin page, a user as one of
+// their own integrations -- is a thing with an owner who expects to find
+// it where they left it, and "has obtained no token yet" is the normal
+// state of an integration that has been set up but not yet signed in to.
+// Only a self-registration, which costs nothing and leaves nobody
+// waiting for it, is swept. See TestPurgeUnusedClientsSparesCreated.
 func (h *Handler) purgeUnusedClients(ctx context.Context) (int64, error) {
 	if h.oauth2Provider == nil {
 		return 0, nil
@@ -168,6 +176,16 @@ func (h *Handler) runTokenRetention(ctx context.Context) {
 		} else if n > 0 {
 			h.logger.Info(logging.DestinationHTTP, "Deleted dynamically registered clients that never obtained a token",
 				"clients", n, "after", unusedClientTTL.String())
+		}
+
+		// Settled webhook deliveries. Hourly with the rest rather than
+		// daily: they are written by the evaluator at job rate, which on a
+		// busy access point is a great deal faster than tokens arrive.
+		if n, err := h.pruneWebhookDeliveries(ctx); err != nil {
+			h.logger.Warn(logging.DestinationHTTP, "Webhook delivery sweep failed", "error", err)
+		} else if n > 0 {
+			h.logger.Info(logging.DestinationHTTP, "Deleted settled webhook deliveries",
+				"rows", n, "retention", webhookDeliveryRetention.String())
 		}
 
 		if h.tokenRetentionFor < 0 || time.Since(lastTokenSweep) < 24*time.Hour {

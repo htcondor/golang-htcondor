@@ -45,6 +45,11 @@ func (h *Handler) multiAPWatchSource(feed *jobwatch.Feed) jobwatch.Source {
 // nudger.
 func (h *Handler) startMultiAPWatches(ctx context.Context) {
 	h.startJobWatchEvaluator(ctx)
+	// Hooks are evaluated in multi-AP mode too: the webhook table is this
+	// server's, however many access points it fronts, and the evaluator
+	// reads through the same hub source the watches do.
+	h.startWebhooks(ctx)
+	h.startWebhookNudge(ctx)
 	if h.jobWatchFeed == nil || h.jobWatchEval == nil || h.multi.svc.Hub == nil {
 		return
 	}

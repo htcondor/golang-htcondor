@@ -617,7 +617,7 @@ waiting for their refresh token to lapse. Three knobs:
 
 | Config | Default | Effect |
 | --- | --- | --- |
-| `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME` | `720h` (30d) | Caps a grant's total age, measured from consent, no matter how often it is refreshed. Requires a unit suffix. |
+| `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME` | `720h` (30d) | How long a grant may go **unused** before it must be consented again. Measured from the grant's last use, not from consent: a client that refreshes inside the window keeps its grant indefinitely, which is what lets an unattended integration keep working. An abandoned grant still expires. What bounds a grant in active use is the revocation oracles below, which run on every refresh. Requires a unit suffix. |
 | `HTTP_API_OAUTH2_REVOCATION_ORACLES` | `schedd-userrec` | Comma-separated oracle list consulted on each refresh. |
 | `HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN` | `720h` (30d) | Unchanged: how long one refresh token lives. Every refresh resets it, which is why the cap above exists. |
 
@@ -657,9 +657,18 @@ upstream. Removals are caught by the oracles, by
 ## MCP OAuth2 clients
 
 Clients of the MCP OAuth2 endpoint can register and authenticate several ways.
-The admin UI at `/admin/clients` lists every client and lets an operator edit
-its permitted grant types (and, for `client_credentials`, its service
-identity); other fields are read-only.
+The admin UI at `/admin/clients` lists every client, creates one, and lets an
+operator edit its permitted grant types (and, for `client_credentials`, its
+service identity); other fields are read-only.
+
+Every client records how it came to exist, in its `origin`: `dynamic`
+registered itself, `seeded` was created by the server at startup, `admin` was
+created by an operator, and `user` was created by a user as one of their own
+integrations. That is not only a label for the list -- the sweep that deletes
+unused clients acts on `dynamic` alone, because a client somebody created on
+purpose has an owner who expects to find it where they left it, and "has
+obtained no token yet" is the normal state of an integration that has been set
+up but not yet signed in to.
 
 - **Dynamic Client Registration (DCR, RFC 7591)** — `POST /oauth2/register`
   (also `/mcp/oauth2/register` wherever MCP is on).
@@ -683,6 +692,15 @@ identity); other fields are read-only.
   set `HTTP_API_MCP_CIMD_ALLOWED_HOSTS`** to the hosts of the clients you
   expect: unset, any caller can make this server fetch from any public host
   (each source address is limited to 20 uncached lookups a minute).
+- **Created by an operator** — `POST /api/v1/admin/oauth2/clients`, or the
+  **Create client** form on `/admin/clients`. For the clients that cannot
+  register themselves: `client_credentials` and token exchange act with no
+  user present and are refused to a self-registration, so an operator
+  provisions those here. Also for a service whose vendor wants an id and a
+  secret pasted into a form rather than a discovery document. An operator may
+  ask for anything the server implements. The secret is returned in the
+  creation response and nowhere else.
+- **Created by a user** — see the next section.
 - **`client_credentials`** — a confidential client acting as itself, with no end
   user. Enable the grant in the admin UI and set a **service identity**: that
   identity becomes the subject of the short-lived HTCondor IDTOKEN minted for
@@ -690,6 +708,46 @@ identity); other fields are read-only.
   like any other principal. A client with no service identity configured is
   refused a `client_credentials` token rather than minting one for an ambiguous
   subject. Not available to public clients.
+
+## A user's own integrations
+
+A user connects an outside service to their own account from `/connectors`,
+which mints an OAuth2 client they own (`POST /api/v1/integrations`). This is
+for a service that asks for a client ID and secret to be pasted into a form;
+anything that speaks dynamic registration does not need one.
+
+The direction is worth stating, because the page deliberately carries both
+senses of "connector" and they are opposites. An app connected here holds a
+credential that lets it act **as the user, on this access point**. A connector
+in the other sense is access the user grants **this server, on their account
+somewhere else**.
+
+What a user may mint for themselves is bounded twice, and neither bound is the
+consent screen:
+
+- **Grant types** are restricted to the flows with a person on the other end
+  (`authorization_code`, `refresh_token`, device code) -- the same set
+  self-registration allows. `client_credentials` and token exchange act with
+  nobody present, which is a decision about the deployment rather than about
+  one user's jobs, so an operator provisions those.
+- **Scopes** are intersected with what the creator could consent to at the
+  time, so a client cannot be *registered* for a scope its creator has no
+  claim to. Consent narrows it again at authorization; this keeps the list a
+  client advertises from being an aspiration. `offline_access` is carried
+  through regardless -- it is not a permission over anything, and without it
+  no refresh token is ever issued and an unattended integration stops working
+  at the first token expiry.
+
+Redirect URIs must be `https`, or `http` on loopback: an operator's client may
+use a custom scheme, a user's may not. A user holds at most 20 integrations.
+Deleting one removes every token issued under it, so whatever was using it
+stops immediately.
+
+These endpoints are authenticated by the **browser session only** and are not
+reachable with a bearer token. A client able to mint clients could widen its
+own reach without anybody consenting to the wider one, and a token stolen from
+an integration would be enough to mint a replacement for itself. Minting a
+credential is something a person does while signed in.
 
 ## Token exchange (RFC 8693)
 

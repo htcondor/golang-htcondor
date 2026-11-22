@@ -33,11 +33,13 @@ import (
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/metricsd"
 	"github.com/htcondor/golang-htcondor/webapi/appolicy"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 	"github.com/htcondor/golang-htcondor/webapi/dagman"
 	"github.com/htcondor/golang-htcondor/webapi/dbmirror"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb/seal"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/chat"
+	"github.com/htcondor/golang-htcondor/webapi/idempotency"
 	"github.com/htcondor/golang-htcondor/webapi/jobssh"
 	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
 	"github.com/htcondor/golang-htcondor/webapi/jupytertunnel"
@@ -54,6 +56,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/submitpolicy"
 	"github.com/htcondor/golang-htcondor/webapi/templates"
 	"github.com/htcondor/golang-htcondor/webapi/usagestats"
+	"github.com/htcondor/golang-htcondor/webapi/webhooks"
 	"github.com/ory/fosite"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
@@ -174,6 +177,11 @@ type Handler struct {
 	// overrides, applied to EVERY job this API submits regardless of the
 	// surface it arrived on. Zero value applies nothing.
 	submitPolicy submitpolicy.Policy
+
+	// idempotency refuses a submission whose idempotency key is already
+	// used. Nil where the feature is off, which every call site
+	// tolerates -- the Guard's methods are nil-safe.
+	idempotency *idempotency.Guard
 	// apPolicy holds each access point's policy as its schedd reports
 	// it. Every submit path takes its JOB_DEFAULT_REQUEST* values from
 	// here, and the MCP server shares it, so get_access_point_policy
@@ -419,11 +427,11 @@ type Handler struct {
 	// jobWatchRecheckInterval. Tests only.
 	jobWatchRecheck time.Duration
 
-	// oauth2MaxGrantLifetime caps how long a single consent can be
-	// stretched by refreshing. Every refresh resets the refresh token's
-	// own expiry, so without this a client that refreshes regularly holds
-	// its grant forever. Measured from Session.AuthTime; zero means
-	// DefaultMaxGrantLifetime. See reauthorizeRefreshGrant.
+	// oauth2MaxGrantLifetime caps how long a grant may go UNUSED before it
+	// must be consented again. Measured from Session.LastUsed, which every
+	// refresh advances, so a grant in regular use is not ended by this;
+	// zero means DefaultMaxGrantLifetime. See reauthorizeGrant for why the
+	// cap is an idle one and what that leaves to the oracles.
 	oauth2MaxGrantLifetime time.Duration
 	// revocationOracles are consulted on every refresh grant to decide
 	// whether the user is still entitled to what they hold. They fail
@@ -464,6 +472,31 @@ type Handler struct {
 	// siteApps serves operator-deployed static web apps under /site/.
 	// nil when HTTP_API_SITE_APPS_DIR is unset, which leaves the whole
 	// feature -- routes included -- out of the server.
+	// Connectors: the third-party accounts this server obtains
+	// credentials for on a user's behalf. Not to be confused with
+	// oauth2_clients, which are applications connecting TO this
+	// server's identity provider; these are accounts it connects to.
+	//
+	// connectorConfig holds the *config.Config and reads on each
+	// lookup rather than snapshotting, so there is one copy of the
+	// answer; a reconfigure replaces it whole (SetConnectorConfig).
+	connectorConfig *connectors.ConfigSource
+	// connectorStored is the database half: connectors this server
+	// declares, and what users have granted them. Nil without a
+	// database.
+	connectorStored *connectors.Store
+	// connectorFlows remembers authorizations in flight, bound to the
+	// session that began each one.
+	connectorFlows *connectors.Flow
+	// connectorDriveBaseURL overrides the Drive API root. Empty means
+	// the real one; a test points it at a stand-in.
+	connectorDriveBaseURL string
+	// connectorPickerOverride replaces the origins a connector's file
+	// chooser needs in the CSP. Nil means the connectors' own; a test
+	// points it at its stand-in so the policy under test is the policy
+	// that ships.
+	connectorPickerOverride *PickerOrigins
+
 	siteApps *siteapps.Library
 	// siteAppConfig is the configuration-backed policy alone. Kept
 	// apart from the library's chained source so the upload path can
@@ -562,6 +595,14 @@ type Handler struct {
 	jobWatch     *jobwatch.Store
 	jobWatchEval *jobwatch.Evaluator
 	jobWatchFeed *jobwatch.Feed
+
+	// Outbound webhooks. The evaluator reads jobs through the same source
+	// as jobWatchEval, so a hook and a watch over the same jobs cannot
+	// disagree about whether one finished; see initWebhooks.
+	webhooks        *webhooks.Store
+	webhookEval     *webhooks.Evaluator
+	webhookDispatch *webhooks.Dispatcher
+	webhookSender   *webhooks.Sender
 	// runtimeEst answers runtime estimates and runtimeRefresher keeps it
 	// fed from the mirror's history; both nil when the feature is off.
 	// See runtime_estimate.go.
@@ -831,7 +872,32 @@ type HandlerConfig struct {
 	// Same trust model as InteractiveExtraSubmit: operator-only config,
 	// spliced in verbatim.
 	SubmitFileOverrides string
-	UserHeader          string // HTTP header to extract username from (optional)
+
+	// IdempotencyKeyCheck is how much of the idempotency-key guarantee
+	// this access point enforces: NONE, QUEUE, FULL or AUTO (the
+	// default: FULL where an htcondordb mirror is configured, QUEUE
+	// where none is). Configure via HTTP_API_IDEMPOTENCY_KEY_CHECK.
+	// See webapi/idempotency.
+	IdempotencyKeyCheck string
+	// IdempotencyKeyRetention is how long a key this server submitted
+	// stays claimed in memory, covering the window in which a finished
+	// job is in neither the queue nor the mirrored history. Zero means
+	// idempotency.DefaultRetention. Configure via
+	// HTTP_API_IDEMPOTENCY_KEY_RETENTION (seconds).
+	IdempotencyKeyRetention time.Duration
+	// IdempotencyKeyTimeout bounds the queue and history lookups a
+	// keyed submission waits on. Zero means
+	// idempotency.DefaultTimeout. Configure via
+	// HTTP_API_IDEMPOTENCY_KEY_TIMEOUT (seconds).
+	IdempotencyKeyTimeout time.Duration
+	// IdempotencyKeyHistoryWindow, when non-zero, limits the history
+	// lookup to that much of the past. It trades the guarantee for the
+	// cost of the read and is not needed where the history is indexed
+	// on the key. Configure via
+	// HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW (seconds).
+	IdempotencyKeyHistoryWindow time.Duration
+
+	UserHeader string // HTTP header to extract username from (optional)
 	// UserHeaderTrustedProxies is a list of CIDRs from which UserHeader
 	// is honored. When UserHeader is set, this list MUST be non-empty
 	// (or UserHeaderTrustAnyUnsafe must be true) — otherwise the
@@ -1289,6 +1355,20 @@ type HandlerConfig struct {
 	// the directory. Empty disables site apps entirely: no library is
 	// built and no /site/ route is registered.
 	SiteAppsDir string
+	// WebhooksDisabled is HTTP_API_WEBHOOKS set false: outbound webhooks
+	// are not offered at all.
+	//
+	// Negated so the zero value leaves them ON, which is what every other
+	// user-facing feature in this struct does and what a test constructing
+	// a bare Config expects. An operator turning them off is making a
+	// decision about egress -- a webhook makes this daemon POST to an
+	// address a user chose -- so it deserves a knob even though the
+	// destination is already restricted to routable public addresses.
+	WebhooksDisabled bool
+	// WebhookFanoutLimit is HTTP_API_WEBHOOK_FANOUT_LIMIT: the most jobs
+	// one webhook may deliver for before it rolls up and is disabled. Zero
+	// selects the package default.
+	WebhookFanoutLimit int
 	// SiteAppsUpload is HTTP_API_SITE_APPS_UPLOAD: whether
 	// administrators may publish a bundle through the web interface.
 	// False unless the site says otherwise; see siteapps_admin.go.
@@ -1342,6 +1422,14 @@ type HandlerConfig struct {
 	// WebUIFavicon is a URL for the tab icon, normally one of the files
 	// in WebUIBrandingDir.
 	WebUIFavicon string
+	// The site's policy pages, served at /privacy and /terms. Each is
+	// a markdown file (or "default" for the shipped template), or
+	// failing that a URL to redirect to. Empty serves no page and puts
+	// no link in the footer. See httpserver/policy.go.
+	WebUIPrivacyFile string
+	WebUIPrivacyURL  string
+	WebUITermsFile   string
+	WebUITermsURL    string
 
 	EnableIDP bool // Enable built-in IDP (always enabled in demo mode)
 	// SpoolBufferDir is where cluster-wide uploads buffer their tar.
@@ -1723,6 +1811,30 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		logger.Info(logging.DestinationHTTP, "Site submit-file policy loaded",
 			"defaults_bytes", len(cfg.SubmitFileDefaults),
 			"overrides_bytes", len(cfg.SubmitFileOverrides))
+	}
+
+	// The idempotency-key guard. Built after the mirror (h.dbMirror is
+	// set in the literal above) because ModeAuto resolves against
+	// whether one is configured.
+	if mode, err := idempotency.ParseMode(cfg.IdempotencyKeyCheck); err != nil {
+		logger.Error(logging.DestinationHTTP,
+			"HTTP_API_IDEMPOTENCY_KEY_CHECK is not a mode; idempotency keys are not enforced",
+			"value", cfg.IdempotencyKeyCheck, "error", err)
+	} else {
+		h.idempotency = idempotency.NewGuard(idempotency.Config{
+			Mode:          mode,
+			Retention:     cfg.IdempotencyKeyRetention,
+			Timeout:       cfg.IdempotencyKeyTimeout,
+			HistoryWindow: cfg.IdempotencyKeyHistoryWindow,
+		}, idemLookups{h: h})
+		// Say which guarantee is in force, resolved rather than as
+		// configured: "AUTO" in a log line tells an operator nothing,
+		// and the difference between FULL and QUEUE is the difference
+		// between the feature working and half working.
+		logger.Info(logging.DestinationHTTP, "Idempotency keys",
+			"configured", mode.String(),
+			"enforcing", h.idempotency.Mode().String(),
+			"header", IdempotencyKeyHeader)
 	}
 
 	h.build = cfg.Build
@@ -2269,6 +2381,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h.siteAppsReloadInterval = cfg.SiteAppsReloadInterval
 	h.siteAppUpload = cfg.SiteAppsUpload
 	h.siteAppGitHub = cfg.SiteAppsGitHub
+	h.newConnectors(cfg.HTCondorConfig)
 	h.siteApps = h.newSiteAppLibrary(cfg.SiteAppsDir, cfg.HTCondorConfig)
 	h.branding = newBrandingState(logger, brandingOptions{
 		SiteName:    cfg.WebUISiteName,
@@ -2277,6 +2390,10 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		Favicon:     cfg.WebUIFavicon,
 		Dir:         cfg.WebUIBrandingDir,
 		CSSFile:     cfg.WebUICustomCSS,
+		PrivacyFile: cfg.WebUIPrivacyFile,
+		PrivacyURL:  cfg.WebUIPrivacyURL,
+		TermsFile:   cfg.WebUITermsFile,
+		TermsURL:    cfg.WebUITermsURL,
 	})
 
 	// Parsed once, here, so a malformed policy stops the daemon at startup
@@ -2655,6 +2772,8 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	// The feed keeps of each job only what the watches, the activity
 	// stream and the dashboard read (jobwatch.FeedAttrs), not whole ads.
 	h.jobWatchFeed.Keep = h.jobWatchEval.LiveAttrs
+	// Outbound webhooks ride the same source and the same feed.
+	h.initWebhooks(cfg, watchSrc)
 
 	h.initRuntimeEstimates(cfg)
 
@@ -2710,6 +2829,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		DisableSecretRedaction: h.mcpDisableSecretRedaction,
 		RedactDisabledRules:    h.mcpRedactDisabledRules,
 		SubmitPolicy:           h.submitPolicy,
+		Idempotency:            h.idempotency,
 		// The same preparation every REST submit path runs (see
 		// Handler.submitJob), handed over so the agent tools and the
 		// interactive sessions the SSH gateway creates get it too. One
@@ -2873,7 +2993,7 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isTransparentProxyPath(r.URL.Path) {
 		// The site's own logo origins widen img-src; see
 		// brandingSnapshot.imgSrc.
-		applySecurityHeaders(w, h.branding.snapshot().imgSrc, h.siteAppGitHub)
+		applySecurityHeaders(w, h.branding.snapshot().imgSrc, h.siteAppGitHub, h.pickerOrigins())
 	}
 	// Bound every request body, for the same reason again: a route added
 	// later inherits it. Routes that need more (uploads, MCP) or less say
@@ -3165,7 +3285,7 @@ func (h *Handler) isUserHeaderTrustedSource(r *http.Request) bool {
 //     Named rather than left open because a policy that permits any
 //     origin permits exfiltration to any origin, which is most of what
 //     a CSP on an authenticated page is for.
-func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub bool) {
+func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub bool, picker PickerOrigins) {
 	h := w.Header()
 	if h.Get("Content-Security-Policy") == "" {
 		if brandingImgSrc != "" {
@@ -3175,12 +3295,27 @@ func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub b
 		if gitHub {
 			connectSrc += " https://api.github.com"
 		}
+		// A connector's file chooser is not a library this server can
+		// host: it loads from the provider, renders in the provider's
+		// IFRAME and calls the provider's API. Each is refused by the
+		// browser under default-src 'self' unless named here.
+		//
+		// frame-src is stated even when empty, because a CSP with no
+		// frame-src falls back to default-src -- the fallback is what
+		// makes a missing directive invisible until somebody opens the
+		// page and sees an empty box.
+		connectSrc += joinOrigins(picker.Connect)
+		scriptSrc := "script-src 'self' 'unsafe-inline'" + joinOrigins(picker.Script)
+		frameSrc := "frame-src 'self'" + joinOrigins(picker.Frame)
+		imgSrc := "img-src 'self' data: blob:" + brandingImgSrc + joinOrigins(picker.Img)
+
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"img-src 'self' data: blob:"+brandingImgSrc+"; "+
+				imgSrc+"; "+
 				"style-src 'self' 'unsafe-inline'; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				scriptSrc+"; "+
 				connectSrc+"; "+
+				frameSrc+"; "+
 				"object-src 'none'; "+
 				"frame-ancestors 'self'; "+
 				"base-uri 'self'")
@@ -3194,6 +3329,19 @@ func applySecurityHeaders(w http.ResponseWriter, brandingImgSrc string, gitHub b
 	if h.Get("Referrer-Policy") == "" {
 		h.Set("Referrer-Policy", "same-origin")
 	}
+}
+
+// joinOrigins renders origins for a CSP directive, each preceded by a
+// space, or nothing at all when there are none.
+//
+// Named rather than opened: a policy permitting any origin permits
+// exfiltration to any origin, which is most of what a CSP on an
+// authenticated page is for.
+func joinOrigins(origins []string) string {
+	if len(origins) == 0 {
+		return ""
+	}
+	return " " + strings.Join(origins, " ")
 }
 
 // Start initializes the handler and starts background goroutines.
@@ -3298,6 +3446,8 @@ func (h *Handler) Start(ctx context.Context, ln net.Listener, protocol string) e
 	h.startJobWatchEvaluator(h.ctx)
 	h.startJobWatchFeed(h.ctx)
 	h.startJobWatchNudge(h.ctx)
+	h.startWebhooks(h.ctx)
+	h.startWebhookNudge(h.ctx)
 	h.startJupyterSweeper(h.ctx)
 	h.startRuntimeEstimates(h.ctx)
 	h.startReservations(h.ctx)

@@ -1410,3 +1410,107 @@ func (s *Handler) handleAdminRevokeTokens(w http.ResponseWriter, r *http.Request
 
 	s.writeJSON(w, http.StatusOK, resp)
 }
+
+// adminClientCreateRequest is the POST body for creating a client from the
+// admin page.
+//
+// An operator may ask for anything the server implements, which is the
+// difference between this and both of the other two creation paths: dynamic
+// registration and a user's own integration are each restricted to the flows
+// with a person on the other end, because neither has an operator's standing
+// to provision a credential that acts on its own.
+type adminClientCreateRequest struct {
+	Name           string   `json:"name"`
+	Notes          string   `json:"notes"`
+	RedirectURIs   []string `json:"redirect_uris"`
+	GrantTypes     []string `json:"grant_types"`
+	ResponseTypes  []string `json:"response_types"`
+	Scopes         []string `json:"scopes"`
+	Public         bool     `json:"public"`
+	ServiceSubject string   `json:"service_subject"`
+}
+
+// handleAdminCreateClient handles POST /api/v1/admin/oauth2/clients.
+//
+// The counterpart to dynamic registration, for the clients that cannot
+// register themselves: a service account holding client_credentials, a
+// trusted client doing token exchange, or simply an integration whose vendor
+// wants an id and a secret pasted into a form rather than a discovery
+// document. Those are the cases where there has to be a place a human
+// decides, and before this there was none -- the only way to get such a
+// client was to register one dynamically and then PATCH its grants.
+func (s *Handler) handleAdminCreateClient(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	if s.oauth2Provider == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "OAuth2 provider not configured")
+		return
+	}
+
+	if !s.requireJSONRequest(w, r) {
+		return
+	}
+	setBodyLimit(w, r, 64<<10)
+	var req adminClientCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		s.writeError(w, http.StatusBadRequest, "A name is required")
+		return
+	}
+	if len(req.Notes) > maxClientNotesLen {
+		s.writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("Notes must be at most %d characters", maxClientNotesLen))
+		return
+	}
+	// A client_credentials client with no service subject authenticates and
+	// then asserts nobody, so every token it gets is refused downstream.
+	// Saying so here beats shipping a client that cannot work.
+	if containsString(req.GrantTypes, "client_credentials") && strings.TrimSpace(req.ServiceSubject) == "" {
+		s.writeError(w, http.StatusBadRequest,
+			"A client_credentials client needs a service subject: the identity its tokens assert")
+		return
+	}
+
+	created, err := s.createOAuth2Client(r.Context(), clientCreateSpec{
+		Name:           strings.TrimSpace(req.Name),
+		Notes:          req.Notes,
+		RedirectURIs:   req.RedirectURIs,
+		GrantTypes:     req.GrantTypes,
+		ResponseTypes:  req.ResponseTypes,
+		Scopes:         req.Scopes,
+		Public:         req.Public,
+		ServiceSubject: strings.TrimSpace(req.ServiceSubject),
+		Origin:         ClientOriginAdmin,
+	})
+	if err != nil {
+		s.logger.Warn(logging.DestinationHTTP, "Refused to create an OAuth2 client", "error", err)
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.logger.Info(logging.DestinationHTTP, "Admin created OAuth2 client",
+		"client_id", created.ID, "name", req.Name,
+		"grant_types", strings.Join(req.GrantTypes, ","))
+
+	resp := map[string]any{
+		"id":            created.ID,
+		"name":          strings.TrimSpace(req.Name),
+		"redirect_uris": req.RedirectURIs,
+		"grant_types":   req.GrantTypes,
+		"scopes":        req.Scopes,
+		"public":        req.Public,
+		"origin":        string(ClientOriginAdmin),
+	}
+	if created.Secret != "" {
+		// Shown once. Nothing can recover it afterwards, which is what
+		// makes replacing the client the answer to losing it.
+		resp["client_secret"] = created.Secret
+		resp["secret_shown_once"] = true
+	}
+	resp["endpoints"] = s.oauth2ClientEndpoints()
+	s.writeJSON(w, http.StatusCreated, resp)
+}

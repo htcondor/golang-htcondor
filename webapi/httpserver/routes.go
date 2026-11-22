@@ -104,6 +104,14 @@ func (h *Handler) setupRoutes() {
 	mux.HandleFunc(webui.CSSPath, h.handleBrandingCSS)
 	mux.HandleFunc(brandingAssetPrefix, h.handleBrandingAsset)
 
+	// The site's policy pages, on the same terms: registered always,
+	// 404 until an operator configures one. Unauthenticated, because
+	// the people they are written for -- someone deciding whether to
+	// use the service, and the reviewer of an application that
+	// integrates with it -- do not have accounts here.
+	mux.HandleFunc(webui.PrivacyPath, h.handlePrivacyPage)
+	mux.HandleFunc(webui.TermsPath, h.handleTermsPage)
+
 	// Site apps: operator-deployed static web apps, each gated on the
 	// groups its policy file names. Registered only when a bundle
 	// directory is configured, so a server not using the feature
@@ -169,6 +177,19 @@ func (h *Handler) setupRoutes() {
 	// themselves are registered through MCP.
 	mux.Handle("/api/v1/watches/", cors(h.requireCondorScope(http.HandlerFunc(h.handleWatchPath))))
 
+	// Connectors: a browser session grants this server access to a
+	// third-party account. Deliberately NOT behind requireCondorScope:
+	// these are session-only (see connectCaller), because a browser is
+	// the only thing that can complete the flow, and a bearer-token
+	// gate here would be the wrong gate rather than a stricter one.
+	mux.HandleFunc("/api/v1/pickers", h.handlePickers)
+	// The adapter is served from THIS origin, which is what lets the
+	// page's script-src stay 'self' for it; the adapter is what loads
+	// the provider's script, and that is the origin the policy names.
+	mux.HandleFunc("/picker/", h.handlePickerScript)
+	mux.HandleFunc("/api/v1/connect", h.handleConnectCollection)
+	mux.HandleFunc("/api/v1/connect/", h.handleConnectItem)
+
 	mux.Handle("/api/v1/creds/user", cors(h.requireCondorScope(http.HandlerFunc(h.handleUserCredential))))
 	mux.Handle("/api/v1/creds/service", cors(h.requireCondorScope(http.HandlerFunc(h.handleServiceCredentialCollection))))
 	mux.Handle("/api/v1/creds/service/", cors(h.requireCondorScope(http.HandlerFunc(h.handleServiceCredentialItem))))
@@ -203,6 +224,21 @@ func (h *Handler) setupRoutes() {
 	// is the one thing the token exists to prevent.
 	mux.Handle(sshConsentReadPath, http.HandlerFunc(h.handleSSHConsentRead))
 	mux.Handle(sshConsentApprovePath, http.HandlerFunc(h.handleSSHConsentApprove))
+
+	// A user's own OAuth2 clients -- the inbound half of a connector, where
+	// an outside service holds a credential to act as them here. Gated on
+	// the browser session inside the handlers, never on a bearer token:
+	// see handlers_integrations.go.
+	mux.Handle("/api/v1/integrations", cors(http.HandlerFunc(h.handleIntegrations)))
+	mux.Handle("/api/v1/integrations/", cors(http.HandlerFunc(h.handleIntegrationItem)))
+
+	// Outbound webhooks -- the other direction: this server posts to a
+	// service when something happens to the caller's jobs. Session-gated
+	// inside the handlers for a reason of their own: a destination is a
+	// capability URL, so a token that could read one back would be enough
+	// to post there itself. See handlers_webhooks.go.
+	mux.Handle("/api/v1/webhooks", cors(http.HandlerFunc(h.handleWebhooks)))
+	mux.Handle("/api/v1/webhooks/", cors(http.HandlerFunc(h.handleWebhookItem)))
 
 	// Web UI session endpoints (browser-session aware; cookie-only)
 	mux.Handle("/api/v1/auth/me", cors(http.HandlerFunc(h.handleAuthMe)))
@@ -263,7 +299,15 @@ func (h *Handler) setupRoutes() {
 	mux.Handle("/api/v1/admin/reservations/health", cors(http.HandlerFunc(h.handleAdminReservationHealth)))
 	mux.Handle("/api/v1/admin/reservations/windows", cors(http.HandlerFunc(h.handleAdminReservationWindowsPreview)))
 	mux.Handle("/api/v1/admin/reservations/", cors(http.HandlerFunc(h.handleAdminReservation)))
-	mux.Handle("/api/v1/admin/oauth2/clients", cors(http.HandlerFunc(h.handleAdminListClients)))
+	// GET lists clients, POST creates one. The two are split here so each
+	// handler stays about one verb, the way the per-client path below is.
+	mux.Handle("/api/v1/admin/oauth2/clients", cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.handleAdminCreateClient(w, r)
+			return
+		}
+		h.handleAdminListClients(w, r)
+	})))
 	// The per-client path carries both the delete and the notes edit;
 	// split here so each handler can stay about one verb.
 	mux.Handle("/api/v1/admin/oauth2/clients/", cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -286,6 +330,8 @@ func (h *Handler) setupRoutes() {
 	// site allows it -- publishing one. Registered whatever
 	// HTTP_API_SITE_APPS_DIR says, so the page can explain that the
 	// feature is off rather than 404.
+	mux.Handle("/api/v1/admin/connectors", cors(http.HandlerFunc(h.handleAdminConnectors)))
+	mux.Handle("/api/v1/admin/connectors/", cors(http.HandlerFunc(h.handleAdminConnectors)))
 	mux.Handle("/api/v1/admin/site-apps", cors(http.HandlerFunc(h.handleAdminSiteApps)))
 	mux.Handle("/api/v1/admin/site-apps/", cors(http.HandlerFunc(h.handleAdminSiteApps)))
 	// API key management (admin-only). The collection path covers

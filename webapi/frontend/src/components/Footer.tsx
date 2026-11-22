@@ -43,6 +43,32 @@ import { useBranding } from '@/lib/branding';
 const CHTC_HOMEPAGE = 'https://chtc.cs.wisc.edu/';
 const HTCONDOR_HOMEPAGE = 'https://htcondor.org/';
 
+// PolicyLinks renders the site's privacy notice and terms of use, when
+// it has them. A deployment that has configured neither gets nothing --
+// not a disabled link, and not a link to a page that 404s, which is how
+// a reader concludes the policy is missing rather than unconfigured.
+//
+// These open in the same tab, unlike the institutional logos above: a
+// policy is part of this site, and someone who clicks through to read
+// it expects to come back with the Back button.
+function PolicyLinks({ privacy, terms }: { privacy?: string; terms?: string }) {
+  if (!privacy && !terms) return null;
+  return (
+    <nav className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-500">
+      {privacy && (
+        <a href={privacy} className="underline hover:text-gray-700">
+          Privacy
+        </a>
+      )}
+      {terms && (
+        <a href={terms} className="underline hover:text-gray-700">
+          Terms of Use
+        </a>
+      )}
+    </nav>
+  );
+}
+
 export function Footer() {
   const branding = useBranding();
   const logos = branding.footer_logos;
@@ -105,6 +131,8 @@ export function Footer() {
             />
           </div>
         )}
+
+        <PolicyLinks privacy={branding.privacy_url} terms={branding.terms_url} />
 
         {branding.software_credit && (
           <p

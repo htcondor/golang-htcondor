@@ -18,7 +18,6 @@ import (
 	"github.com/bbockelm/cedar/security"
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/config"
-	"github.com/htcondor/golang-htcondor/droppriv"
 	"github.com/htcondor/golang-htcondor/idmap"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/apikey"
@@ -214,6 +213,14 @@ type Config struct {
 
 	SubmitFileDefaults  string
 	SubmitFileOverrides string
+
+	// Idempotency-key enforcement; see HandlerConfig for what each
+	// does. Configurable via HTTP_API_IDEMPOTENCY_KEY_CHECK,
+	// _RETENTION, _TIMEOUT and _HISTORY_WINDOW.
+	IdempotencyKeyCheck         string
+	IdempotencyKeyRetention     time.Duration
+	IdempotencyKeyTimeout       time.Duration
+	IdempotencyKeyHistoryWindow time.Duration
 
 	// Batch-submission template paths.
 	TemplateGlobalPath string // Optional YAML file with operator-curated templates
@@ -413,6 +420,13 @@ type Config struct {
 	SiteAppsDir string
 	// SiteAppsReloadInterval is how often that directory is rescanned.
 	SiteAppsReloadInterval time.Duration
+	// WebhooksDisabled turns outbound webhooks off entirely
+	// (HTTP_API_WEBHOOKS = false). Negated so the zero value leaves them
+	// on, as every other user-facing feature here does.
+	WebhooksDisabled bool
+	// WebhookFanoutLimit caps how many jobs one webhook may deliver for
+	// before it rolls up and is disabled. Zero selects the default.
+	WebhookFanoutLimit int
 	// SiteAppsUpload is whether administrators may publish a bundle
 	// through the web interface (HTTP_API_SITE_APPS_UPLOAD).
 	SiteAppsUpload bool
@@ -445,6 +459,13 @@ type Config struct {
 	WebUIBrandingDir string
 	WebUICustomCSS   string
 	WebUIFavicon     string
+	// The site's policy pages, served at /privacy and /terms. Each is
+	// a markdown file (or "default"), or failing that a URL to
+	// redirect to. Unset serves neither. See httpserver/policy.go.
+	WebUIPrivacyFile string
+	WebUIPrivacyURL  string
+	WebUITermsFile   string
+	WebUITermsURL    string
 	// SpoolBufferDir is where a cluster-wide upload buffers its tar
 	// before fanning it out to each proc. Empty selects the system temp
 	// directory.
@@ -627,6 +648,10 @@ func NewServer(cfg Config) (*Server, error) {
 		DBMirrorTokenSubject:        cfg.DBMirrorTokenSubject,
 		SubmitFileDefaults:          cfg.SubmitFileDefaults,
 		SubmitFileOverrides:         cfg.SubmitFileOverrides,
+		IdempotencyKeyCheck:         cfg.IdempotencyKeyCheck,
+		IdempotencyKeyRetention:     cfg.IdempotencyKeyRetention,
+		IdempotencyKeyTimeout:       cfg.IdempotencyKeyTimeout,
+		IdempotencyKeyHistoryWindow: cfg.IdempotencyKeyHistoryWindow,
 		TemplateGlobalPath:          cfg.TemplateGlobalPath,
 		OAuth2Issuer:                cfg.OAuth2Issuer,
 		MCPCIMDEnabled:              cfg.MCPCIMDEnabled,
@@ -680,6 +705,8 @@ func NewServer(cfg Config) (*Server, error) {
 		WebUIAppOnlyGroup:           cfg.WebUIAppOnlyGroup,
 		SiteAppsDir:                 cfg.SiteAppsDir,
 		SiteAppsReloadInterval:      cfg.SiteAppsReloadInterval,
+		WebhooksDisabled:            cfg.WebhooksDisabled,
+		WebhookFanoutLimit:          cfg.WebhookFanoutLimit,
 		SiteAppsUpload:              cfg.SiteAppsUpload,
 		SiteAppsGitHub:              cfg.SiteAppsGitHub,
 		MCPSkillsReloadInterval:     cfg.MCPSkillsReloadInterval,
@@ -700,6 +727,10 @@ func NewServer(cfg Config) (*Server, error) {
 		WebUIBrandingDir:            cfg.WebUIBrandingDir,
 		WebUICustomCSS:              cfg.WebUICustomCSS,
 		WebUIFavicon:                cfg.WebUIFavicon,
+		WebUIPrivacyFile:            cfg.WebUIPrivacyFile,
+		WebUIPrivacyURL:             cfg.WebUIPrivacyURL,
+		WebUITermsFile:              cfg.WebUITermsFile,
+		WebUITermsURL:               cfg.WebUITermsURL,
 		WebUIAccessGroup:            cfg.WebUIAccessGroup,
 		SpoolBufferDir:              cfg.SpoolBufferDir,
 		SuperuserGroup:              cfg.SuperuserGroup,
@@ -1037,32 +1068,6 @@ func (s *Server) ServeMCPListener(ln net.Listener, certFile, keyFile string) err
 // to land if one is ever wanted.
 func (s *Server) certReloadInterval() time.Duration {
 	return defaultCertReloadInterval
-}
-
-// loadKeyPairMaybeAsRoot reads a TLS certificate and key through the
-// privileged credential path.
-//
-// http.Server.ServeTLS(ln, certFile, keyFile) reads those files itself,
-// with a plain os.ReadFile under the process's current identity. On an
-// access point the key is root-owned -- /etc/pki/tls/private/... is the
-// normal posture -- while the daemon has dropped to the condor account,
-// so the handshake setup fails at startup with "permission denied", the
-// same way the KEK and the token signing key did before they were
-// routed through droppriv.
-func loadKeyPairMaybeAsRoot(certFile, keyFile string) (tls.Certificate, error) {
-	certPEM, err := droppriv.ReadFileMaybeAsRoot(certFile)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("reading TLS certificate %s: %w", certFile, err)
-	}
-	keyPEM, err := droppriv.ReadFileMaybeAsRoot(keyFile)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("reading TLS key %s: %w", keyFile, err)
-	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parsing TLS keypair (%s, %s): %w", certFile, keyFile, err)
-	}
-	return cert, nil
 }
 
 // serveTLSWithCredentials is ServeTLS with the keypair read through the

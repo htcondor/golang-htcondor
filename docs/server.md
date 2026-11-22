@@ -30,6 +30,7 @@ configured server. Each larger feature has a page of its own:
 | [Runtime and drain estimates](server-estimates.md) | How long a job will run; when a node would be empty |
 | [Web UI branding](server-branding.md) | Making the pages say who runs this access point |
 | [Site apps](server-site-apps.md) | Serving a lab's own web interface, to the people it belongs to |
+| [Outbound webhooks](server-webhooks.md) | Posting to a service when a user's jobs change state |
 | [Reservations](server-reservations.md) | Holding pool capacity for a class or other scheduled work |
 | [Placement](server-placement.md) | Onboarding users through `condor_placementd` |
 | [Reaching jobs behind CCB](server-networking.md) | Connecting into jobs on firewalled execute nodes |

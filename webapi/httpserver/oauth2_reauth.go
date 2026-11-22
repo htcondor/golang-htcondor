@@ -12,8 +12,10 @@ import (
 	"github.com/htcondor/golang-htcondor/logging"
 )
 
-// DefaultMaxGrantLifetime bounds how long a single consent can be stretched
-// by refreshing. See Handler.oauth2MaxGrantLifetime.
+// DefaultMaxGrantLifetime bounds how long a grant may go UNUSED before it
+// must be consented again. It is measured from the grant's last use, so a
+// grant refreshed inside the window keeps running indefinitely; see the idle
+// cap in reauthorizeGrant and Handler.oauth2MaxGrantLifetime.
 const DefaultMaxGrantLifetime = 30 * 24 * time.Hour
 
 // UserStatus is an oracle's verdict on whether a user is still entitled to
@@ -163,24 +165,59 @@ func (h *Handler) reauthorizeGrant(ctx context.Context, ar fosite.Requester) ([]
 		return granted, nil
 	}
 
-	// --- absolute lifetime cap ------------------------------------------
+	// --- idle cap --------------------------------------------------------
+	//
+	// Measured from the grant's last use, not from consent. A grant that
+	// keeps being exercised lives for as long as it keeps being
+	// exercised; what the cap ends is a grant nobody has used for the
+	// configured window.
+	//
+	// That is a deliberate trade and it is worth naming. An absolute cap
+	// forces a human back through consent on a fixed schedule, which is
+	// the strongest bound available but also breaks every unattended
+	// integration on a timer -- a background job that refreshes weekly
+	// has nobody to re-consent, and it fails at the cap rather than at
+	// anything that went wrong. An idle cap keeps that integration
+	// working and still reaps an abandoned grant, leaving the oracles and
+	// the admin revoke endpoint as what acts on a grant in active use by
+	// someone who should no longer hold it. Those run on EVERY refresh,
+	// where the absolute cap ran once; this moves the bound from "when
+	// was consent" to "is the user still entitled", which is the question
+	// that was always the one worth asking.
 	if sess.AuthTime.IsZero() {
 		// Same migration case as above, reached when an older row did
-		// carry a Session but no auth time. Stamp it so the cap starts
-		// running from first sight instead of never.
+		// carry a Session but no auth time. Stamp it so the cap has a
+		// clock to run from at all instead of none.
 		sess.AuthTime = time.Now().UTC()
 		h.logger.Info(logging.DestinationHTTP,
 			"Stamping auth time on a grant that predates the lifetime cap",
 			"username", username, "request_id", ar.GetID())
-	} else if age := time.Since(sess.AuthTime); age > h.maxGrantLifetime() {
-		reason := fmt.Sprintf("grant exceeded the maximum lifetime of %s (authorized %s ago)",
-			h.maxGrantLifetime(), age.Round(time.Minute))
-		h.logger.Info(logging.DestinationHTTP, "Revoking refresh grant past its lifetime cap",
+	}
+	// A grant consented before LastUsed existed, and one consented a
+	// moment ago, both have consent as their only recorded use.
+	lastUse := sess.LastUsed
+	if lastUse.IsZero() {
+		lastUse = sess.AuthTime
+	}
+	if idle := time.Since(lastUse); idle > h.maxGrantLifetime() {
+		reason := fmt.Sprintf("grant unused for longer than the maximum of %s (last used %s ago)",
+			h.maxGrantLifetime(), idle.Round(time.Minute))
+		h.logger.Info(logging.DestinationHTTP, "Revoking refresh grant past its idle cap",
 			"username", username, "request_id", ar.GetID(),
-			"auth_time", sess.AuthTime, "age", age.Round(time.Minute))
+			"auth_time", sess.AuthTime, "last_used", lastUse, "idle", idle.Round(time.Minute))
 		h.revokeGrant(ctx, ar.GetID(), username, reason)
 		return nil, grantRevokedError(reason)
 	}
+	// Record this use, so the next cap is measured from here. The session
+	// mutated here is the one fosite persists with the tokens it is about
+	// to mint, which is what makes the stamp durable -- the same mechanism
+	// the AuthTime stamp above has always relied on.
+	//
+	// Token exchange is the exception: it mints from the subject token's
+	// grant but stores a session of its own, so a stamp on the parent
+	// grant's session may not outlive the call. An exchanged-from grant
+	// whose own tokens are never refreshed therefore still idles out.
+	sess.LastUsed = time.Now().UTC()
 
 	// A placement grant (one holding the placement scope) is held to the placementd's current answer
 	// for its identity, and to nothing else: it carries no scope the group

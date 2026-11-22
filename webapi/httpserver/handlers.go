@@ -545,6 +545,16 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The Idempotency-Key header, carried on the context down to the one
+	// submit door. The key is checked and claimed there, not here, so
+	// every surface gets the same check; this only has to notice a
+	// header that was sent and says nothing.
+	ctx, err = withIdempotencyKey(ctx, r)
+	if err != nil {
+		s.writeIdempotencyFailure(w, err)
+		return
+	}
+
 	// Read the submit file before handing it over, and report what it
 	// says rather than acting on it. The MCP server has run these checks
 	// since the macro-expansion footgun was found; this path had none at
@@ -592,6 +602,18 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 
 // writeSubmitFailure writes the response for a failed submission.
 func (s *Handler) writeSubmitFailure(ctx context.Context, w http.ResponseWriter, err error) {
+	// An idempotency refusal first, and here rather than at each
+	// handler: 409 is not a failure the client should see as one -- it
+	// means the work is already queued, which is what asking for
+	// idempotency was for -- and the generic branch below would log it
+	// as a server error and answer 500.
+	if s.writeIdempotencyFailure(w, err) {
+		s.logger.Info(logging.DestinationHTTP, "Job submission refused by the idempotency key check",
+			"user", htcondor.GetAuthenticatedUserFromContext(ctx),
+			"access_point", routedSchedd(ctx),
+			"reason", err)
+		return
+	}
 	// Check if it's an authentication error
 	if isAuthenticationError(err) {
 		s.logger.Warn(logging.DestinationHTTP, "Job submission auth failed",
@@ -1866,8 +1888,19 @@ func (s *Handler) handleJobInput(w http.ResponseWriter, r *http.Request, jobID s
 	}
 	jobAds := []*classad.ClassAd{procAd}
 
+	// A job that named connector files gets them merged into the
+	// stream on the way past. One spool or none: SpoolJobFilesFromTar
+	// releases the job when it finishes, so a connector file left out
+	// here is a job running with a partial sandbox.
+	spoolSource, err := s.connectorUploadReader(ctx, r, procAd, limitedReader)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("Could not fetch this job's connector files: %v", err))
+		return
+	}
+
 	// Spool job files from tar
-	if err := s.scheddFor(ctx).SpoolJobFilesFromTar(ctx, jobAds, limitedReader); err != nil {
+	if err := s.scheddFor(ctx).SpoolJobFilesFromTar(ctx, jobAds, spoolSource); err != nil {
 		if isAuthenticationError(err) {
 			s.writeError(w, http.StatusUnauthorized, fmt.Sprintf("Authentication failed: %v", err))
 			return
@@ -4232,6 +4265,16 @@ func (s *Handler) spoolClusterFromStream(
 	// fan-out starts while the upload is still arriving -- see
 	// PlanStreaming for what that does to the volume rule.
 	attempt, planned, maxTar, err := spool.PlanStreaming(ads, lim)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge the connector files in BEFORE the buffer, so one fetch
+	// serves every proc. ConnectorInputs is a cluster-level attribute,
+	// so every proc of the cluster wants the same files; merging per
+	// proc instead would be one fetch each and a rate limit from the
+	// provider on any sizeable cluster.
+	tar, err = s.connectorUploadReader(ctx, r, ads[0], tar)
 	if err != nil {
 		return nil, err
 	}

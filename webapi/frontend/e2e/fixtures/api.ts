@@ -460,6 +460,12 @@ export async function installApiFixtures(page: Page, opts: { multiAP?: boolean }
     // this into the HTML; `serve out` cannot, so the SPA asks for it.
     // Unbranded, which is what the suite's assertions expect to see.
     '/api/v1/webui/branding': brandingFixture,
+    // No file chooser configured, which is the default posture and what
+    // the submit page expects to be told. The 501 fall-through would be
+    // truthful too, but it logs a failed-resource console error and the
+    // suite fails on those. A test that wants a chooser routes this
+    // itself -- see fixtures/picker.ts.
+    '/api/v1/pickers': [],
     '/api/v1/jobs': jobsFixture,
     '/api/v1/issues': issuesFixture,
     '/api/v1/dashboard': dashboardFixture,

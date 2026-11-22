@@ -21,6 +21,10 @@ func placementOnlyExpectedAllowed(path string) bool {
 		"/auth/device_authorization", "/auth/code", "/auth/cancel_device",
 		"/mcp/oauth2/device/verify", "/oauth2/device/verify",
 		"/api/v1/webui/branding", "/branding.css",
+		// The placement pages render the same footer, so the policy
+		// links in it have to work. A session that may reach almost
+		// nothing may still read the terms it is being held to.
+		"/privacy", "/terms",
 		"/placement", "/placement/", "/placement/device", "/placement/device/":
 		return true
 	}

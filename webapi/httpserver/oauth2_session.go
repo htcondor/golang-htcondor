@@ -24,9 +24,11 @@ import (
 //     the refresh path cannot re-run getScopesForGroups at all. Note this is
 //     a snapshot, not a live reading — see reauthorizeRefreshGrant for what
 //     that does and does not catch.
-//   - AuthTime: when the human actually authenticated and consented. Every
-//     refresh resets the refresh token's own expiry, so AuthTime is the only
-//     fixed point from which an absolute cap on the grant can be measured.
+//   - AuthTime: when the human actually authenticated and consented, and
+//     LastUsed: when a token was last minted from the grant. Every refresh
+//     resets the refresh token's own expiry, so without a clock of our own
+//     a grant that keeps refreshing never ends; LastUsed is the one the idle
+//     cap is measured from, and AuthTime is what it falls back to.
 //
 // Both are advisory inputs to reauthorizeRefreshGrant; nothing else reads
 // them, and a session that predates this type (deserialized from a row
@@ -42,6 +44,16 @@ type Session struct {
 	// AuthTime is when the user authenticated and consented, in UTC.
 	// It is deliberately NOT refreshed when the grant is refreshed.
 	AuthTime time.Time `json:"authTime,omitempty"`
+
+	// LastUsed is when a token was last minted from this grant, in UTC.
+	// It is the point the idle cap is measured from, and unlike AuthTime
+	// it IS advanced on every refresh -- see reauthorizeGrant.
+	//
+	// Zero means no refresh has been recorded, which is the state of a
+	// freshly consented grant and of every session written before this
+	// field existed. Both fall back to AuthTime, so a grant always has
+	// one clock even when it does not have this one.
+	LastUsed time.Time `json:"lastUsed,omitempty"`
 
 	// AuthorizedScopes is what this authorization ENDED with: the set the
 	// policy allowed and the user did not untick, recorded once at
@@ -84,7 +96,7 @@ type Session struct {
 // This override is load-bearing; do not delete it. openid.DefaultSession has
 // its own Clone that reflection-copies its receiver, and if that method were
 // left to promote through the embedded pointer it would return a bare
-// *openid.DefaultSession and silently drop Groups and AuthTime. fosite's
+// *openid.DefaultSession and silently drop Groups, AuthTime and LastUsed. fosite's
 // refresh handler rebuilds every refreshed request via
 // originalRequest.GetSession().Clone(), so a promoted Clone would erase
 // exactly the data the refresh path exists to consult — and erase it
@@ -96,8 +108,8 @@ func (s *Session) Clone() fosite.Session {
 	if s == nil {
 		return nil
 	}
-	clone := &Session{AuthTime: s.AuthTime, Actor: s.Actor, ParentGrant: s.ParentGrant,
-		PlacementIdentity: s.PlacementIdentity}
+	clone := &Session{AuthTime: s.AuthTime, LastUsed: s.LastUsed, Actor: s.Actor,
+		ParentGrant: s.ParentGrant, PlacementIdentity: s.PlacementIdentity}
 	if s.DefaultSession != nil {
 		// DefaultSession.Clone returns a fosite.Session whose concrete
 		// type is *openid.DefaultSession.

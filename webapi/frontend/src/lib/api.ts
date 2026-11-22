@@ -1429,6 +1429,135 @@ export interface AdminClientUse {
   at: string;
 }
 
+// One of the signed-in user's own OAuth2 clients: the inbound half of a
+// connector, where an outside service holds a credential that lets it act as
+// them here. Distinct from the connectors they grant this server on their
+// accounts elsewhere.
+//
+// No secret field, by design. A client secret exists once, in the reply to
+// the creation that minted it; has_secret says one exists without being one.
+export interface Integration {
+  id: string;
+  name?: string;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  scopes?: string[];
+  public: boolean;
+  has_secret: boolean;
+  created_at: string;
+  last_used_at?: string;
+}
+
+// One connector as the caller sees it: an account at another service that
+// this access point may read or write on their behalf. The THIRD direction on
+// the Connectors page, and the one where the credential being held is ours,
+// not theirs.
+//
+// Mirrors ConnectorStatus in handlers_connect.go. A connector the caller may
+// not use is not in the listing at all, so there is no "available to someone
+// else" state to render.
+export interface ConnectorStatus {
+  id: string;
+  kind: string;
+  connected: boolean;
+  /** A grant exists but the provider will no longer renew it, which wants a
+   *  different sentence from never having connected. */
+  needs_consent?: boolean;
+  last_used_at?: string;
+  /** The fixed entry point. Safe to print and safe to link. */
+  connect_url: string;
+  transfer: string;
+}
+
+// One outbound webhook: this server posts to a service when something
+// happens to the owner's jobs. The opposite direction to an Integration,
+// which lets a service act as the owner here.
+//
+// No url field, deliberately. The destination is a capability URL -- for
+// Slack, Zapier and most of the rest, possession is the authorization to post
+// -- so no endpoint returns it. destination_hint names the host and nothing
+// else, which is what tells two hooks apart.
+export interface Webhook {
+  id: string;
+  label: string;
+  scope: "job" | "batch" | "owner";
+  job?: { cluster_id: number; proc_id: number; schedd?: string };
+  batch_id?: string;
+  batch_name?: string;
+  events: string[];
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+  disabled_at?: string;
+  disabled_reason?: string;
+  consecutive_failures: number;
+  capped_at?: string;
+  capped_jobs?: number;
+  last_delivery_at?: string;
+  last_status?: number;
+  last_error?: string;
+  last_test_at?: string;
+  last_test_status?: number;
+  last_test_error?: string;
+  has_destination: boolean;
+  destination_hint?: string;
+}
+
+// What a webhook creation hands back. The signing secret is the only time it
+// is readable: a receiver needs it to verify signatures, and nothing can
+// recover it from the row afterwards.
+export interface WebhookCreated {
+  webhook: Webhook;
+  signing_secret: string;
+  secret_shown_once: boolean;
+  signature_header: string;
+  idempotency_header: string;
+}
+
+// One delivery attempt, for the "is this working" panel.
+export interface WebhookDelivery {
+  id: string;
+  event: string;
+  state: "pending" | "delivered" | "abandoned";
+  attempts: number;
+  status?: number;
+  error?: string;
+  job?: string;
+}
+
+// What a test reported. ok is false for a receiver that refused: the test
+// RAN, so the endpoint answers 200 and this is the outcome.
+export interface WebhookTestResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+// The URLs an outside service's setup form asks for. Served by the server
+// rather than built here: the OAuth2 paths sit under /mcp/oauth2/ or
+// /oauth2/ depending on configuration, so a guess would 404 on half the
+// deployments.
+export interface IntegrationEndpoints {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  metadata_endpoint: string;
+}
+
+// What a creation hands back. client_secret is present for a confidential
+// client and is the only time it is ever readable.
+export interface IntegrationCreated {
+  id: string;
+  name?: string;
+  client_secret?: string;
+  secret_shown_once?: boolean;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  scopes?: string[];
+  public: boolean;
+  endpoints?: IntegrationEndpoints;
+}
+
 export interface AdminClient {
   id: string;
   redirect_uris?: string[];
@@ -1593,6 +1722,67 @@ export interface AdminCondorConfigResponse {
 // The wire-format key (`htca-v1-...`) is NEVER on this type — it
 // only appears once, in AdminAPIKeyCreateResponse.key.
 // One site app as the admin page shows it.
+// --- connectors -------------------------------------------------------
+//
+// Accounts this access point connects TO on a user's behalf. Not to be
+// confused with AdminClient, which is the opposite direction:
+// applications connecting to this server's identity provider.
+
+export interface AdminConnector {
+  id: string;
+  kind: string;
+  /** Which decision published it: a configuration parameter, or stored here. */
+  origin: string;
+  /** Stored here rather than in the HTCondor configuration. The difference
+   *  between a change that takes effect now and one needing condor_reconfig. */
+  stored_here: boolean;
+  editable: boolean;
+  /** A stored connector the configuration also declares, and so overrides.
+   *  Shown rather than hidden: a row that silently loses is an operator
+   *  editing a form to no effect. */
+  shadowed?: boolean;
+  enabled: boolean;
+  groups: string[];
+  scopes: string[];
+  transfer: string;
+  client_id?: string;
+  /** Whether a secret is held. The secret itself is NEVER sent. */
+  secret_set: boolean;
+  secret_updated_at?: string;
+  /** The path the configuration names. The path is public; the bytes are not. */
+  secret_file?: string;
+  users: number;
+  last_used_at?: string;
+  transfer_method?: string;
+}
+
+export interface AdminConnectorUser {
+  subject: string;
+  obtained_at: string;
+  last_used_at?: string;
+}
+
+export interface AdminConnectorTest {
+  id: string;
+  usable: boolean;
+  problems: string[];
+}
+
+export interface AdminConnectorRequest {
+  id: string;
+  kind?: string;
+  client_id?: string;
+  /** Omit to leave a stored secret alone; "" clears it. Sending "" for an
+   *  untouched field would wipe a working connector on an unrelated edit. */
+  client_secret?: string;
+  authorization_url?: string;
+  token_url?: string;
+  scopes?: string[];
+  groups?: string[];
+  transfer?: string;
+  enabled?: boolean;
+}
+
 export interface AdminSiteApp {
   id: string;
   name: string;
@@ -2638,9 +2828,124 @@ export const api = {
       }),
   },
 
+  // The caller's own OAuth2 clients. Session-authenticated on the server
+  // and not reachable with a bearer token, so these are only ever called
+  // from the browser.
+  integrations: {
+    list: (): Promise<{
+      integrations: Integration[];
+      endpoints: IntegrationEndpoints;
+    }> => fetchJSON(`${BASE}/integrations`),
+    // The server narrows what it is asked for: grants to the flows with a
+    // person on the other end, scopes to what this account could consent
+    // to. So the reply is what was actually created, not an echo.
+    create: (body: {
+      name: string;
+      redirect_uris?: string[];
+      grant_types?: string[];
+      scopes?: string[];
+      public?: boolean;
+    }): Promise<IntegrationCreated> =>
+      fetchJSON(`${BASE}/integrations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    // Deletes the client and every token under it, so whatever was using it
+    // stops at once.
+    remove: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/integrations/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+  },
+
+  // Accounts this access point connects TO on the caller's behalf. The
+  // connect flow itself is a browser navigation to connect_url, not a fetch:
+  // it ends at the provider's own consent screen.
+  connect: {
+    list: (): Promise<ConnectorStatus[]> => fetchJSON(`${BASE}/connect`),
+    // Forgets the caller's grant on this server. Revoking at the provider is
+    // the other half and is the user's to do there.
+    disconnect: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/connect/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  },
+
+  // Outbound webhooks. Session-authenticated on the server, like
+  // integrations, and for a sharper reason: a destination is a capability
+  // URL, so a token that could read one back would be enough to post there.
+  webhooks: {
+    list: (): Promise<{ webhooks: Webhook[]; events: string[] }> =>
+      fetchJSON(`${BASE}/webhooks`),
+    create: (body: {
+      label: string;
+      url: string;
+      scope: "job" | "batch" | "owner";
+      cluster_id?: number;
+      proc_id?: number;
+      schedd?: string;
+      batch_id?: string;
+      batch_name?: string;
+      events: string[];
+    }): Promise<WebhookCreated> =>
+      fetchJSON(`${BASE}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    update: (
+      id: string,
+      body: { label?: string; url?: string; events?: string[] },
+    ): Promise<{ webhook: Webhook }> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    remove: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    // Sends one real delivery through the real signer and dial policy, and
+    // reports what the receiver said. Anything that simulated it would test
+    // the wrong code.
+    test: (id: string): Promise<WebhookTestResult> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    // For a hook disabled after repeated give-ups, once the user has fixed
+    // the destination.
+    enable: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    deliveries: (id: string): Promise<{ deliveries: WebhookDelivery[] }> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/deliveries`),
+  },
+
   admin: {
     listClients: (): Promise<{ clients: AdminClient[] }> =>
       fetchJSON(`${BASE}/admin/oauth2/clients`),
+    // createClient provisions a client an app cannot register for itself:
+    // client_credentials and token exchange act with no user present, so
+    // dynamic registration refuses them. The secret comes back once.
+    createClient: (body: {
+      name: string;
+      notes?: string;
+      redirect_uris?: string[];
+      grant_types?: string[];
+      scopes?: string[];
+      public?: boolean;
+      service_subject?: string;
+    }): Promise<IntegrationCreated & { origin?: string }> =>
+      fetchJSON(`${BASE}/admin/oauth2/clients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
     deleteClient: (id: string): Promise<void> =>
       fetchJSON(`${BASE}/admin/oauth2/clients/${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -2744,6 +3049,29 @@ export const api = {
     // Site apps: what this access point publishes under /site/, what
     // it has published before, and -- where the site allows it --
     // publishing one.
+    listConnectors: (): Promise<AdminConnector[]> =>
+      fetchJSON(`${BASE}/admin/connectors`),
+    saveConnector: (req: AdminConnectorRequest): Promise<{ id: string; saved: boolean }> =>
+      fetchJSON(`${BASE}/admin/connectors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      }),
+    deleteConnector: (
+      id: string,
+    ): Promise<{ id: string; deleted: boolean; credentials_destroyed: number }> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    // Drops every grant and leaves the connector: what to do when a
+    // client secret has leaked or rotated. Stays available on a
+    // configuration-declared connector, because the credentials are
+    // this server's own state even when the definition is not.
+    revokeConnector: (id: string): Promise<{ id: string; revoked: number }> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
+    testConnector: (id: string): Promise<AdminConnectorTest> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/test`, { method: "POST" }),
+    connectorUsers: (id: string): Promise<AdminConnectorUser[]> =>
+      fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/users`),
+
     listSiteApps: (): Promise<AdminSiteApps> =>
       fetchJSON(`${BASE}/admin/site-apps`),
     siteAppHistory: (id: string): Promise<{ id: string; history: AdminSiteAppHistory[] }> =>

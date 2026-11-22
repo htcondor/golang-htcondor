@@ -47,6 +47,12 @@ const openAPISchema = `{
         "bearerFormat": "TOKEN",
         "description": "HTCondor TOKEN authentication. The bearer token is used to authenticate with the schedd on behalf of the user."
       },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "htcondor_session",
+        "description": "The browser session this server sets at login. The /connect endpoints accept ONLY this, deliberately: completing a third-party authorization requires a browser, so a bearer token or an API key arriving there is a program doing something these endpoints were not designed for, and treating one as a login would hand a user's third-party credential to whatever held it. GET /connect/{connector}/token goes further and refuses any request carrying its own Authorization header, whatever else that request also carries."
+      },
       "oauth2": {
         "type": "oauth2",
         "description": "OAuth2 Authorization Code Flow",
@@ -64,6 +70,19 @@ const openAPISchema = `{
       }
     },
     "schemas": {
+      "ConnectorStatus": {
+        "type": "object",
+        "description": "One connector as the listing reports it. A connector this caller may not use is not listed at all, so the list is what the caller can act on rather than everything the operator has configured -- a page that offered a button which will refuse is a worse answer than one that does not offer it.",
+        "properties": {
+          "id": {"type": "string", "example": "builtin:gdrive", "description": "namespace:name. The namespace is a closed set: builtin ships with this server and is not extensible by configuration, site is entirely the operator's, and nothing we add can collide with a name in it."},
+          "kind": {"type": "string", "enum": ["oauth2", "credd", "vault"], "description": "How the credential is bootstrapped. Only oauth2 is implemented; credd and vault are designed and not built, and the endpoints that would need one answer 501."},
+          "connected": {"type": "boolean", "description": "Whether THIS caller has granted it. It never reports anything about another user."},
+          "needs_consent": {"type": "boolean", "description": "A grant exists but the provider will no longer renew it, which is a different thing from never having connected and wants a different sentence in a UI. NOTE that the listing does not currently set this: finding it out means asking the provider to refresh, which only GET /connect/{connector}/token does."},
+          "last_used_at": {"type": "string", "format": "date-time", "description": "When a token was last obtained from this grant. Absent if never."},
+          "connect_url": {"type": "string", "description": "The fixed entry point. It carries NO AUTHORITY and is safe to print in a tool result, a log or documentation: without an authenticated browser session it yields a login redirect rather than a credential."},
+          "transfer": {"type": "string", "enum": ["spool", "direct"], "description": "spool: the access point fetches the file into the job's spool on the way through. direct: the execute node fetches it itself."}
+        }
+      },
       "UtilDistribution": {
         "type": "object",
         "nullable": true,
@@ -837,7 +856,7 @@ const openAPISchema = `{
           "id": {"type": "string", "description": "Client id. A dynamically registered one looks like \"client_<unixnano>\" and says nothing about the app -- which is what name, notes and origin are for."},
           "name": {"type": "string", "description": "What the client called itself at registration (RFC 7591 client_name). Absent for seeded clients and for anything registered before this was kept."},
           "notes": {"type": "string", "description": "Operator annotation, editable via PATCH. Often the only identifying information for a client that predates provenance tracking."},
-          "origin": {"type": "string", "enum": ["dynamic", "seeded", ""], "description": "How the client came to exist: \"dynamic\" registered itself through /mcp/oauth2/register, \"seeded\" was created by this server. EMPTY MEANS UNKNOWN, not \"not dynamic\" -- the row predates the field and nobody recorded the answer."},
+          "origin": {"type": "string", "enum": ["dynamic", "seeded", "admin", "user", ""], "description": "How the client came to exist: \"dynamic\" registered itself through /mcp/oauth2/register, \"seeded\" was created by this server at startup, \"admin\" was created by an operator on the admin page, \"user\" was created by a user as one of their own integrations and is the only origin that comes with an owner. EMPTY MEANS UNKNOWN, not \"not dynamic\" -- the row predates the field and nobody recorded the answer."},
           "last_used_at": {"type": "string", "format": "date-time", "description": "When this client last obtained a token. Absent means never. Written on a debounced background flush, so it may lag real usage; it is a \"roughly when\", not an audit record."},
           "recent_users": {"type": "array", "items": {"$ref": "#/components/schemas/AdminClientUse"}, "description": "Rolling sample of the last few distinct subjects to obtain a token through this client, newest first."},
           "refresh_blocked_by": {"type": "array", "items": {"type": "string"}, "description": "What stops this client from ever receiving a refresh token, so its users re-authorize on every access-token expiry: the refresh_token grant, the offline_access scope, or both. Nothing errors when this is misconfigured -- the client simply never gets a refresh token. Absent means nothing blocks it, OR that the client has no interactive flow and so has no user to inconvenience."},
@@ -847,6 +866,73 @@ const openAPISchema = `{
           "scopes": {"type": "array", "items": {"type": "string"}},
           "public": {"type": "boolean"},
           "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "description": "One outbound webhook: this server posts to a URL when the owner's jobs change state. The opposite direction to an Integration, which lets a service act as the owner here. There is no url field: the destination is a capability URL -- for most providers possession is the authorization to post -- so no endpoint returns it.",
+        "properties": {
+          "id": {"type": "string"},
+          "label": {"type": "string", "description": "The owner's own name for it."},
+          "scope": {"type": "string", "enum": ["job", "batch", "owner"], "description": "What it watches. A job or batch webhook ends when its subject does; an owner webhook carries a TTL and is renewed by being edited."},
+          "job": {"type": "object", "description": "The subject, for scope \"job\".", "properties": {"cluster_id": {"type": "integer"}, "proc_id": {"type": "integer"}, "schedd": {"type": "string"}}},
+          "batch_id": {"type": "string"},
+          "batch_name": {"type": "string"},
+          "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time", "description": "When it stops being evaluated. For a job or batch webhook this is brought forward once the subject has ended."},
+          "disabled_at": {"type": "string", "format": "date-time", "description": "Set when delivery was given up on. A webhook is disabled rather than left failing quietly, because silence reads as \"nothing has happened yet\"."},
+          "disabled_reason": {"type": "string", "description": "Shown to the owner, who otherwise cannot tell a misconfigured URL from an endpoint that was down."},
+          "consecutive_failures": {"type": "integer"},
+          "capped_at": {"type": "string", "format": "date-time", "description": "When the selection last exceeded the fan-out ceiling. Surfaced because the deliveries that did not happen would otherwise look like events that did not happen."},
+          "capped_jobs": {"type": "integer"},
+          "last_delivery_at": {"type": "string", "format": "date-time"},
+          "last_status": {"type": "integer"},
+          "last_error": {"type": "string"},
+          "last_test_at": {"type": "string", "format": "date-time", "description": "Kept apart from real traffic, so a test does not overwrite the record of the deliveries that matter, nor the reverse."},
+          "last_test_status": {"type": "integer"},
+          "last_test_error": {"type": "string"},
+          "has_destination": {"type": "boolean", "description": "Whether a destination is stored, without being one."},
+          "destination_hint": {"type": "string", "description": "The destination's scheme and host, and how long the rest was. Never a prefix of the path: for a Slack or Zapier hook the path IS the secret."}
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "description": "One delivery attempt, for the owner's \"is this working\" panel.",
+        "properties": {
+          "id": {"type": "string", "description": "The idempotency key, which is also this row's primary key."},
+          "event": {"type": "string"},
+          "job": {"type": "string", "description": "cluster.proc, absent on a summary delivery."},
+          "state": {"type": "string", "enum": ["pending", "delivered", "abandoned"], "description": "\"abandoned\" means we stopped trying, which is deliberately distinct from \"delivered\"."},
+          "attempts": {"type": "integer"},
+          "status": {"type": "integer", "description": "The receiver's last HTTP status, 0 if it was never reached."},
+          "error": {"type": "string"}
+        }
+      },
+      "IntegrationEndpoints": {
+        "type": "object",
+        "description": "The URLs an outside service's setup form asks for. Served rather than built by the client: the OAuth2 endpoints sit under /mcp/oauth2/ or /oauth2/ depending on whether MCP is enabled, so a guess would 404 on half the deployments.",
+        "properties": {
+          "issuer": {"type": "string"},
+          "authorization_endpoint": {"type": "string", "description": "Where to send the user to approve the app."},
+          "token_endpoint": {"type": "string", "description": "Where the app redeems its code and refreshes."},
+          "metadata_endpoint": {"type": "string", "description": "The discovery document, for a service that can read one instead of being told each URL."}
+        }
+      },
+      "Integration": {
+        "type": "object",
+        "description": "One of the caller's own OAuth2 clients. There is no secret field, deliberately: a struct with one is a struct that ends up in a response the first time somebody adds an endpoint.",
+        "properties": {
+          "id": {"type": "string", "description": "The client id to give the outside service."},
+          "name": {"type": "string", "description": "What you called it, so you can tell your integrations apart."},
+          "redirect_uris": {"type": "array", "items": {"type": "string"}},
+          "grant_types": {"type": "array", "items": {"type": "string"}},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "What this client may request. A grant still gets only what consent allows at the time."},
+          "public": {"type": "boolean", "description": "A client with no secret."},
+          "has_secret": {"type": "boolean", "description": "Whether a secret exists, without being one. True for a confidential client; the secret itself was shown once, at creation, and cannot be read again."},
+          "created_at": {"type": "string", "format": "date-time"},
+          "last_used_at": {"type": "string", "format": "date-time", "description": "When this client last obtained a token. Absent means never, which is what an integration that was configured but never ran looks like."}
         }
       },
       "DBMirrorRoutingCount": {
@@ -1187,6 +1273,38 @@ const openAPISchema = `{
           "401": {"description": "Not authenticated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "403": {"description": "Not an administrator", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
+      },
+      "post": {
+        "summary": "Create an OAuth2 client",
+        "description": "Creates a client with credentials returned once. The counterpart to dynamic registration (/mcp/oauth2/register), for the clients that cannot register themselves: client_credentials and token exchange act with no user present and are deliberately not self-registrable, so an operator provisions them here. Also for a service whose vendor wants an id and a secret pasted into a form rather than a discovery document. A client_credentials client needs a service_subject -- the identity its tokens assert -- or it would authenticate and then assert nobody. A public client is issued no secret and may not hold the confidential-only grants. The secret is returned in this response and nowhere else; nothing can recover it afterwards, so replacing the client is the answer to losing it. Requires membership in the web UI admin group, a browser session, and an application/json body.",
+        "operationId": "createAdminClient",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {
+          "name": {"type": "string", "maxLength": 128, "description": "Display label for the admin list."},
+          "notes": {"type": "string", "maxLength": 4096, "description": "The operator's annotation: for a client created rather than registered, where the reason it exists goes."},
+          "redirect_uris": {"type": "array", "items": {"type": "string"}, "description": "Required for any client with a browser or device flow. An operator's client may use a custom scheme; a user's may not."},
+          "grant_types": {"type": "array", "items": {"type": "string", "enum": ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:token-exchange"]}, "description": "Defaults to authorization_code and refresh_token."},
+          "response_types": {"type": "array", "items": {"type": "string", "enum": ["code"]}},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "What the client may REQUEST. What a grant ends up with is decided at consent from the user's groups, so a scope here that the policy never grants simply never appears in a token."},
+          "public": {"type": "boolean", "description": "A client with no secret, for a native or browser app that cannot keep one."},
+          "service_subject": {"type": "string", "maxLength": 256, "description": "The identity a client_credentials token from this client asserts."}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created. client_secret is present for a confidential client and is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "client_secret": {"type": "string", "description": "Absent for a public client. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "redirect_uris": {"type": "array", "items": {"type": "string"}},
+            "grant_types": {"type": "array", "items": {"type": "string"}},
+            "scopes": {"type": "array", "items": {"type": "string"}},
+            "public": {"type": "boolean"},
+            "origin": {"type": "string"},
+            "endpoints": {"$ref": "#/components/schemas/IntegrationEndpoints"}
+          }}}}},
+          "400": {"description": "Malformed body, or a client that could not work as described -- a browser flow with no redirect URI, client_credentials with no service subject, an unsupported grant or scope", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "Not an administrator", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json. The content type is required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
       }
     },
     "/admin/oauth2/clients/{id}": {
@@ -1216,6 +1334,282 @@ const openAPISchema = `{
           "200": {"description": "Deleted"},
           "403": {"description": "Not an administrator", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "No such client", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/integrations": {
+      "get": {
+        "summary": "List your own OAuth2 clients",
+        "description": "The clients you created for yourself -- the inbound half of a connector, where an outside service holds a credential that lets it act as you here. Distinct from the connectors you grant this server on your accounts elsewhere. No secret is ever returned: has_secret says one exists without being one, because a client secret is shown only in the reply to the creation that minted it. SESSION ONLY: authenticated from the browser session cookie and not from a bearer token, so a client cannot mint or enumerate clients.",
+        "operationId": "listIntegrations",
+        "responses": {
+          "200": {"description": "Your integrations, newest first, with the endpoints every one of them is configured with", "content": {"application/json": {"schema": {"type": "object", "properties": {"integrations": {"type": "array", "items": {"$ref": "#/components/schemas/Integration"}}, "endpoints": {"$ref": "#/components/schemas/IntegrationEndpoints"}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "The session has no local account, so it cannot own an integration", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "summary": "Create one of your own OAuth2 clients",
+        "description": "Mints a client you own, for a service that wants an id and a secret pasted into a form rather than dynamic registration. Two bounds apply that the admin path does not apply. The grant types are restricted to the flows with a person on the other end (authorization_code, refresh_token, device_code): client_credentials and token exchange act with nobody present, which is a decision about the deployment rather than about your jobs, so an administrator provisions those. And the scope list is intersected with what you could consent to today, so a client cannot be REGISTERED for a scope you have no claim to -- consent narrows it again at authorization time. offline_access is carried through regardless, since without it no refresh token is ever issued and an unattended integration cannot work. Redirect URIs must be https, or http on loopback. The secret is returned here and nowhere else.",
+        "operationId": "createIntegration",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {
+          "name": {"type": "string", "maxLength": 128, "description": "Required, so you can tell your integrations apart."},
+          "redirect_uris": {"type": "array", "items": {"type": "string"}, "description": "https, or http on loopback. Required for the browser and device flows."},
+          "grant_types": {"type": "array", "items": {"type": "string", "enum": ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"]}, "description": "Defaults to authorization_code and refresh_token."},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "Narrowed to what your account could consent to."},
+          "public": {"type": "boolean", "description": "No secret is issued; for a native or command-line app that cannot keep one."}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created. client_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "client_secret": {"type": "string", "description": "Absent for a public client. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "redirect_uris": {"type": "array", "items": {"type": "string"}},
+            "grant_types": {"type": "array", "items": {"type": "string"}},
+            "scopes": {"type": "array", "items": {"type": "string"}},
+            "public": {"type": "boolean"},
+            "endpoints": {"$ref": "#/components/schemas/IntegrationEndpoints"}
+          }}}}},
+          "400": {"description": "Malformed body, no name, an unsupported scope, or a redirect URI that is not https or loopback http", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "A grant type that acts with no user present, or none of the requested scopes are available to your account", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "409": {"description": "You already hold the maximum number of integrations", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json. The content type is required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "summary": "List your outbound webhooks",
+        "description": "The webhooks you have set up, newest first, with the event vocabulary this server implements -- so a page offers exactly what exists rather than a list somebody remembered to keep in step. No destination is ever returned. SESSION ONLY: a destination is a capability URL, so a token that could read one back would be enough to post there itself.",
+        "operationId": "listWebhooks",
+        "responses": {
+          "200": {"description": "Your webhooks", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhooks": {"type": "array", "items": {"$ref": "#/components/schemas/Webhook"}}, "events": {"type": "array", "items": {"type": "string"}}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server (HTTP_API_WEBHOOKS)", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "summary": "Set up an outbound webhook",
+        "description": "Subscribes a URL to events on one job, one batch, or all of your jobs. The destination must be https and is stored sealed; it is never returned by any endpoint. The signing secret comes back in THIS response and nowhere else -- a receiver needs it to verify the X-HTCondor-Signature header, and nothing can recover it afterwards. The event vocabulary is fixed and is the same one the job-watch tools use: notably there is no way to say \"JobStatus == 4\", which is the obvious way to ask for \"finished\" and would never fire, because the schedd deletes a completed job from the queue rather than leaving it in that state.",
+        "operationId": "createWebhook",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["label", "url", "scope", "events"], "properties": {
+          "label": {"type": "string", "maxLength": 128, "description": "Required, so you can tell your webhooks apart."},
+          "url": {"type": "string", "maxLength": 2048, "description": "https only, with no credentials in it. Checked for reachability at delivery time, not here: only routable public addresses are dialled."},
+          "scope": {"type": "string", "enum": ["job", "batch", "owner"]},
+          "cluster_id": {"type": "integer", "description": "With scope \"job\"."},
+          "proc_id": {"type": "integer", "description": "With scope \"job\"."},
+          "schedd": {"type": "string", "description": "The access point, on a server fronting several."},
+          "batch_id": {"type": "string", "description": "With scope \"batch\": a cluster number, for a batch with no name."},
+          "batch_name": {"type": "string", "description": "With scope \"batch\": the batch name from the jobs page."},
+          "events": {"type": "array", "items": {"type": "string", "enum": ["done", "succeeded", "failed", "held", "running"]}}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created. signing_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "webhook": {"$ref": "#/components/schemas/Webhook"},
+            "signing_secret": {"type": "string", "description": "The HMAC-SHA256 key over \"<timestamp>.<idempotency key>.<body>\", hex-encoded. DECODE IT before use: the key is the 32 raw bytes, not this 64-character string. Getting that wrong fails silently, since the wrong key still yields a well-formed signature that never matches. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "signature_header": {"type": "string"},
+            "idempotency_header": {"type": "string"}
+          }}}}},
+          "400": {"description": "Malformed body, no name, an http destination, credentials in the URL, an unsupported event, or a scope with no subject", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json. Required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "get": {
+        "summary": "One of your webhooks",
+        "operationId": "getWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The webhook", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
+          "404": {"description": "No such webhook of yours. Somebody else's answers 404 rather than 403, because a 403 would confirm the id exists.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "patch": {
+        "summary": "Change a webhook",
+        "description": "The name, the events and the destination. Replacing the destination clears the failure count and re-enables a disabled webhook: deliveries that failed were to a URL that is no longer configured. Any edit renews an owner-scoped webhook's deadline, since editing one is the clearest statement that somebody still wants it.",
+        "operationId": "updateWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "label": {"type": "string"},
+          "url": {"type": "string", "description": "A new destination. Write-only, as at creation."},
+          "events": {"type": "array", "items": {"type": "string"}}
+        }}}}},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"type": "object", "properties": {"webhook": {"$ref": "#/components/schemas/Webhook"}}}}}},
+          "400": {"description": "Malformed body or a destination that is not usable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "delete": {
+        "summary": "Delete a webhook",
+        "description": "Removes it and everything queued for it, so whatever was listening stops immediately.",
+        "operationId": "deleteWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/test": {
+      "post": {
+        "summary": "Test a webhook",
+        "description": "Sends ONE REAL delivery -- the same signature, the same headers, the same connection policy -- with \"test\": true in the body, and reports what the receiver answered. It is not retried, because somebody is watching the result. Answers 200 whatever the receiver said: the test RAN, and its outcome is the body. An HTTP error here would claim this server failed.",
+        "operationId": "testWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The test ran. ok=false with a cause is a normal response, not an error.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "ok": {"type": "boolean"},
+            "status": {"type": "integer", "description": "The receiver's HTTP status, 0 if it was never reached."},
+            "error": {"type": "string", "description": "What went wrong, including the start of the receiver's own message."}
+          }}}}},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The destination could not be read at all -- the row is gone, or it is sealed and this server has no KEK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/enable": {
+      "post": {
+        "summary": "Re-enable a disabled webhook",
+        "description": "For a webhook disabled after repeated give-ups, once the destination has been fixed. Clears the failure count.",
+        "operationId": "enableWebhook",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Enabled"},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries": {
+      "get": {
+        "summary": "Recent delivery attempts",
+        "description": "The last 50 attempts for one webhook, newest first, so an owner can see whether it is working without reading a server log.",
+        "operationId": "listWebhookDeliveries",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Attempts, empty rather than null for a webhook that has sent nothing", "content": {"application/json": {"schema": {"type": "object", "properties": {"deliveries": {"type": "array", "items": {"$ref": "#/components/schemas/WebhookDelivery"}}}}}}},
+          "404": {"description": "No such webhook of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/integrations/{id}": {
+      "delete": {
+        "summary": "Delete one of your own OAuth2 clients",
+        "description": "Removes the client and every token issued under it, so whatever was using it stops immediately. Scoped to you inside the statement: somebody else's client answers 404 rather than 403, because a 403 would confirm that an id exists to a caller who does not hold it.",
+        "operationId": "deleteIntegration",
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Deleted", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "id": {"type": "string"}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such integration of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect": {
+      "get": {
+        "summary": "List the third-party accounts you can connect",
+        "description": "The connectors available to you, each with whether you have granted it and the fixed URL that starts the authorization. A connector you are not in the groups for is omitted entirely rather than listed as forbidden. SESSION ONLY: see the sessionCookie scheme for why a bearer token is refused here.",
+        "operationId": "listConnectors",
+        "security": [{"sessionCookie": []}],
+        "responses": {
+          "200": {"description": "The connectors you may use, which may be an empty list on a server with none configured", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/ConnectorStatus"}}}}},
+          "302": {"description": "Not signed in, and the request asked for text/html: a browser is sent to /login with return_to set and comes back here. A request that did not ask for HTML gets 401 instead, because redirecting an API client to a login page produces a 200 full of markup, which is the least diagnosable failure available."},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect/{connector}": {
+      "get": {
+        "summary": "Start authorizing a third-party account",
+        "description": "Redirects your browser to the provider's consent screen. This is the URL to put behind an Authorize link, and the one safe to print anywhere: held by anything without a session it yields a login redirect, not a credential.\n\nThe 302 target is built from the connector's own definition and NEVER from a request parameter. This endpoint is shaped exactly like an open redirect and must not be one; TestRedirectTargetCannotComeFromTheRequest drives four likely parameter names at it.",
+        "operationId": "beginConnect",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive", "description": "The connector id, as ONE path segment. It contains a colon and is a syntactically valid URL on its own -- parsing builtin:gdrive gives the scheme builtin -- so it must never be treated as a relative reference."}],
+        "responses": {
+          "302": {"description": "To the provider's consent screen when signed in; to /login when not and the request asked for text/html"},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "This connector is not available to your groups. Deliberately without detail: you learn that it is not available to you, not who it IS available to.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed -- no namespace, an unknown namespace, or an unusable name", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The authorization could not be started", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "501": {"description": "The connector is of a kind this server cannot yet bootstrap (credd or vault), which beats a redirect to nowhere", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The connector's client secret could not be read, so it is configured but not usable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "delete": {
+        "summary": "Disconnect a third-party account",
+        "description": "Forgets this server's copy of your grant, so nothing here can obtain a token for that account again. Revoking at the provider is the other half and is yours to do; this is the half this server owns.\n\nIdempotent: a connector you had not connected answers 200 rather than 404, because you asked for it to be gone and it is gone, and a 404 would make a double-click look like a failure. The identity is the session's -- the connector id is in the path and the user never is, since a parameter that could name a user would make this \"forget somebody else's credential\".",
+        "operationId": "disconnectConnector",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive"}],
+        "responses": {
+          "200": {"description": "Gone, whether or not it was connected", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "example": "disconnected"}, "connector": {"type": "string"}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "This connector is not available to your groups", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The credential could not be deleted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "No credential store is configured, so connectors are not available on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect/{connector}/callback": {
+      "get": {
+        "summary": "Finish authorizing a third-party account",
+        "description": "Where the provider sends the browser back. Not called directly: it is the redirect_uri, and an operator registers it with the provider as <public base URL>/api/v1/connect/<connector id>/callback. That string is derived in one place from this server's configured base URL rather than from the request's Host header, because a redirect_uri taken from a header is one a caller can choose, and it has to be byte-identical at the start and the end of the flow.\n\nOn success a browser is sent to /?connected=<connector id> and anything else gets the fact as JSON.",
+        "operationId": "finishConnect",
+        "security": [{"sessionCookie": []}],
+        "parameters": [
+          {"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive"},
+          {"name": "code", "in": "query", "schema": {"type": "string"}, "description": "The provider's authorization code."},
+          {"name": "state", "in": "query", "schema": {"type": "string"}, "description": "Checked against the flow this session started. A caller presenting somebody else's gets 400 and learns nothing more."},
+          {"name": "error", "in": "query", "schema": {"type": "string"}, "description": "Set when the provider refused, which is usually just somebody clicking cancel."}
+        ],
+        "responses": {
+          "200": {"description": "Connected", "content": {"application/json": {"schema": {"type": "object", "properties": {"connector": {"type": "string"}, "connected": {"type": "boolean"}, "scopes": {"type": "array", "items": {"type": "string"}, "description": "What the provider actually granted, which can be less than was asked for."}}}}}},
+          "302": {"description": "A browser that followed a link is taken to /?connected=<connector id>; one with no session is sent to /login"},
+          "400": {"description": "The provider reported a refusal, or the flow could not be completed -- a state that does not match, a code already spent, an expired flow. The detail goes to the server log rather than the response.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "This connector is not available to your groups", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The credential could not be stored", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "502": {"description": "The provider returned no durable credential. Worth retrying once; if it recurs the connector's configuration needs checking, since a grant with no refresh token cannot outlive the browser session that made it.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The connector's client secret could not be read", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect/{connector}/token": {
+      "get": {
+        "summary": "A short-lived provider token for your own browser",
+        "description": "Exists because some file choosers run client-side -- Google's Picker needs the page itself to hold a token. It is THE ONE PLACE a third-party credential leaves this server, and it therefore carries the sharpest rule in the design: a browser session is the only thing that may ask, and a request carrying its own Authorization header is refused outright whatever else it carries, because a client holding both a cookie and a bearer token reads as a program rather than a person's tab. The cost of being wrong the other way is handing a user's provider token to whatever asked.\n\nAnswered with Cache-Control: no-store, since a proxy keeping a copy would hand it to the next person through. Not connected and consent-expired come back as 409 with somewhere to go rather than as errors a page has to interpret, because both are ordinary.",
+        "operationId": "connectorToken",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive"}],
+        "responses": {
+          "200": {"description": "A token for this caller's own use, good for expires_in seconds", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "access_token": {"type": "string", "description": "The provider's access token. Do not store it; ask again when it expires."},
+            "expires_in": {"type": "integer", "description": "Seconds. 0 when the provider stated no expiry."},
+            "connector": {"type": "string"}
+          }}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "Either this connector is not available to your groups, or the request carried its own Authorization header", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "409": {"description": "Nothing to issue: you have not connected this account, or the grant is dead and wants consent again. Not an error -- the body carries connect_url so a page can act on it. The stored row is deliberately left alone when consent is needed, because a user may be outside a group this week and back next, and destroying the token would force a consent screen for what may be temporary.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "connector": {"type": "string"},
+            "connected": {"type": "boolean", "description": "Always false here."},
+            "needs_consent": {"type": "boolean", "description": "Present when a grant exists but the provider will not renew it. Absent when there was never a grant."},
+            "connect_url": {"type": "string"}
+          }}}}},
+          "501": {"description": "The connector is of a kind that holds no token here (credd or vault)", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "502": {"description": "The provider could not be reached to refresh", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "No credential store is configured, or the connector's client secret could not be read", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
@@ -2259,6 +2653,13 @@ const openAPISchema = `{
             "required": false,
             "schema": {"type": "string"},
             "description": "Multi-AP mode only: submit to this access point, which must be your home access point or one of its alternates (default: your home access point)"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {"type": "string", "maxLength": 1024},
+            "description": "Makes this submission safe to retry. If a submission carrying the same key already exists -- in the queue or in the completed-job history -- this request is refused with 409 and names the job that has it, instead of queueing the work a second time. Reuse the SAME key verbatim on every retry of one submission; a fresh value per attempt defeats the purpose. Keys are scoped to your own account. May not contain a backslash, a dollar sign or a control character. Not every access point enforces this: where it is turned off, sending the header is a 400 rather than a silently unguarded submission."
           }
         ],
         "requestBody": {
@@ -2317,6 +2718,31 @@ const openAPISchema = `{
           },
           "401": {
             "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key has already been used. The work is already queued or has already run; job_id names the job holding the key. Do not resubmit -- look that job up instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {"type": "string"},
+                    "idempotency_key": {"type": "string"},
+                    "job_id": {"type": "string", "description": "The job holding the key, \"cluster.proc\" (or just the cluster where its procs have not materialized yet). Empty where the holder is a submission this server made moments ago and has not yet learned the cluster of."}
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "An Idempotency-Key was supplied and could not be checked (the completed-job history was unreachable), so the submission was refused rather than accepted unverified. The same request may succeed when retried.",
             "content": {
               "application/json": {
                 "schema": {
