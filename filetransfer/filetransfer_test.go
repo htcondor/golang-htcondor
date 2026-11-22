@@ -17,6 +17,7 @@ package filetransfer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -114,5 +115,173 @@ func TestSendReceiveRoundTrip(t *testing.T) {
 		} else if !bytes.Equal(got, want) {
 			t.Errorf("file %q: got %d bytes, want %d", name, len(got), len(want))
 		}
+	}
+}
+
+// preambleSink records whether any file or directory arrived, so a test can
+// assert the ORDER of the preamble hook against the first file rather than
+// only its argument. A hook that fired at the end of the stream would carry
+// the right size and still be useless for refusing a transfer.
+type preambleSink struct {
+	*memSink
+	sawFile func()
+}
+
+func (p preambleSink) File(name string, mode int64, size int64) (io.WriteCloser, error) {
+	p.sawFile()
+	return p.memSink.File(name, mode, size)
+}
+
+func (p preambleSink) Mkdir(name string) error {
+	p.sawFile()
+	return p.memSink.Mkdir(name)
+}
+
+// onePlan is a one-file SendPlan advertising sandboxSize in the preamble.
+func onePlan(sandboxSize int64) SendPlan {
+	data := []byte("payload")
+	return SendPlan{
+		FinalTransfer: true,
+		SandboxSize:   sandboxSize,
+		Files: []FileSpec{{
+			WireName: "f.dat",
+			Mode:     0644,
+			Size:     int64(len(data)),
+			Open:     func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil },
+		}},
+	}
+}
+
+// TestReceivePreambleHookPrecedesFiles asserts OnPreamble is called with the
+// advertised sandbox size before the first file reaches the Sink. The ordering
+// is the whole point: it is what lets a receiver refuse an oversized sandbox
+// without paying for it.
+func TestReceivePreambleHookPrecedesFiles(t *testing.T) {
+	c1, c2 := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// Deliberately not the sum of the files, so a size computed from the
+	// per-file headers could not produce it.
+	const advertised = int64(123456789)
+
+	sendErr := make(chan error, 1)
+	go func() {
+		sendErr <- SendStream(ctx, stream.NewStream(c1), onePlan(advertised), Options{Logf: t.Logf})
+	}()
+
+	var (
+		hookCalls   int
+		gotSize     int64
+		gotKnown    bool
+		filesAtHook = -1
+		files       int
+	)
+	sink := preambleSink{memSink: newMemSink(), sawFile: func() { files++ }}
+	res, err := ReceiveStream(ctx, stream.NewStream(c2), sink, Options{
+		Logf:       t.Logf,
+		ReceiveAck: true,
+		OnPreamble: func(size int64, known bool) error {
+			hookCalls++
+			gotSize, gotKnown, filesAtHook = size, known, files
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStream: %v", err)
+	}
+	if err := <-sendErr; err != nil {
+		t.Fatalf("SendStream: %v", err)
+	}
+
+	if hookCalls != 1 {
+		t.Errorf("OnPreamble called %d times, want 1", hookCalls)
+	}
+	if filesAtHook != 0 {
+		t.Errorf("%d files had arrived when OnPreamble ran, want 0", filesAtHook)
+	}
+	if gotSize != advertised || !gotKnown {
+		t.Errorf("OnPreamble(%d, %v), want (%d, true)", gotSize, gotKnown, advertised)
+	}
+	if res.SandboxSize != advertised || !res.SandboxSizeKnown {
+		t.Errorf("result size = (%d, %v), want (%d, true)", res.SandboxSize, res.SandboxSizeKnown, advertised)
+	}
+	if files != 1 {
+		t.Errorf("sink saw %d files, want 1", files)
+	}
+}
+
+// TestReceivePreambleHookRefuses asserts an error from OnPreamble aborts the
+// receive and that nothing reached the Sink.
+func TestReceivePreambleHookRefuses(t *testing.T) {
+	c1, c2 := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	sendErr := make(chan error, 1)
+	go func() {
+		sendErr <- SendStream(ctx, stream.NewStream(c1), onePlan(1<<40), Options{Logf: t.Logf})
+	}()
+
+	refusal := errors.New("sandbox too large")
+	files := 0
+	sink := preambleSink{memSink: newMemSink(), sawFile: func() { files++ }}
+	_, err := ReceiveStream(ctx, stream.NewStream(c2), sink, Options{
+		Logf:       t.Logf,
+		OnPreamble: func(int64, bool) error { return refusal },
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("ReceiveStream error = %v, want %v", err, refusal)
+	}
+	if files != 0 {
+		t.Errorf("sink saw %d files after a refused preamble, want 0", files)
+	}
+
+	// The sender is parked on a write nobody will read; closing both ends
+	// is what unblocks it, and its error is not what this test is about.
+	_ = c2.Close()
+	_ = c1.Close()
+	select {
+	case <-sendErr:
+	case <-time.After(10 * time.Second):
+		t.Error("SendStream did not return after the receiver hung up")
+	}
+}
+
+// TestReceivePreambleHookWithoutXferInfo asserts that a peer sending no
+// xfer_info ad reports known=false rather than a zero size that would read as
+// an empty sandbox.
+func TestReceivePreambleHookWithoutXferInfo(t *testing.T) {
+	c1, c2 := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	sendErr := make(chan error, 1)
+	go func() {
+		sendErr <- SendStream(ctx, stream.NewStream(c1), onePlan(999), Options{Logf: t.Logf, NoXferInfo: true})
+	}()
+
+	var gotSize int64 = -1
+	gotKnown := true
+	res, err := ReceiveStream(ctx, stream.NewStream(c2), newMemSink(), Options{
+		Logf:       t.Logf,
+		ReceiveAck: true,
+		NoXferInfo: true,
+		OnPreamble: func(size int64, known bool) error {
+			gotSize, gotKnown = size, known
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStream: %v", err)
+	}
+	if err := <-sendErr; err != nil {
+		t.Fatalf("SendStream: %v", err)
+	}
+	if gotSize != 0 || gotKnown {
+		t.Errorf("OnPreamble(%d, %v), want (0, false)", gotSize, gotKnown)
+	}
+	if res.SandboxSizeKnown {
+		t.Error("SandboxSizeKnown is true although the peer sent no xfer_info")
 	}
 }
