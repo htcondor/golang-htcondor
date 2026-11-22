@@ -299,3 +299,74 @@ func TestSpoolingRecordsConnectorUse(t *testing.T) {
 		t.Error("spooling a connector file did not count as use")
 	}
 }
+
+// Who finishes a job's spool.
+//
+// Two failure modes sit either side of this decision, and both are
+// silent. Spool at submit when the caller still has files to send and
+// the job is released with a partial sandbox. Do not spool when the
+// caller has nothing to send and the job waits at "Spooling input data
+// files" for ever, having reported a successful submit.
+func TestConnectorsSupplyAll(t *testing.T) {
+	drive := []connectors.InputRef{
+		{Service: "webapi-builtin-gdrive", Method: "gdrive2", FileID: "1A", Name: "a.csv"},
+		{Service: "webapi-builtin-gdrive", Method: "gdrive2", FileID: "2B", Name: "b.csv"},
+	}
+
+	cases := []struct {
+		name     string
+		awaiting []string
+		refs     []connectors.InputRef
+		want     bool
+		why      string
+	}{
+		{
+			name:     "every awaited file comes from the connector",
+			awaiting: []string{"a.csv", "b.csv"}, refs: drive, want: true,
+			why: "nothing is left for the caller to upload, so this server must finish it",
+		},
+		{
+			name:     "the job also waits for a file the caller holds",
+			awaiting: []string{"a.csv", "local.txt"}, refs: drive, want: false,
+			why: "spooling now would release the job without local.txt",
+		},
+		{
+			name:     "a subset is still fully supplied",
+			awaiting: []string{"a.csv"}, refs: drive, want: true,
+			why: "picking two files and transferring one is the submitter's business",
+		},
+		{
+			name:     "no connector files at all",
+			awaiting: []string{"local.txt"}, refs: nil, want: false,
+			why: "an ordinary upload, which this path must not touch",
+		},
+		{
+			name:     "nothing awaited",
+			awaiting: nil, refs: drive, want: true,
+			why: "vacuous; the caller checks len(awaiting) first and skips",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectorsSupplyAll(tc.awaiting, tc.refs); got != tc.want {
+				t.Errorf("connectorsSupplyAll(%v, %d refs) = %v, want %v — %s",
+					tc.awaiting, len(tc.refs), got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// The name matched is the one the file lands under in the sandbox, not
+// the provider's id: the schedd waits for "a.csv", never for "1A".
+func TestConnectorsSupplyAllMatchesTheSandboxName(t *testing.T) {
+	refs := []connectors.InputRef{
+		{Service: "svc", Method: "m", FileID: "1AbC", Name: "logo-long.png"},
+	}
+	if !connectorsSupplyAll([]string{"logo-long.png"}, refs) {
+		t.Error("the sandbox name was not matched")
+	}
+	if connectorsSupplyAll([]string{"1AbC"}, refs) {
+		t.Error("the provider's file id was matched as if it were a filename")
+	}
+}

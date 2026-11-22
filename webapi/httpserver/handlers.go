@@ -578,6 +578,11 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A job whose every awaited input comes from a connector has
+	// nothing this caller could upload, so finish its spool here.
+	// Without this it waits for an upload that is never coming.
+	warnings = append(warnings, s.finishConnectorOnlySpool(ctx, r, procAds)...)
+
 	// Build job IDs list
 	jobIDs := make([]string, len(procAds))
 	for i, ad := range procAds {
