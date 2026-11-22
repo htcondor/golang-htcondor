@@ -47,6 +47,12 @@ const openAPISchema = `{
         "bearerFormat": "TOKEN",
         "description": "HTCondor TOKEN authentication. The bearer token is used to authenticate with the schedd on behalf of the user."
       },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "htcondor_session",
+        "description": "The browser session this server sets at login. The /connect endpoints accept ONLY this, deliberately: completing a third-party authorization requires a browser, so a bearer token or an API key arriving there is a program doing something these endpoints were not designed for, and treating one as a login would hand a user's third-party credential to whatever held it. GET /connect/{connector}/token goes further and refuses any request carrying its own Authorization header, whatever else that request also carries."
+      },
       "oauth2": {
         "type": "oauth2",
         "description": "OAuth2 Authorization Code Flow",
@@ -64,6 +70,19 @@ const openAPISchema = `{
       }
     },
     "schemas": {
+      "ConnectorStatus": {
+        "type": "object",
+        "description": "One connector as the listing reports it. A connector this caller may not use is not listed at all, so the list is what the caller can act on rather than everything the operator has configured -- a page that offered a button which will refuse is a worse answer than one that does not offer it.",
+        "properties": {
+          "id": {"type": "string", "example": "builtin:gdrive", "description": "namespace:name. The namespace is a closed set: builtin ships with this server and is not extensible by configuration, site is entirely the operator's, and nothing we add can collide with a name in it."},
+          "kind": {"type": "string", "enum": ["oauth2", "credd", "vault"], "description": "How the credential is bootstrapped. Only oauth2 is implemented; credd and vault are designed and not built, and the endpoints that would need one answer 501."},
+          "connected": {"type": "boolean", "description": "Whether THIS caller has granted it. It never reports anything about another user."},
+          "needs_consent": {"type": "boolean", "description": "A grant exists but the provider will no longer renew it, which is a different thing from never having connected and wants a different sentence in a UI. NOTE that the listing does not currently set this: finding it out means asking the provider to refresh, which only GET /connect/{connector}/token does."},
+          "last_used_at": {"type": "string", "format": "date-time", "description": "When a token was last obtained from this grant. Absent if never."},
+          "connect_url": {"type": "string", "description": "The fixed entry point. It carries NO AUTHORITY and is safe to print in a tool result, a log or documentation: without an authenticated browser session it yields a login redirect rather than a credential."},
+          "transfer": {"type": "string", "enum": ["spool", "direct"], "description": "spool: the access point fetches the file into the job's spool on the way through. direct: the execute node fetches it itself."}
+        }
+      },
       "UtilDistribution": {
         "type": "object",
         "nullable": true,
@@ -1491,6 +1510,106 @@ const openAPISchema = `{
           "200": {"description": "Deleted", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "id": {"type": "string"}}}}}},
           "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "No such integration of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect": {
+      "get": {
+        "summary": "List the third-party accounts you can connect",
+        "description": "The connectors available to you, each with whether you have granted it and the fixed URL that starts the authorization. A connector you are not in the groups for is omitted entirely rather than listed as forbidden. SESSION ONLY: see the sessionCookie scheme for why a bearer token is refused here.",
+        "operationId": "listConnectors",
+        "security": [{"sessionCookie": []}],
+        "responses": {
+          "200": {"description": "The connectors you may use, which may be an empty list on a server with none configured", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/ConnectorStatus"}}}}},
+          "302": {"description": "Not signed in, and the request asked for text/html: a browser is sent to /login with return_to set and comes back here. A request that did not ask for HTML gets 401 instead, because redirecting an API client to a login page produces a 200 full of markup, which is the least diagnosable failure available."},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect/{connector}": {
+      "get": {
+        "summary": "Start authorizing a third-party account",
+        "description": "Redirects your browser to the provider's consent screen. This is the URL to put behind an Authorize link, and the one safe to print anywhere: held by anything without a session it yields a login redirect, not a credential.\n\nThe 302 target is built from the connector's own definition and NEVER from a request parameter. This endpoint is shaped exactly like an open redirect and must not be one; TestRedirectTargetCannotComeFromTheRequest drives four likely parameter names at it.",
+        "operationId": "beginConnect",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive", "description": "The connector id, as ONE path segment. It contains a colon and is a syntactically valid URL on its own -- parsing builtin:gdrive gives the scheme builtin -- so it must never be treated as a relative reference."}],
+        "responses": {
+          "302": {"description": "To the provider's consent screen when signed in; to /login when not and the request asked for text/html"},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "This connector is not available to your groups. Deliberately without detail: you learn that it is not available to you, not who it IS available to.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed -- no namespace, an unknown namespace, or an unusable name", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The authorization could not be started", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "501": {"description": "The connector is of a kind this server cannot yet bootstrap (credd or vault), which beats a redirect to nowhere", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The connector's client secret could not be read, so it is configured but not usable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "delete": {
+        "summary": "Disconnect a third-party account",
+        "description": "Forgets this server's copy of your grant, so nothing here can obtain a token for that account again. Revoking at the provider is the other half and is yours to do; this is the half this server owns.\n\nIdempotent: a connector you had not connected answers 200 rather than 404, because you asked for it to be gone and it is gone, and a 404 would make a double-click look like a failure. The identity is the session's -- the connector id is in the path and the user never is, since a parameter that could name a user would make this \"forget somebody else's credential\".",
+        "operationId": "disconnectConnector",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive"}],
+        "responses": {
+          "200": {"description": "Gone, whether or not it was connected", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "example": "disconnected"}, "connector": {"type": "string"}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "This connector is not available to your groups", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The credential could not be deleted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "No credential store is configured, so connectors are not available on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect/{connector}/callback": {
+      "get": {
+        "summary": "Finish authorizing a third-party account",
+        "description": "Where the provider sends the browser back. Not called directly: it is the redirect_uri, and an operator registers it with the provider as <public base URL>/api/v1/connect/<connector id>/callback. That string is derived in one place from this server's configured base URL rather than from the request's Host header, because a redirect_uri taken from a header is one a caller can choose, and it has to be byte-identical at the start and the end of the flow.\n\nOn success a browser is sent to /?connected=<connector id> and anything else gets the fact as JSON.",
+        "operationId": "finishConnect",
+        "security": [{"sessionCookie": []}],
+        "parameters": [
+          {"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive"},
+          {"name": "code", "in": "query", "schema": {"type": "string"}, "description": "The provider's authorization code."},
+          {"name": "state", "in": "query", "schema": {"type": "string"}, "description": "Checked against the flow this session started. A caller presenting somebody else's gets 400 and learns nothing more."},
+          {"name": "error", "in": "query", "schema": {"type": "string"}, "description": "Set when the provider refused, which is usually just somebody clicking cancel."}
+        ],
+        "responses": {
+          "200": {"description": "Connected", "content": {"application/json": {"schema": {"type": "object", "properties": {"connector": {"type": "string"}, "connected": {"type": "boolean"}, "scopes": {"type": "array", "items": {"type": "string"}, "description": "What the provider actually granted, which can be less than was asked for."}}}}}},
+          "302": {"description": "A browser that followed a link is taken to /?connected=<connector id>; one with no session is sent to /login"},
+          "400": {"description": "The provider reported a refusal, or the flow could not be completed -- a state that does not match, a code already spent, an expired flow. The detail goes to the server log rather than the response.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "This connector is not available to your groups", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The credential could not be stored", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "502": {"description": "The provider returned no durable credential. Worth retrying once; if it recurs the connector's configuration needs checking, since a grant with no refresh token cannot outlive the browser session that made it.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The connector's client secret could not be read", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/connect/{connector}/token": {
+      "get": {
+        "summary": "A short-lived provider token for your own browser",
+        "description": "Exists because some file choosers run client-side -- Google's Picker needs the page itself to hold a token. It is THE ONE PLACE a third-party credential leaves this server, and it therefore carries the sharpest rule in the design: a browser session is the only thing that may ask, and a request carrying its own Authorization header is refused outright whatever else it carries, because a client holding both a cookie and a bearer token reads as a program rather than a person's tab. The cost of being wrong the other way is handing a user's provider token to whatever asked.\n\nAnswered with Cache-Control: no-store, since a proxy keeping a copy would hand it to the next person through. Not connected and consent-expired come back as 409 with somewhere to go rather than as errors a page has to interpret, because both are ordinary.",
+        "operationId": "connectorToken",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "connector", "in": "path", "required": true, "schema": {"type": "string"}, "example": "builtin:gdrive"}],
+        "responses": {
+          "200": {"description": "A token for this caller's own use, good for expires_in seconds", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "access_token": {"type": "string", "description": "The provider's access token. Do not store it; ask again when it expires."},
+            "expires_in": {"type": "integer", "description": "Seconds. 0 when the provider stated no expiry."},
+            "connector": {"type": "string"}
+          }}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "Either this connector is not available to your groups, or the request carried its own Authorization header", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such connector is configured, or the id is malformed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "409": {"description": "Nothing to issue: you have not connected this account, or the grant is dead and wants consent again. Not an error -- the body carries connect_url so a page can act on it. The stored row is deliberately left alone when consent is needed, because a user may be outside a group this week and back next, and destroying the token would force a consent screen for what may be temporary.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "connector": {"type": "string"},
+            "connected": {"type": "boolean", "description": "Always false here."},
+            "needs_consent": {"type": "boolean", "description": "Present when a grant exists but the provider will not renew it. Absent when there was never a grant."},
+            "connect_url": {"type": "string"}
+          }}}}},
+          "501": {"description": "The connector is of a kind that holds no token here (credd or vault)", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "502": {"description": "The provider could not be reached to refresh", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "No credential store is configured, or the connector's client secret could not be read", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

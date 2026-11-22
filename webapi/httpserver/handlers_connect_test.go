@@ -829,3 +829,72 @@ func TestTokenEndpointNeverCrossesUsers(t *testing.T) {
 		t.Fatalf("bob was served a token: %s", readBody(t, resp))
 	}
 }
+
+// The connect routes are documented, with the methods the router really
+// serves and the one credential they accept.
+//
+// This test exists because the surface shipped undocumented: the paths
+// were absent from openAPISchema entirely while the handlers were live,
+// so a client author reading the schema would conclude connectors did
+// not exist. Two parts are worth asserting beyond mere presence.
+//
+// The method map, because a documented DELETE on the collection or a
+// documented POST anywhere here would describe a 405.
+//
+// The security scheme, because the global default in this document is
+// bearerAuth, and inheriting it would advertise precisely the misuse
+// connectorToken is built to refuse -- a program presenting a token to
+// collect somebody's third-party credential.
+func TestConnectRoutesAreDocumented(t *testing.T) {
+	var doc struct {
+		Components struct {
+			SecuritySchemes map[string]json.RawMessage `json:"securitySchemes"`
+		} `json:"components"`
+		Paths map[string]map[string]struct {
+			Security []map[string][]string `json:"security"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+		t.Fatalf("openapi does not parse: %v", err)
+	}
+	if _, ok := doc.Components.SecuritySchemes["sessionCookie"]; !ok {
+		t.Error("no sessionCookie security scheme, so these routes cannot say what they accept")
+	}
+
+	// Every HTTP method an OpenAPI path item may carry, so that a method
+	// added to the document without being added here is still caught.
+	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+	want := map[string]map[string]bool{
+		"/connect":                      {"get": true},
+		"/connect/{connector}":          {"get": true, "delete": true},
+		"/connect/{connector}/callback": {"get": true},
+		"/connect/{connector}/token":    {"get": true},
+	}
+	for path, allowed := range want {
+		ops, ok := doc.Paths[path]
+		if !ok {
+			t.Errorf("%s missing from the OpenAPI paths", path)
+			continue
+		}
+		for _, m := range methods {
+			op, documented := ops[m]
+			switch {
+			case documented && !allowed[m]:
+				t.Errorf("%s documents %s, which the router answers 405 for", path, m)
+			case !documented && allowed[m]:
+				t.Errorf("%s: %s is served but not documented", path, m)
+			case !documented:
+				continue
+			}
+			if len(op.Security) != 1 {
+				t.Errorf("%s %s: want exactly one security requirement, got %d",
+					m, path, len(op.Security))
+				continue
+			}
+			if _, ok := op.Security[0]["sessionCookie"]; !ok {
+				t.Errorf("%s %s does not declare sessionCookie, so it inherits the document's bearerAuth default",
+					m, path)
+			}
+		}
+	}
+}
