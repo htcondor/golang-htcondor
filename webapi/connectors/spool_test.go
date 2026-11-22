@@ -243,3 +243,98 @@ func TestOutputRefsFindsOutputDestination(t *testing.T) {
 		t.Errorf("OutputRefs = %v, want the output_destination", got)
 	}
 }
+
+// --- what a chosen name may be ---------------------------------------
+//
+// A provider lets people name a file anything. The reference cannot
+// carry all of it, and every case below reached a wrong outcome rather
+// than an error before CheckSpoolName existed.
+
+// A raw space cannot be refused here, and this is why.
+//
+// The reference ends where the regexp stops, which is the space -- so
+// this text parses as the connector file "my" plus an ordinary input
+// called "data.csv". That is not a misreading: it is exactly what the
+// same two tokens mean when a submitter writes them deliberately, and
+// nothing in the text distinguishes the two intents.
+//
+// So a name with a space in it is not expressible as a reference at
+// all, and the place to prevent one is where references are produced --
+// the file chooser, which has the real name in hand and can say so.
+// What arrives here is already unambiguous, and treating it as an error
+// would refuse the deliberate spelling along with the accidental one.
+//
+// Encoding the space is the one way this reaches the parser as a single
+// reference, and that form IS refused, below.
+func TestARawSpaceSplitsIntoTwoInputs(t *testing.T) {
+	in := "transfer_input_files = svc+gdrive2://ID/my data.csv\nqueue\n"
+	out, refs, err := SplitSpoolInputs(in)
+	if err != nil {
+		t.Fatalf("SplitSpoolInputs: %v", err)
+	}
+	if len(refs) != 1 || refs[0].Name != "my" {
+		t.Fatalf("refs = %+v, want the one reference the text actually spells", refs)
+	}
+	if !strings.Contains(out, "transfer_input_files = my data.csv") {
+		t.Errorf("rewritten: %q", out)
+	}
+}
+
+// Same for a comma, for the same reason.
+func TestACommaSplitsIntoTwoInputs(t *testing.T) {
+	in := "transfer_input_files = svc+gdrive2://ID/a,b.csv\nqueue\n"
+	_, refs, err := SplitSpoolInputs(in)
+	if err != nil {
+		t.Fatalf("SplitSpoolInputs: %v", err)
+	}
+	if len(refs) != 1 || refs[0].Name != "a" {
+		t.Errorf("refs = %+v", refs)
+	}
+}
+
+func TestAnEncodedSpaceIsRefusedToo(t *testing.T) {
+	// Encoding gets past the regexp and puts the space in the rewritten
+	// line instead, where HTCondor splits on it. Same failure, one
+	// layer later, so the check has to be on the decoded name.
+	if _, err := ParseInputURL("svc+gdrive2://ID/my%20data.csv"); err == nil {
+		t.Fatal("an encoded space was accepted; the rewritten submit file would list two inputs")
+	}
+}
+
+// "." and ".." are legal URL paths, so they parsed as names and reached
+// the spool tar as entry names.
+func TestADirectoryReferenceIsNotAName(t *testing.T) {
+	for _, raw := range []string{
+		"svc+gdrive2://ID/..",
+		"svc+gdrive2://ID/.",
+		"svc+gdrive2://ID/%2e%2e",
+	} {
+		if _, err := ParseInputURL(raw); err == nil {
+			t.Errorf("%q was accepted as a file name", raw)
+		}
+	}
+}
+
+// A submit file is macro-expanded, so this is not a character.
+func TestADollarInANameIsRefused(t *testing.T) {
+	if _, err := ParseInputURL("svc+gdrive2://ID/$(HOME).csv"); err == nil {
+		t.Fatal("a name containing macro expansion was accepted")
+	}
+}
+
+func TestCheckSpoolNameAcceptsOrdinaryNames(t *testing.T) {
+	// Everything a provider's files are actually called. A rule that
+	// refuses these is worse than the bug it fixes.
+	for _, name := range []string{
+		"data.csv",
+		"run-2026-11.tar.gz",
+		"final_report.pdf",
+		"UPPER.DAT",
+		"a.b.c.d",
+		"\u00e9t\u00e9.csv",
+	} {
+		if err := CheckSpoolName(name); err != nil {
+			t.Errorf("CheckSpoolName(%q) = %v, want it accepted", name, err)
+		}
+	}
+}

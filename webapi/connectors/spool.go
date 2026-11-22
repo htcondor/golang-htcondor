@@ -104,6 +104,9 @@ func ParseInputURL(raw string) (InputRef, error) {
 		return InputRef{}, fmt.Errorf(
 			"%q does not name a file; expected <service>+%s://<id>/<name>", raw, method)
 	}
+	if err := CheckSpoolName(name); err != nil {
+		return InputRef{}, fmt.Errorf("%q cannot be fetched: %w", raw, err)
+	}
 	return InputRef{
 		Service: service,
 		Method:  method,
@@ -306,3 +309,74 @@ func RecordInputRefs(submitFile string, refs []InputRef) string {
 	return fmt.Sprintf("# Recorded by the connectors machinery; see %s.\n+%s = %q\n%s",
 		InputAttribute, InputAttribute, EncodeInputRefs(refs), submitFile)
 }
+
+// CheckSpoolName reports whether a chosen file's name can be the name it
+// lands under in the sandbox.
+//
+// The name has two jobs at once, and a name that fails either fails
+// quietly. It is the file written into the spool, so it must be a plain
+// filename and not a path. It is ALSO the token that replaces the
+// reference in the submit file, so it must survive two more readers:
+// the regexp that finds references, and HTCondor's own parse of
+// transfer_input_files.
+//
+// Each of these was reachable before this check existed, and none of
+// them produced an error:
+//
+//   - Percent-encoding a space gets past the regexp that finds
+//     references and puts the space in the rewritten line instead,
+//     where HTCondor splits on it. The job then looks for two inputs,
+//     one of which nothing produces.
+//
+//     A RAW space is a different matter and not this check's to catch:
+//     the regexp stops there, so the text parses as a shorter reference
+//     plus an ordinary input, which is also what those tokens mean when
+//     a submitter writes them on purpose. A name with a space is not
+//     expressible as a reference, and the chooser is where that is
+//     prevented, because it has the real name in hand. The same goes
+//     for a comma.
+//
+//   - "." and ".." are legal URL paths and parsed as names, so they
+//     reached the spool tar as entry names. A tar entry called ".." is
+//     not a file to write but a direction to walk.
+//
+//   - A submit file is macro-expanded, so "$" in a name is not a
+//     character but an instruction. $(DOLLAR) would escape it for the
+//     rewrite, but the file in the sandbox still has to be found under
+//     its real name by a reader that does not expand anything, so the
+//     two cannot both be satisfied without more than an escape.
+//
+// A provider lets people name files things like this; it is only the
+// reference that cannot carry them. So the message says what to do --
+// rename the file -- rather than reporting a parse failure.
+func CheckSpoolName(name string) error {
+	switch name {
+	case ".", "..":
+		return fmt.Errorf(
+			"a file named %q cannot be fetched into a job's sandbox, because that "+
+				"is a directory reference and not a file name", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf(
+				"the file name %q contains a control character, which cannot appear "+
+					"in a submit file", name)
+		}
+		if strings.ContainsRune(spoolNameReserved, r) {
+			return fmt.Errorf(
+				"the file name %q contains %q, which a submit file reads as something "+
+					"other than part of a name; rename the file in the provider and "+
+					"choose it again", name, r)
+		}
+	}
+	return nil
+}
+
+// spoolNameReserved is what a name may not contain.
+//
+// The whitespace and the separators are where transfer_input_files ends
+// one entry and starts the next; the quotes are how it would be told
+// otherwise, which HTCondor does not support for this attribute. "$" is
+// macro expansion and "\\" is a path separator on the other platform
+// this runs on.
+const spoolNameReserved = " \t\r\n,;\"'$\\"
