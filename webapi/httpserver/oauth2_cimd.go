@@ -4,14 +4,12 @@ import (
 	"container/list"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ory/fosite"
@@ -168,36 +166,17 @@ func (r *cimdResolver) storeLocked(e *cimdCacheEntry, now time.Time) {
 // cimdHTTPClient is the production HTTP client for CIMD fetches: it refuses to
 // dial a disallowed IP (checked on the resolved address, so DNS rebinding cannot
 // slip an internal host past), follows no redirects, and bounds the fetch time.
-func cimdHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout: cimdFetchTimeout,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return fmt.Errorf("cimd: bad dial address %q: %w", address, err)
-			}
-			ip := net.ParseIP(host)
-			if ip == nil || isDisallowedIP(ip) {
-				return fmt.Errorf("cimd: refusing to connect to non-public address %q", host)
-			}
-			return nil
-		},
-	}
-	return &http.Client{
-		Timeout: cimdFetchTimeout,
-		Transport: &http.Transport{
-			DialContext:           dialer.DialContext,
-			TLSHandshakeTimeout:   cimdFetchTimeout,
-			ResponseHeaderTimeout: cimdFetchTimeout,
-			DisableKeepAlives:     true,
-		},
-		// A CIMD document must live at its own URL; a redirect to somewhere else
-		// would break the client_id==URL binding and is a classic SSRF pivot.
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return fmt.Errorf("cimd: redirects are not allowed")
-		},
-	}
-}
+//
+// The policy itself lives in internal/publicdial, shared with the JWKS fetch
+// next door and with the webhook deliveries. Every one of them is a request
+// this daemon makes to a URL somebody else chose, which is the whole of what
+// the guard is for; a second construction of it would be the copy that falls
+// behind when the blocked ranges change.
+//
+// Callers wrap the resulting error with their own context -- resolve() turns
+// it into "could not fetch CIMD document: ..." -- so nothing depends on the
+// refusal naming CIMD itself.
+func cimdHTTPClient() *http.Client { return publicdial.Client(cimdFetchTimeout) }
 
 // isDisallowedIP reports whether an IP must not be dialed for a CIMD fetch: any
 // address that is not a routable public host.

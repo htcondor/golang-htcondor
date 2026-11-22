@@ -3,6 +3,7 @@ package publicdial
 import (
 	"net"
 	"testing"
+	"time"
 )
 
 // The predicate is pure so it can be tested directly, which matters because
@@ -67,5 +68,23 @@ func TestClientRefusesRedirects(t *testing.T) {
 	}
 	if err := c.CheckRedirect(nil, nil); err == nil {
 		t.Error("CheckRedirect allowed a redirect")
+	}
+}
+
+// TestClientTimeoutNeverUnlimited: a guarded client with no timeout is still
+// a footgun, because the address is public but is one somebody else chose,
+// and a host that accepts and then says nothing holds the caller.
+func TestClientTimeoutNeverUnlimited(t *testing.T) {
+	for _, d := range []int64{0, -1} {
+		c := Client(time.Duration(d))
+		if c.Timeout <= 0 {
+			t.Errorf("Client(%d).Timeout = %s; want a bounded default", d, c.Timeout)
+		}
+	}
+	if got := Client(3 * time.Second).Timeout; got != 3*time.Second {
+		t.Errorf("Client(3s).Timeout = %s, want 3s", got)
+	}
+	if got := Dialer(0).Timeout; got <= 0 {
+		t.Errorf("Dialer(0).Timeout = %s; want a bounded default", got)
 	}
 }
