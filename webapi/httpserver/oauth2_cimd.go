@@ -16,6 +16,8 @@ import (
 
 	"github.com/ory/fosite"
 	"golang.org/x/time/rate"
+
+	"github.com/htcondor/golang-htcondor/webapi/internal/publicdial"
 )
 
 // CIMD (Client ID Metadata Document) lets an MCP client identify itself by an
@@ -198,21 +200,13 @@ func cimdHTTPClient() *http.Client {
 }
 
 // isDisallowedIP reports whether an IP must not be dialed for a CIMD fetch: any
-// address that is not a routable public host. Pure, so it is unit-tested
-// directly (the happy-path fetch test cannot go through the guarded dialer,
-// since httptest binds loopback).
-func isDisallowedIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() ||
-		ip.IsInterfaceLocalMulticast() {
-		return true
-	}
-	// 100.64.0.0/10 (RFC 6598 carrier-grade NAT) is not covered by IsPrivate.
-	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 0x40 {
-		return true
-	}
-	return false
-}
+// address that is not a routable public host.
+//
+// One implementation, in internal/publicdial, shared with the webhook
+// deliveries -- which make the same kind of request for the same kind of
+// reason, to a URL somebody else chose. Two copies of this list would mean
+// the one that is not being looked at falls behind.
+func isDisallowedIP(ip net.IP) bool { return publicdial.DisallowedIP(ip) }
 
 // hostAllowed applies the optional allowlist.
 func (r *cimdResolver) hostAllowed(host string) bool {
