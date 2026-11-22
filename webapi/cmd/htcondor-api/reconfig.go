@@ -53,6 +53,10 @@ type reconfigTarget interface {
 	SetWebUIBrandingDir(string)
 	SetWebUICustomCSS(string)
 	SetWebUIFavicon(string)
+	SetWebUIPrivacyFile(string)
+	SetWebUIPrivacyURL(string)
+	SetWebUITermsFile(string)
+	SetWebUITermsURL(string)
 	SetSuperuserGroups(string)
 	SetProjectLeadsFile(string)
 	SetProjectLeadsGroup(string)
@@ -275,6 +279,26 @@ var reconfigParams = []reconfigParam{
 	{
 		name:  "HTTP_API_WEBUI_FAVICON",
 		apply: func(s reconfigTarget, v string) { s.SetWebUIFavicon(v) },
+	},
+	// The site's policy pages. Reloadable on the same terms: the
+	// document is read when the page is served, so an operator
+	// correcting a sentence does not need a restart -- and neither
+	// does one turning a page on for the first time.
+	{
+		name:  "HTTP_API_WEBUI_PRIVACY_FILE",
+		apply: func(s reconfigTarget, v string) { s.SetWebUIPrivacyFile(v) },
+	},
+	{
+		name:  "HTTP_API_WEBUI_PRIVACY_URL",
+		apply: func(s reconfigTarget, v string) { s.SetWebUIPrivacyURL(v) },
+	},
+	{
+		name:  "HTTP_API_WEBUI_TERMS_FILE",
+		apply: func(s reconfigTarget, v string) { s.SetWebUITermsFile(v) },
+	},
+	{
+		name:  "HTTP_API_WEBUI_TERMS_URL",
+		apply: func(s reconfigTarget, v string) { s.SetWebUITermsURL(v) },
 	},
 	// Membership only: superuser mode is built at startup, so this cannot
 	// switch it on in a running daemon. Emptying it does switch it off.

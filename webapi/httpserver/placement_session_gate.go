@@ -40,6 +40,11 @@ var placementOnlyAPIPaths = map[string]bool{
 	// the site is called and what goes in its footer.
 	brandingPath:  true,
 	webui.CSSPath: true,
+	// The policy pages the footer of those pages links to. A session
+	// that may not reach the rest of the UI may still read the terms
+	// it is being held to.
+	webui.PrivacyPath: true,
+	webui.TermsPath:   true,
 }
 
 // placementOnlyPages are the web UI pages a placement-only session may load.

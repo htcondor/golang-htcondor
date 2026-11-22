@@ -34,6 +34,8 @@ otherwise switch it on for deployments that never asked.
 | `HTTP_API_WEBUI_BRANDING_DIR` | Directory of the site's images, served read-only under `/branding/`. Reloaded on SIGHUP. |
 | `HTTP_API_WEBUI_CUSTOM_CSS` | Stylesheet served at `/branding.css` and loaded after the app's own, so `--color-brand-*` can be redefined. Reloaded on SIGHUP. |
 | `HTTP_API_WEBUI_FAVICON` | URL for the browser tab icon. Reloaded on SIGHUP. |
+| `HTTP_API_WEBUI_PRIVACY_FILE` / `HTTP_API_WEBUI_TERMS_FILE` | Markdown policy documents, served at `/privacy` and `/terms`. The literal `default` serves the shipped template. Unset serves no page and puts no link in the footer. Reloaded on SIGHUP. See [Policy pages](server-branding.md#policy-pages). |
+| `HTTP_API_WEBUI_PRIVACY_URL` / `HTTP_API_WEBUI_TERMS_URL` | Where those paths redirect instead, for a site whose policy lives elsewhere. The file wins when both are set. Reloaded on SIGHUP. |
 | `HTTP_API_SITE_APPS_DIR` | Directory of `<id>.zip` site-app bundles and their `<id>.yaml` policy files. Unset disables site apps entirely. See [Site apps](server-site-apps.md). |
 | `HTTP_API_SITE_APPS_RELOAD_INTERVAL` | How often that directory is rescanned, as a Go duration. Default one minute. |
 | `HTTP_API_WEBHOOKS` | Whether users may set up outbound webhooks. Default true; `false` makes the endpoints answer 503 and runs neither the evaluator nor the delivery worker. See [Outbound webhooks](server-webhooks.md). |

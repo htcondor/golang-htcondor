@@ -21,9 +21,13 @@ serves today -- the server injects nothing into the HTML at all.
 | `HTTP_API_WEBUI_BRANDING_DIR` | A directory served read-only under `/branding/`: the site's logos and its favicon. |
 | `HTTP_API_WEBUI_CUSTOM_CSS` | A stylesheet served at `/branding.css`, loaded after the app's own. |
 | `HTTP_API_WEBUI_FAVICON` | URL for the browser tab icon, replacing the HTCondor mark. Normally a file in the branding directory. |
+| `HTTP_API_WEBUI_PRIVACY_FILE` | A Markdown privacy notice, served at `/privacy`. The literal `default` serves the template this software ships. |
+| `HTTP_API_WEBUI_PRIVACY_URL` | Where `/privacy` redirects instead, for a site whose privacy notice lives elsewhere. |
+| `HTTP_API_WEBUI_TERMS_FILE` | A Markdown terms of use, served at `/terms`. `default` likewise. |
+| `HTTP_API_WEBUI_TERMS_URL` | Where `/terms` redirects instead. |
 
-All six are applied by `condor_reconfig`, including the two that name
-files, so trying a logo out does not cost a restart.
+All of them are applied by `condor_reconfig`, including the ones that
+name files, so trying a logo out does not cost a restart.
 
 A worked example:
 
@@ -84,3 +88,57 @@ it.
 **For a separately-hosted SPA.** `GET /api/v1/webui/branding` returns
 the same values as JSON, unauthenticated. The pages this server serves
 carry them in their own HTML and never call it.
+
+## Policy pages
+
+A site that offers accounts to people outside its own staff generally
+needs somewhere to say what it does with their data and on what terms
+they may use the service. Two readers want those pages at a stable,
+unauthenticated URL on this server's own domain: somebody reading the
+footer, and the review process of an OAuth2 provider whose users' data
+an access point asks for -- Google will not approve an application that
+has no privacy policy and no terms of use.
+
+```
+HTTP_API_WEBUI_TERMS_FILE   = /etc/condor/terms.md
+HTTP_API_WEBUI_PRIVACY_URL  = https://www.wisc.edu/privacy-notice/
+```
+
+Each page takes a file or a URL. The file is Markdown, rendered by the
+server into a standalone page that needs no JavaScript and no session.
+The URL form exists because the common case for a privacy notice is
+that the institution already has one: a site should be able to point at
+it rather than keep a second copy that drifts from the first. Either
+way `/privacy` and `/terms` answer, so there is one address to give
+out; with a file they render, with a URL they redirect. The footer link
+points wherever the reader is really going.
+
+**Nothing is served by default.** A policy page is a legal statement
+about a particular deployment, and a plausible default that nobody has
+read would make promises on an operator's behalf that their site may
+not keep. An access point that configures neither setting has no pages
+-- the routes 404 -- and no policy links in its footer.
+
+What this software ships instead is a reviewed template for each page,
+selected by setting the file to the literal `default`:
+
+```
+HTTP_API_WEBUI_PRIVACY_FILE = default
+```
+
+Both templates are starting points, written to be accurate for an
+unmodified deployment, and both carry bracketed placeholders --
+`[CONTACT EMAIL]`, `[RETENTION PERIOD]` and so on -- that an operator is
+expected to replace. Copy them out of
+`webapi/httpserver/webui/resources/`, edit them, and point the setting
+at the result. The server warns in its log whenever the document it is
+serving still contains a placeholder, because a half-finished policy
+renders perfectly and the operator who configured it already knows what
+it was meant to say.
+
+**What the Markdown may contain.** It is trusted like the site
+stylesheet, since it comes from the same configuration file -- with one
+exception. Embedded raw HTML is dropped rather than rendered: a policy
+document is the kind of text that gets pasted in from a lawyer, a
+vendor template or another institution's site, and script arriving that
+way would run same-origin without anybody choosing it.

@@ -454,6 +454,13 @@ type Config struct {
 	WebUIBrandingDir string
 	WebUICustomCSS   string
 	WebUIFavicon     string
+	// The site's policy pages, served at /privacy and /terms. Each is
+	// a markdown file (or "default"), or failing that a URL to
+	// redirect to. Unset serves neither. See httpserver/policy.go.
+	WebUIPrivacyFile string
+	WebUIPrivacyURL  string
+	WebUITermsFile   string
+	WebUITermsURL    string
 	// SpoolBufferDir is where a cluster-wide upload buffers its tar
 	// before fanning it out to each proc. Empty selects the system temp
 	// directory.
@@ -712,6 +719,10 @@ func NewServer(cfg Config) (*Server, error) {
 		WebUIBrandingDir:            cfg.WebUIBrandingDir,
 		WebUICustomCSS:              cfg.WebUICustomCSS,
 		WebUIFavicon:                cfg.WebUIFavicon,
+		WebUIPrivacyFile:            cfg.WebUIPrivacyFile,
+		WebUIPrivacyURL:             cfg.WebUIPrivacyURL,
+		WebUITermsFile:              cfg.WebUITermsFile,
+		WebUITermsURL:               cfg.WebUITermsURL,
 		WebUIAccessGroup:            cfg.WebUIAccessGroup,
 		SpoolBufferDir:              cfg.SpoolBufferDir,
 		SuperuserGroup:              cfg.SuperuserGroup,

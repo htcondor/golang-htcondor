@@ -36,6 +36,15 @@ export interface Branding {
   software_credit?: boolean;
   favicon?: string;
   custom_css?: boolean;
+  // Where the footer's policy links point. Absent when the operator has
+  // configured no such page, and the footer then says nothing about it:
+  // a link to a policy that does not exist is worse than no link.
+  //
+  // Usually this server's own /privacy and /terms. A site whose policy
+  // lives elsewhere gets that URL instead, so the link shows a reader
+  // where it really goes.
+  privacy_url?: string;
+  terms_url?: string;
 }
 
 export const DEFAULT_BRANDING: Branding = {

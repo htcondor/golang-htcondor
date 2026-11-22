@@ -1396,6 +1396,14 @@ type HandlerConfig struct {
 	// WebUIFavicon is a URL for the tab icon, normally one of the files
 	// in WebUIBrandingDir.
 	WebUIFavicon string
+	// The site's policy pages, served at /privacy and /terms. Each is
+	// a markdown file (or "default" for the shipped template), or
+	// failing that a URL to redirect to. Empty serves no page and puts
+	// no link in the footer. See httpserver/policy.go.
+	WebUIPrivacyFile string
+	WebUIPrivacyURL  string
+	WebUITermsFile   string
+	WebUITermsURL    string
 
 	EnableIDP bool // Enable built-in IDP (always enabled in demo mode)
 	// SpoolBufferDir is where cluster-wide uploads buffer their tar.
@@ -2353,6 +2361,10 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		Favicon:     cfg.WebUIFavicon,
 		Dir:         cfg.WebUIBrandingDir,
 		CSSFile:     cfg.WebUICustomCSS,
+		PrivacyFile: cfg.WebUIPrivacyFile,
+		PrivacyURL:  cfg.WebUIPrivacyURL,
+		TermsFile:   cfg.WebUITermsFile,
+		TermsURL:    cfg.WebUITermsURL,
 	})
 
 	// Parsed once, here, so a malformed policy stops the daemon at startup

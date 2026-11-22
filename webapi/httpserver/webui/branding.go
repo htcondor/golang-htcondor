@@ -66,6 +66,17 @@ type Branding struct {
 	// CustomCSS reports that this server serves a site stylesheet at
 	// /branding.css, loaded after the page's own.
 	CustomCSS bool `json:"custom_css,omitempty"`
+	// PrivacyURL and TermsURL are where the footer links for the site's
+	// policy pages point. Empty when the operator has configured none,
+	// and the footer then says nothing about them -- see policy.go.
+	//
+	// Normally PrivacyPath and TermsPath, served by this server. A site
+	// whose policy lives elsewhere (an institutional privacy notice,
+	// say) gets that URL here instead, so the footer link shows a
+	// reader where it is really going; the local path still redirects
+	// there, for whoever was given it.
+	PrivacyURL string `json:"privacy_url,omitempty"`
+	TermsURL   string `json:"terms_url,omitempty"`
 
 	// Rev changes whenever anything above does. It busts the injected
 	// HTML cache and the stylesheet's URL after a reconfigure.
@@ -88,6 +99,7 @@ func (b Branding) IsDefault() bool {
 	d := DefaultBranding()
 	return b.FooterLogos == nil && !b.SoftwareCredit &&
 		b.Favicon == "" && !b.CustomCSS &&
+		b.PrivacyURL == "" && b.TermsURL == "" &&
 		b.SiteName == d.SiteName && b.SiteTagline == d.SiteTagline &&
 		b.PageTitle == d.PageTitle
 }
@@ -105,6 +117,12 @@ type Options struct {
 	// stylesheet. Resolving the path is the caller's job; this only
 	// decides whether the page links to it.
 	CustomCSS bool
+	// PrivacyURL and TermsURL are where the footer's policy links
+	// point, already resolved by the caller: empty for a site that has
+	// configured no such page. Validated here all the same, since they
+	// reach an href.
+	PrivacyURL string
+	TermsURL   string
 }
 
 // Build resolves configured values into a Branding.
@@ -145,6 +163,25 @@ func Build(o Options) (Branding, error) {
 		}
 	}
 	b.CustomCSS = o.CustomCSS
+
+	for _, p := range []struct {
+		name string
+		raw  string
+		dst  *string
+	}{
+		{"privacy notice", o.PrivacyURL, &b.PrivacyURL},
+		{"terms of use", o.TermsURL, &b.TermsURL},
+	} {
+		raw := strings.TrimSpace(p.raw)
+		if raw == "" {
+			continue
+		}
+		if !assetURLOK(raw) {
+			problems = append(problems, fmt.Sprintf("%s link %q is not a site-relative or http(s) URL; the footer will not link to it", p.name, raw))
+			continue
+		}
+		*p.dst = raw
+	}
 
 	if len(problems) > 0 {
 		return b, fmt.Errorf("%s", strings.Join(problems, "; "))

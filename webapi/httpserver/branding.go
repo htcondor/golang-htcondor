@@ -75,6 +75,13 @@ type brandingOptions struct {
 	Favicon     string
 	Dir         string
 	CSSFile     string
+	// The site's policy pages. Each is a path to a markdown file (or
+	// webui.DefaultSource for the shipped template) and, failing that,
+	// a URL to send readers to instead. See policy.go.
+	PrivacyFile string
+	PrivacyURL  string
+	TermsFile   string
+	TermsURL    string
 }
 
 // brandingSnapshot is one resolved configuration: what the pages are
@@ -89,6 +96,10 @@ type brandingSnapshot struct {
 	// which is the usual case and the one the branding directory is
 	// for.
 	imgSrc string
+	// privacy and terms are the resolved policy pages, served at
+	// webui.PrivacyPath and webui.TermsPath.
+	privacy policyDoc
+	terms   policyDoc
 }
 
 // brandingState holds the live branding. Requests read it through an
@@ -143,12 +154,19 @@ func (s *brandingState) rebuild() {
 		}
 	}
 
+	snap.privacy = s.resolvePolicy("HTTP_API_WEBUI_PRIVACY", o.PrivacyFile, o.PrivacyURL,
+		webui.PrivacyPath, webui.DefaultPrivacyMarkdown)
+	snap.terms = s.resolvePolicy("HTTP_API_WEBUI_TERMS", o.TermsFile, o.TermsURL,
+		webui.TermsPath, webui.DefaultTermsMarkdown)
+
 	b, err := webui.Build(webui.Options{
 		SiteName:    o.SiteName,
 		SiteTagline: o.SiteTagline,
 		FooterLogos: o.FooterLogos,
 		Favicon:     o.Favicon,
 		CustomCSS:   snap.cssFile != "",
+		PrivacyURL:  snap.privacy.link,
+		TermsURL:    snap.terms.link,
 	})
 	if err != nil {
 		s.warn("Web UI branding is partly unusable", "error", err)
