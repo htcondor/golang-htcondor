@@ -35,6 +35,13 @@ const (
 	ClientOriginDynamic ClientOrigin = "dynamic"
 	// ClientOriginSeeded is a client this server created at startup.
 	ClientOriginSeeded ClientOrigin = "seeded"
+	// ClientOriginAdmin is a client an operator created through the admin
+	// page, which is the only way to get one holding a grant that acts
+	// with no user present.
+	ClientOriginAdmin ClientOrigin = "admin"
+	// ClientOriginUser is a client a user created for themselves. It is
+	// the only origin that comes with an owner.
+	ClientOriginUser ClientOrigin = "user"
 )
 
 // maxRecentUsers caps the rolling sample of subjects kept per client.

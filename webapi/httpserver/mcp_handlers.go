@@ -1504,29 +1504,11 @@ func (h *Handler) handleOAuth2Register(w http.ResponseWriter, r *http.Request) {
 	// must be accepted and registered on the client; without it in the
 	// client's allowed set, filterScopesForClient strips it at authorize
 	// time and fosite never issues a refresh token.
-	supportedScopes := map[string]bool{
-		"openid":         true,
-		"profile":        true,
-		"email":          true,
-		"offline_access": true,
-		"mcp:read":       true,
-		"mcp:write":      true,
-		// Requestable, but only granted to members of the configured
-		// group -- see getScopesForGroups. A client asking for them
-		// without the group membership simply does not receive them.
-		"mcp:admin":       true,
-		"mcp:superuser":   true,
-		scopeAnyUserRead:  true,
-		scopeAnyUserWrite: true,
-		// READ and WRITE only: they are the condor levels a token from
-		// this server can carry (mapCondorScopesToAuthz). Any other was
-		// accepted here, shown pre-ticked on the consent page, and
-		// granted nothing.
-		condorScopeRead:  true,
-		condorScopeWrite: true,
-	}
+	//
+	// The set itself is supportedClientScopes, shared with the two explicit
+	// creation paths so all three agree on what a client may ask for.
 	for _, scope := range regReq.Scopes {
-		if !supportedScopes[scope] {
+		if !supportedClientScopes[scope] {
 			h.writeError(w, http.StatusBadRequest, fmt.Sprintf("Unsupported scope: %s", scope))
 			return
 		}

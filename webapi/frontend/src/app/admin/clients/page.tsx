@@ -23,7 +23,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type AdminClient } from "@/lib/api";
+import { api, type AdminClient, type IntegrationCreated } from "@/lib/api";
 import { ChipList } from "@/components/ChipList";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import {
@@ -81,6 +81,18 @@ export default function AdminClientsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'clients'] }),
   });
 
+  const [minted, setMinted] = useState<
+    (IntegrationCreated & { origin?: string }) | null
+  >(null);
+
+  const create = useMutation({
+    mutationFn: api.admin.createClient,
+    onSuccess: (c) => {
+      setMinted(c);
+      qc.invalidateQueries({ queryKey: ["admin", "clients"] });
+    },
+  });
+
   const clients = useSortedRows(data?.clients ?? [], sort, clientSortValue);
 
   return (
@@ -94,6 +106,16 @@ export default function AdminClientsPage() {
           its tokens.
         </p>
       </div>
+
+      {minted && (
+        <MintedClient minted={minted} onDismiss={() => setMinted(null)} />
+      )}
+
+      <CreateClientForm
+        pending={create.isPending}
+        error={create.error}
+        onCreate={(body) => create.mutate(body)}
+      />
 
       {isLoading && <p className="text-gray-400">Loading...</p>}
       {error && (
@@ -578,4 +600,275 @@ function relativeTime(iso: string): string {
   const days = Math.round(hours / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+// CreateClientForm provisions a client an app cannot register for itself.
+//
+// Dynamic registration covers every client with a person on the other end, so
+// what is left for an operator is the opposite case: a credential that acts
+// on its own (client_credentials), one that acts for another principal (token
+// exchange), or a service whose vendor wants an id and a secret pasted into a
+// form rather than a discovery document.
+//
+// The grant checkboxes lead with those two, because an operator reaching for
+// this form usually wants one of them -- a browser-flow client is better off
+// registering itself.
+const ADMIN_GRANTS: { grant: string; label: string; hint: string }[] = [
+  {
+    grant: "client_credentials",
+    label: "client_credentials",
+    hint: "Acts as itself, with no user. Needs a service subject.",
+  },
+  {
+    grant: "urn:ietf:params:oauth:grant-type:token-exchange",
+    label: "token exchange",
+    hint: "Acts on another principal's behalf. Confidential clients only.",
+  },
+  {
+    grant: "authorization_code",
+    label: "authorization_code",
+    hint: "The browser flow. Needs a redirect URI.",
+  },
+  { grant: "refresh_token", label: "refresh_token", hint: "Keeps a grant alive." },
+];
+
+function CreateClientForm({
+  onCreate,
+  pending,
+  error,
+}: {
+  onCreate: (body: {
+    name: string;
+    notes?: string;
+    redirect_uris?: string[];
+    grant_types?: string[];
+    service_subject?: string;
+    public?: boolean;
+  }) => void;
+  pending: boolean;
+  error: unknown;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [redirect, setRedirect] = useState("");
+  const [serviceSubject, setServiceSubject] = useState("");
+  const [grants, setGrants] = useState<string[]>(["client_credentials"]);
+
+  const toggle = (g: string) =>
+    setGrants((cur) =>
+      cur.includes(g) ? cur.filter((x) => x !== g) : [...cur, g],
+    );
+
+  // Mirrors the server's refusal rather than replacing it: a
+  // client_credentials client with no subject authenticates and then asserts
+  // nobody, so every token it gets is refused downstream. Saying so before
+  // the request is submitted saves an error nobody can act on.
+  const needsSubject = grants.includes("client_credentials");
+  const missingSubject = needsSubject && serviceSubject.trim() === "";
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+      >
+        Create client
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <p className="text-xs text-gray-600">
+        For clients that cannot register themselves. Anything with a person on
+        the other end can use dynamic registration instead, and a user&apos;s
+        own integration belongs on their Connectors page.
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-xs font-medium text-gray-700">Name</span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 text-sm text-gray-900"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-gray-700">
+            Service subject
+          </span>
+          <input
+            type="text"
+            value={serviceSubject}
+            onChange={(e) => setServiceSubject(e.target.value)}
+            placeholder="ops@example.org"
+            className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 text-sm text-gray-900"
+          />
+          <span className="mt-1 block text-xs text-gray-500">
+            The identity a client_credentials token asserts.
+          </span>
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-xs font-medium text-gray-700">
+            Redirect URI
+          </span>
+          <input
+            type="text"
+            value={redirect}
+            onChange={(e) => setRedirect(e.target.value)}
+            className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 text-sm text-gray-900"
+          />
+          <span className="mt-1 block text-xs text-gray-500">
+            Required for the browser and device flows; unused by a client that
+            only acts as itself.
+          </span>
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-xs font-medium text-gray-700">Notes</span>
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Why this client exists"
+            className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 text-sm text-gray-900"
+          />
+        </label>
+      </div>
+
+      <fieldset>
+        <legend className="text-xs font-medium text-gray-700">
+          Grant types
+        </legend>
+        <div className="mt-1 space-y-1">
+          {ADMIN_GRANTS.map((g) => (
+            <label key={g.grant} className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={grants.includes(g.grant)}
+                onChange={() => toggle(g.grant)}
+                className="mt-1"
+              />
+              <span>
+                <span className="font-mono text-xs text-gray-900">
+                  {g.label}
+                </span>{" "}
+                <span className="text-xs text-gray-500">{g.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {missingSubject && (
+        <p className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          A client_credentials client needs a service subject, or its tokens
+          assert nobody and are refused downstream.
+        </p>
+      )}
+      {error != null && (
+        <p className="rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {(error as Error).message}
+        </p>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() =>
+            onCreate({
+              name: name.trim(),
+              notes: notes.trim() || undefined,
+              redirect_uris: redirect.trim() ? [redirect.trim()] : undefined,
+              grant_types: grants,
+              service_subject: serviceSubject.trim() || undefined,
+            })
+          }
+          disabled={pending || name.trim() === "" || missingSubject}
+          className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {pending ? "Creating..." : "Create"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-sm border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// MintedClient shows the credentials once. Same reasoning as the API key
+// page: dismissed by hand, so a fumbled copy is recoverable until the
+// operator says they are done.
+function MintedClient({
+  minted,
+  onDismiss,
+}: {
+  minted: IntegrationCreated & { origin?: string };
+  onDismiss: () => void;
+}) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = async (what: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(what);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      // Refused on an insecure origin; the fields stay selectable.
+    }
+  };
+  const fields: [string, string][] = [["Client ID", minted.id]];
+  if (minted.client_secret) fields.push(["Client secret", minted.client_secret]);
+  if (minted.endpoints) {
+    fields.push(["Authorization URL", minted.endpoints.authorization_endpoint]);
+    fields.push(["Token URL", minted.endpoints.token_endpoint]);
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4">
+      <h2 className="text-sm font-semibold text-amber-900">
+        Created {minted.name ? `"${minted.name}"` : "client"}
+      </h2>
+      <p className="text-xs text-amber-800">
+        {minted.client_secret
+          ? "Copy the secret now. It is never shown again; losing it means replacing the client."
+          : "A public client, so no secret was issued."}
+      </p>
+      {fields.map(([label, value]) => (
+        <label key={label} className="block">
+          <span className="text-xs font-medium text-amber-900">{label}</span>
+          <span className="mt-1 flex gap-2">
+            <input
+              type="text"
+              readOnly
+              value={value}
+              onFocus={(e) => e.currentTarget.select()}
+              className="flex-1 rounded-sm border border-amber-300 bg-white px-2 py-1 font-mono text-xs text-gray-900"
+            />
+            <button
+              type="button"
+              onClick={() => copy(label, value)}
+              className="rounded-sm border border-amber-400 bg-white px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
+            >
+              {copied === label ? "Copied!" : "Copy"}
+            </button>
+          </span>
+        </label>
+      ))}
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="rounded-sm bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700"
+      >
+        I&apos;ve saved it
+      </button>
+    </div>
+  );
 }

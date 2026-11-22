@@ -59,6 +59,7 @@ const NAV = [
   { href: '/submit', label: 'Submit' },
   { href: '/interactive', label: 'Interactive' },
   { href: '/pool', label: 'Pool' },
+  { href: '/connectors', label: 'Connectors' },
   { href: '/info', label: 'Info' },
 ];
 
@@ -72,6 +73,7 @@ const MULTI_AP_NAV = [
   { href: '/submit', label: 'Submit' },
   { href: '/interactive', label: 'Interactive' },
   { href: '/aps', label: 'Access Points' },
+  { href: '/connectors', label: 'Connectors' },
 ];
 
 // Offered when this server issues placement tokens and the session has a

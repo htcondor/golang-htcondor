@@ -837,7 +837,7 @@ const openAPISchema = `{
           "id": {"type": "string", "description": "Client id. A dynamically registered one looks like \"client_<unixnano>\" and says nothing about the app -- which is what name, notes and origin are for."},
           "name": {"type": "string", "description": "What the client called itself at registration (RFC 7591 client_name). Absent for seeded clients and for anything registered before this was kept."},
           "notes": {"type": "string", "description": "Operator annotation, editable via PATCH. Often the only identifying information for a client that predates provenance tracking."},
-          "origin": {"type": "string", "enum": ["dynamic", "seeded", ""], "description": "How the client came to exist: \"dynamic\" registered itself through /mcp/oauth2/register, \"seeded\" was created by this server. EMPTY MEANS UNKNOWN, not \"not dynamic\" -- the row predates the field and nobody recorded the answer."},
+          "origin": {"type": "string", "enum": ["dynamic", "seeded", "admin", "user", ""], "description": "How the client came to exist: \"dynamic\" registered itself through /mcp/oauth2/register, \"seeded\" was created by this server at startup, \"admin\" was created by an operator on the admin page, \"user\" was created by a user as one of their own integrations and is the only origin that comes with an owner. EMPTY MEANS UNKNOWN, not \"not dynamic\" -- the row predates the field and nobody recorded the answer."},
           "last_used_at": {"type": "string", "format": "date-time", "description": "When this client last obtained a token. Absent means never. Written on a debounced background flush, so it may lag real usage; it is a \"roughly when\", not an audit record."},
           "recent_users": {"type": "array", "items": {"$ref": "#/components/schemas/AdminClientUse"}, "description": "Rolling sample of the last few distinct subjects to obtain a token through this client, newest first."},
           "refresh_blocked_by": {"type": "array", "items": {"type": "string"}, "description": "What stops this client from ever receiving a refresh token, so its users re-authorize on every access-token expiry: the refresh_token grant, the offline_access scope, or both. Nothing errors when this is misconfigured -- the client simply never gets a refresh token. Absent means nothing blocks it, OR that the client has no interactive flow and so has no user to inconvenience."},
@@ -847,6 +847,31 @@ const openAPISchema = `{
           "scopes": {"type": "array", "items": {"type": "string"}},
           "public": {"type": "boolean"},
           "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "IntegrationEndpoints": {
+        "type": "object",
+        "description": "The URLs an outside service's setup form asks for. Served rather than built by the client: the OAuth2 endpoints sit under /mcp/oauth2/ or /oauth2/ depending on whether MCP is enabled, so a guess would 404 on half the deployments.",
+        "properties": {
+          "issuer": {"type": "string"},
+          "authorization_endpoint": {"type": "string", "description": "Where to send the user to approve the app."},
+          "token_endpoint": {"type": "string", "description": "Where the app redeems its code and refreshes."},
+          "metadata_endpoint": {"type": "string", "description": "The discovery document, for a service that can read one instead of being told each URL."}
+        }
+      },
+      "Integration": {
+        "type": "object",
+        "description": "One of the caller's own OAuth2 clients. There is no secret field, deliberately: a struct with one is a struct that ends up in a response the first time somebody adds an endpoint.",
+        "properties": {
+          "id": {"type": "string", "description": "The client id to give the outside service."},
+          "name": {"type": "string", "description": "What you called it, so you can tell your integrations apart."},
+          "redirect_uris": {"type": "array", "items": {"type": "string"}},
+          "grant_types": {"type": "array", "items": {"type": "string"}},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "What this client may request. A grant still gets only what consent allows at the time."},
+          "public": {"type": "boolean", "description": "A client with no secret."},
+          "has_secret": {"type": "boolean", "description": "Whether a secret exists, without being one. True for a confidential client; the secret itself was shown once, at creation, and cannot be read again."},
+          "created_at": {"type": "string", "format": "date-time"},
+          "last_used_at": {"type": "string", "format": "date-time", "description": "When this client last obtained a token. Absent means never, which is what an integration that was configured but never ran looks like."}
         }
       },
       "DBMirrorRoutingCount": {
@@ -1187,6 +1212,38 @@ const openAPISchema = `{
           "401": {"description": "Not authenticated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "403": {"description": "Not an administrator", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
+      },
+      "post": {
+        "summary": "Create an OAuth2 client",
+        "description": "Creates a client with credentials returned once. The counterpart to dynamic registration (/mcp/oauth2/register), for the clients that cannot register themselves: client_credentials and token exchange act with no user present and are deliberately not self-registrable, so an operator provisions them here. Also for a service whose vendor wants an id and a secret pasted into a form rather than a discovery document. A client_credentials client needs a service_subject -- the identity its tokens assert -- or it would authenticate and then assert nobody. A public client is issued no secret and may not hold the confidential-only grants. The secret is returned in this response and nowhere else; nothing can recover it afterwards, so replacing the client is the answer to losing it. Requires membership in the web UI admin group, a browser session, and an application/json body.",
+        "operationId": "createAdminClient",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {
+          "name": {"type": "string", "maxLength": 128, "description": "Display label for the admin list."},
+          "notes": {"type": "string", "maxLength": 4096, "description": "The operator's annotation: for a client created rather than registered, where the reason it exists goes."},
+          "redirect_uris": {"type": "array", "items": {"type": "string"}, "description": "Required for any client with a browser or device flow. An operator's client may use a custom scheme; a user's may not."},
+          "grant_types": {"type": "array", "items": {"type": "string", "enum": ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:token-exchange"]}, "description": "Defaults to authorization_code and refresh_token."},
+          "response_types": {"type": "array", "items": {"type": "string", "enum": ["code"]}},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "What the client may REQUEST. What a grant ends up with is decided at consent from the user's groups, so a scope here that the policy never grants simply never appears in a token."},
+          "public": {"type": "boolean", "description": "A client with no secret, for a native or browser app that cannot keep one."},
+          "service_subject": {"type": "string", "maxLength": 256, "description": "The identity a client_credentials token from this client asserts."}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created. client_secret is present for a confidential client and is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "client_secret": {"type": "string", "description": "Absent for a public client. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "redirect_uris": {"type": "array", "items": {"type": "string"}},
+            "grant_types": {"type": "array", "items": {"type": "string"}},
+            "scopes": {"type": "array", "items": {"type": "string"}},
+            "public": {"type": "boolean"},
+            "origin": {"type": "string"},
+            "endpoints": {"$ref": "#/components/schemas/IntegrationEndpoints"}
+          }}}}},
+          "400": {"description": "Malformed body, or a client that could not work as described -- a browser flow with no redirect URI, client_credentials with no service subject, an unsupported grant or scope", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "Not an administrator", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json. The content type is required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
       }
     },
     "/admin/oauth2/clients/{id}": {
@@ -1216,6 +1273,63 @@ const openAPISchema = `{
           "200": {"description": "Deleted"},
           "403": {"description": "Not an administrator", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "No such client", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/integrations": {
+      "get": {
+        "summary": "List your own OAuth2 clients",
+        "description": "The clients you created for yourself -- the inbound half of a connector, where an outside service holds a credential that lets it act as you here. Distinct from the connectors you grant this server on your accounts elsewhere. No secret is ever returned: has_secret says one exists without being one, because a client secret is shown only in the reply to the creation that minted it. SESSION ONLY: authenticated from the browser session cookie and not from a bearer token, so a client cannot mint or enumerate clients.",
+        "operationId": "listIntegrations",
+        "responses": {
+          "200": {"description": "Your integrations, newest first, with the endpoints every one of them is configured with", "content": {"application/json": {"schema": {"type": "object", "properties": {"integrations": {"type": "array", "items": {"$ref": "#/components/schemas/Integration"}}, "endpoints": {"$ref": "#/components/schemas/IntegrationEndpoints"}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "The session has no local account, so it cannot own an integration", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "summary": "Create one of your own OAuth2 clients",
+        "description": "Mints a client you own, for a service that wants an id and a secret pasted into a form rather than dynamic registration. Two bounds apply that the admin path does not apply. The grant types are restricted to the flows with a person on the other end (authorization_code, refresh_token, device_code): client_credentials and token exchange act with nobody present, which is a decision about the deployment rather than about your jobs, so an administrator provisions those. And the scope list is intersected with what you could consent to today, so a client cannot be REGISTERED for a scope you have no claim to -- consent narrows it again at authorization time. offline_access is carried through regardless, since without it no refresh token is ever issued and an unattended integration cannot work. Redirect URIs must be https, or http on loopback. The secret is returned here and nowhere else.",
+        "operationId": "createIntegration",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {
+          "name": {"type": "string", "maxLength": 128, "description": "Required, so you can tell your integrations apart."},
+          "redirect_uris": {"type": "array", "items": {"type": "string"}, "description": "https, or http on loopback. Required for the browser and device flows."},
+          "grant_types": {"type": "array", "items": {"type": "string", "enum": ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"]}, "description": "Defaults to authorization_code and refresh_token."},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "Narrowed to what your account could consent to."},
+          "public": {"type": "boolean", "description": "No secret is issued; for a native or command-line app that cannot keep one."}
+        }}}}},
+        "responses": {
+          "201": {"description": "Created. client_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "client_secret": {"type": "string", "description": "Absent for a public client. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "redirect_uris": {"type": "array", "items": {"type": "string"}},
+            "grant_types": {"type": "array", "items": {"type": "string"}},
+            "scopes": {"type": "array", "items": {"type": "string"}},
+            "public": {"type": "boolean"},
+            "endpoints": {"$ref": "#/components/schemas/IntegrationEndpoints"}
+          }}}}},
+          "400": {"description": "Malformed body, no name, an unsupported scope, or a redirect URI that is not https or loopback http", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "A grant type that acts with no user present, or none of the requested scopes are available to your account", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "409": {"description": "You already hold the maximum number of integrations", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json. The content type is required so a cross-site form POST cannot reach this endpoint without a CORS preflight.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/integrations/{id}": {
+      "delete": {
+        "summary": "Delete one of your own OAuth2 clients",
+        "description": "Removes the client and every token issued under it, so whatever was using it stops immediately. Scoped to you inside the statement: somebody else's client answers 404 rather than 403, because a 403 would confirm that an id exists to a caller who does not hold it.",
+        "operationId": "deleteIntegration",
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Deleted", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "id": {"type": "string"}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such integration of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
