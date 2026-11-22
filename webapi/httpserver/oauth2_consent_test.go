@@ -644,3 +644,171 @@ func TestOAuth2ConsentPage_SessionGroupsPassedToStateStore(t *testing.T) {
 		t.Errorf("Expected groups [ap40-login admin-group], got %v", session.Groups)
 	}
 }
+
+// TestConsentPageNamesTheApplication covers the screen on which somebody
+// decides whether to trust an application.
+//
+// "client_7d530baec756..." gives a person nothing to recognise, and a user
+// who cannot tell which application is asking cannot meaningfully approve
+// it. The id stays on the page -- an administrator needs it when one name
+// has been used twice -- but it is no longer the only identification.
+func TestConsentPageNamesTheApplication(t *testing.T) {
+	server, oauth2Provider, _, _ := setupTestOAuth2Server(t)
+	defer func() {
+		if err := oauth2Provider.Close(); err != nil {
+			t.Errorf("Failed to close OAuth2 provider: %v", err)
+		}
+	}()
+
+	// Against the server's OWN provider: setupTestOAuth2Server builds the
+	// returned provider on a different database from the one the server
+	// holds, and clientDisplayName reads the server's.
+	ctx := context.Background()
+	storage := server.oauth2Provider.GetStorage()
+	hashed, err := bcrypt.GenerateFromPassword([]byte("s"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+
+	render := func(t *testing.T, clientID string) string {
+		t.Helper()
+		client := &fosite.DefaultClient{
+			ID:            clientID,
+			Secret:        hashed,
+			RedirectURIs:  []string{"http://localhost:8080/callback"},
+			GrantTypes:    []string{"authorization_code"},
+			ResponseTypes: []string{"code"},
+			Scopes:        []string{"openid", "mcp:read"},
+		}
+		if err := storage.CreateClient(ctx, client); err != nil {
+			t.Fatalf("CreateClient: %v", err)
+		}
+		authorizeReq := httptest.NewRequestWithContext(ctx, http.MethodGet,
+			"/mcp/oauth2/authorize", nil)
+		authorizeReq.URL.RawQuery = url.Values{
+			"response_type": []string{"code"},
+			"client_id":     []string{clientID},
+			"redirect_uri":  []string{"http://localhost:8080/callback"},
+			"scope":         []string{"openid mcp:read"},
+			"state":         []string{"test-state"},
+		}.Encode()
+		ar, err := server.oauth2Provider.GetProvider().NewAuthorizeRequest(ctx, authorizeReq)
+		if err != nil {
+			t.Fatalf("NewAuthorizeRequest: %v", err)
+		}
+		state, err := server.oauth2StateStore.GenerateState()
+		if err != nil {
+			t.Fatalf("GenerateState: %v", err)
+		}
+		server.oauth2StateStore.StoreWithUsername(state, ar, "", "testuser")
+
+		w := httptest.NewRecorder()
+		server.handleOAuth2Consent(w,
+			httptest.NewRequestWithContext(ctx, http.MethodGet,
+				"/mcp/oauth2/consent?state="+state, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("consent page status %d: %s", w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+
+	t.Run("a named application is named", func(t *testing.T) {
+		const id = "client_namedapp"
+		body := render(t, id)
+		// Before the name is stored there is nothing to show, so the
+		// page says so rather than leaving the heading bare.
+		if !strings.Contains(body, "did not give a name") {
+			t.Errorf("a nameless client was not described as such:\n%s", body)
+		}
+
+		if _, err := storage.GetDB().ExecContext(ctx,
+			`UPDATE oauth2_clients SET client_name = ? WHERE id = ?`,
+			"Zapier", id); err != nil {
+			t.Fatalf("set client_name: %v", err)
+		}
+		body = render(t, id+"_2")
+		if strings.Contains(body, "Zapier") {
+			t.Fatal("the second client somehow borrowed the first one's name")
+		}
+
+		// Re-render the named one.
+		authorizeReq := httptest.NewRequestWithContext(ctx, http.MethodGet,
+			"/mcp/oauth2/authorize", nil)
+		authorizeReq.URL.RawQuery = url.Values{
+			"response_type": []string{"code"},
+			"client_id":     []string{id},
+			"redirect_uri":  []string{"http://localhost:8080/callback"},
+			"scope":         []string{"openid mcp:read"},
+			"state":         []string{"test-state"},
+		}.Encode()
+		ar, err := server.oauth2Provider.GetProvider().NewAuthorizeRequest(ctx, authorizeReq)
+		if err != nil {
+			t.Fatalf("NewAuthorizeRequest: %v", err)
+		}
+		state, err := server.oauth2StateStore.GenerateState()
+		if err != nil {
+			t.Fatalf("GenerateState: %v", err)
+		}
+		server.oauth2StateStore.StoreWithUsername(state, ar, "", "testuser")
+		w := httptest.NewRecorder()
+		server.handleOAuth2Consent(w,
+			httptest.NewRequestWithContext(ctx, http.MethodGet,
+				"/mcp/oauth2/consent?state="+state, nil))
+		body = w.Body.String()
+
+		if !strings.Contains(body, "Zapier") {
+			t.Errorf("the consent page does not name the application:\n%s", body)
+		}
+		if strings.Contains(body, "did not give a name") {
+			t.Error("a named client was still described as nameless")
+		}
+		// The id stays, for the administrator who has two of the same
+		// name -- it is simply no longer the only identification.
+		if !strings.Contains(body, id) {
+			t.Error("the client id was dropped from the consent page entirely")
+		}
+	})
+
+	t.Run("a name cannot inject markup", func(t *testing.T) {
+		const id = "client_evilname"
+		render(t, id) // registers the client; the name is set below
+		if _, err := storage.GetDB().ExecContext(ctx,
+			`UPDATE oauth2_clients SET client_name = ? WHERE id = ?`,
+			`<script>alert(1)</script>`, id); err != nil {
+			t.Fatalf("set client_name: %v", err)
+		}
+		authorizeReq := httptest.NewRequestWithContext(ctx, http.MethodGet,
+			"/mcp/oauth2/authorize", nil)
+		authorizeReq.URL.RawQuery = url.Values{
+			"response_type": []string{"code"},
+			"client_id":     []string{id},
+			"redirect_uri":  []string{"http://localhost:8080/callback"},
+			"scope":         []string{"openid mcp:read"},
+			"state":         []string{"test-state"},
+		}.Encode()
+		ar, err := server.oauth2Provider.GetProvider().NewAuthorizeRequest(ctx, authorizeReq)
+		if err != nil {
+			t.Fatalf("NewAuthorizeRequest: %v", err)
+		}
+		state, err := server.oauth2StateStore.GenerateState()
+		if err != nil {
+			t.Fatalf("GenerateState: %v", err)
+		}
+		server.oauth2StateStore.StoreWithUsername(state, ar, "", "testuser")
+		w := httptest.NewRecorder()
+		server.handleOAuth2Consent(w,
+			httptest.NewRequestWithContext(ctx, http.MethodGet,
+				"/mcp/oauth2/consent?state="+state, nil))
+		body := w.Body.String()
+
+		// A client name is attacker-controlled: anybody may register a
+		// client, and this string is rendered on a page where the user
+		// is about to grant access.
+		if strings.Contains(body, "<script>alert(1)</script>") {
+			t.Error("a client name was rendered as live markup on the consent page")
+		}
+		if !strings.Contains(body, "&lt;script&gt;") {
+			t.Errorf("the name was not escaped as expected:\n%s", body)
+		}
+	})
+}

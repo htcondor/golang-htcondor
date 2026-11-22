@@ -654,6 +654,42 @@ consent, so re-running group policy catches an operator changing
 upstream. Removals are caught by the oracles, by
 `POST /api/v1/admin/oauth2/revoke`, and ultimately by the lifetime cap.
 
+## This is an OAuth2 server, not an OpenID Connect provider
+
+Worth stating plainly, because the endpoints look like they should be one and
+the difference is only visible when something fails.
+
+The server implements **RFC 8414** (OAuth2 authorization server metadata) at
+`/.well-known/oauth-authorization-server`. It does **not** implement OpenID
+Connect. Concretely:
+
+- No `id_token` is ever issued, whatever scopes were granted.
+- There is no `userinfo_endpoint`, and none is advertised.
+- There is no `/.well-known/openid-configuration`; it answers as any unknown
+  path does.
+- No `jwks_uri` is published and no JWKS is served.
+
+The `openid` scope is still **accepted**, and appears in `scopes_supported`.
+It grants nothing — the consent screen says so — and it is accepted rather
+than refused because a great many clients request it as a matter of course,
+and rejecting it would fail their registration for no gain.
+
+This was once the other way round: the server advertised `id_token` response
+types and signing algorithms while publishing no `jwks_uri` and serving no
+keys. A client that believed the advertisement had no way to verify what it
+was handed, and authlib — which OpenWebUI uses — failed the whole login with
+`Missing "jwks_uri" in metadata`. Nothing here ever consumed the `id_token`,
+so the smaller advertisement is the honest one.
+
+**If you need an identity endpoint**, for example to configure a Zapier app's
+connection test, use `GET /api/v1/whoami`, which answers
+`{"authenticated": true, "user": "..."}` for the bearer token presented.
+
+Restoring OIDC means adding `compose.OpenIDConnectExplicitFactory` back to the
+fosite composition **and** publishing a `jwks_uri` with the keys behind it, the
+way the internal IDP does. Doing the first without the second is the state
+described above.
+
 ## MCP OAuth2 clients
 
 Clients of the MCP OAuth2 endpoint can register and authenticate several ways.
