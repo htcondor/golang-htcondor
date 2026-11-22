@@ -68,6 +68,16 @@ var pickerProviders = map[string]PickerProvider{
 	"gdrive": {
 		// The Picker loads from apis.google.com, renders its chooser in
 		// a docs.google.com iframe, and calls googleapis.com.
+		//
+		// The API key an operator supplies here may be restricted by
+		// HTTP referrer ONLY if this server sends a Referrer-Policy
+		// that survives a cross-origin navigation. The chooser's iframe
+		// URL carries the key, and that navigation is cross-origin, so
+		// a policy of same-origin or no-referrer makes the browser send
+		// no Referer and the provider rejects the key -- reported as
+		// "The API developer key is invalid", which names the key and
+		// not the referrer. See applySecurityHeaders, which sends
+		// strict-origin-when-cross-origin for this reason.
 		Script:      []string{"https://apis.google.com"},
 		Frame:       []string{"https://docs.google.com"},
 		Connect:     []string{"https://content.googleapis.com", "https://www.googleapis.com"},

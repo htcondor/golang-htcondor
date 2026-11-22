@@ -197,3 +197,51 @@ func TestEveryPickerOriginIsHTTPS(t *testing.T) {
 		}
 	}
 }
+
+// Referrer-Policy is part of a chooser's contract with its provider,
+// which is obvious from neither side.
+//
+// Google's Picker loads as an iframe whose URL CARRIES the developer
+// key, and a key restricted by HTTP referrer rejects a request that
+// arrives with no Referer at all. This server used to send
+// `same-origin`, which sends no referrer on exactly that cross-origin
+// navigation -- so the one request that had to satisfy the restriction
+// was guaranteed to fail it. Google reports that as "The API developer
+// key is invalid", which names the key rather than the referrer, and no
+// amount of adding allowed origins can cover the absence of one.
+//
+// Asserted as two properties rather than one literal, because the
+// policy is pinned from both sides and a later edit should have to
+// argue with both.
+func TestReferrerPolicySaysWhichSiteAskedButNotWhichPage(t *testing.T) {
+	w := httptest.NewRecorder()
+	applySecurityHeaders(w, "", false, PickerOrigins{})
+	got := w.Header().Get("Referrer-Policy")
+
+	// Sends nothing across origins: a referrer-restricted provider key
+	// cannot be satisfied, and the failure names the key.
+	if sendsNoReferrerCrossOrigin[got] {
+		t.Errorf("Referrer-Policy = %q sends no referrer across origins; a provider key "+
+			"restricted by HTTP referrer can never be satisfied", got)
+	}
+	// Sends the whole URL: the path encodes job IDs and tokens, and
+	// that is why this header is set at all.
+	if sendsThePathCrossOrigin[got] {
+		t.Errorf("Referrer-Policy = %q sends the request path to third parties; "+
+			"paths here encode job IDs and tokens", got)
+	}
+	if got != "strict-origin-when-cross-origin" {
+		t.Errorf("Referrer-Policy = %q; want strict-origin-when-cross-origin", got)
+	}
+}
+
+var sendsNoReferrerCrossOrigin = map[string]bool{
+	"":            true, // no header means the browser's default, not a choice
+	"no-referrer": true,
+	"same-origin": true,
+}
+
+var sendsThePathCrossOrigin = map[string]bool{
+	"unsafe-url":                 true,
+	"no-referrer-when-downgrade": true,
+}
