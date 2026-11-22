@@ -435,7 +435,7 @@ func TestRefusedEntryNames(t *testing.T) {
 			if err := tw.Close(); err != nil {
 				t.Fatalf("Close: %v", err)
 			}
-			if _, err := recordLayout(&buf, 0); err == nil {
+			if _, err := recordLayout(&buf, 0, nil); err == nil {
 				t.Fatalf("recordLayout accepted %q", name)
 			}
 		})
@@ -466,7 +466,7 @@ func TestSkippedEntryTypes(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	l, err := recordLayout(&buf, 0)
+	l, err := recordLayout(&buf, 0, nil)
 	if err != nil {
 		t.Fatalf("recordLayout: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestTruncatedSandboxIsAnError(t *testing.T) {
 	// Deliberately no Close: the trailer is missing and the body is cut.
 	cut := buf.Bytes()[:600]
 
-	if _, err := recordLayout(bytes.NewReader(cut), 0); err == nil {
+	if _, err := recordLayout(bytes.NewReader(cut), 0, nil); err == nil {
 		t.Fatal("recordLayout accepted a truncated sandbox")
 	} else if !strings.Contains(err.Error(), "sandbox") {
 		t.Errorf("error = %v, want it to name the sandbox", err)

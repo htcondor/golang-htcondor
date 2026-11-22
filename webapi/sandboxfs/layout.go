@@ -102,7 +102,13 @@ var ErrTooManyEntries = errors.New("sandboxfs: sandbox has too many entries")
 // next header.
 //
 // maxEntries of 0 means no limit.
-func recordLayout(r io.Reader, maxEntries int) (*Layout, error) {
+//
+// onFile, when set, is offered each regular file's body as it goes past
+// and may read up to Size from it. Whatever it leaves is skipped, so it
+// is free to read nothing. This is how one pass can both record the
+// layout and fill the byte cache: the pass is already reading every byte
+// in order to discard it.
+func recordLayout(r io.Reader, maxEntries int, onFile func(Entry, io.Reader)) (*Layout, error) {
 	l := &Layout{}
 	tr := tar.NewReader(r)
 	for {
@@ -143,12 +149,16 @@ func recordLayout(r io.Reader, maxEntries int) (*Layout, error) {
 		if dir {
 			size = 0
 		}
-		l.Entries = append(l.Entries, Entry{
+		e := Entry{
 			Name: name,
 			Mode: h.Mode,
 			Size: size,
 			Dir:  dir,
-		})
+		}
+		l.Entries = append(l.Entries, e)
+		if onFile != nil && !dir {
+			onFile(e, tr)
+		}
 	}
 }
 

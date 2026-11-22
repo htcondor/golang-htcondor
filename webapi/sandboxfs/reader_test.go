@@ -542,3 +542,100 @@ func TestAccountsGetSeparateCacheFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestPrepareIsOnePass is the reason Prepare exists: Layout then
+// Materialize does the same work twice, because the layout has to exist
+// before anything knows what to cache.
+func TestPrepareIsOnePass(t *testing.T) {
+	files := map[string][]byte{"a.dat": []byte("aaa"), "b.dat": []byte("bbbb")}
+	f := newFakeFetcher(files)
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+	ctx := context.Background()
+	job := tjob(3, 0)
+
+	l, err := s.Prepare(ctx, job)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := f.calls.Load(); got != 1 {
+		t.Errorf("Prepare cost %d passes, want 1", got)
+	}
+	if len(l.Entries) != 2 {
+		t.Errorf("layout has %d entries, want 2", len(l.Entries))
+	}
+	if want := int64(7); s.CachedBytes() != want {
+		t.Errorf("cache holds %d bytes, want %d", s.CachedBytes(), want)
+	}
+
+	// And every file is readable from disk without another pass.
+	for name, body := range files {
+		r, err := s.Open(ctx, job, name)
+		if err != nil {
+			t.Fatalf("Open %s: %v", name, err)
+		}
+		if _, ok := r.(*os.File); !ok {
+			t.Errorf("%s came back as %T, want a cached file", name, r)
+		}
+		mustRead(t, r, body)
+	}
+	if got := f.calls.Load(); got != 1 {
+		t.Errorf("reading a prepared sandbox cost %d passes in total, want 1", got)
+	}
+}
+
+// TestPrepareFillsAnAlreadyKnownLayout: with the layout cached there is
+// nothing to record, so this is the two-pass case by necessity.
+func TestPrepareFillsAnAlreadyKnownLayout(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"a.dat": []byte("aaa")})
+	s := newStore(t, f, Config{CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+	ctx := context.Background()
+	job := tjob(3, 0)
+
+	if _, err := s.Layout(ctx, job); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if s.CachedBytes() != 0 {
+		t.Fatal("Layout cached bytes; it is supposed to keep none")
+	}
+	if _, err := s.Prepare(ctx, job); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if s.CachedBytes() == 0 {
+		t.Error("Prepare did not fill the cache for a known layout")
+	}
+	if got := f.calls.Load(); got != 2 {
+		t.Errorf("took %d passes, want 2 (layout, then fill)", got)
+	}
+}
+
+// TestPrepareWithoutACacheStillBuildsTheLayout: nothing to spill into is
+// not an error, and the pass must not be wasted.
+func TestPrepareWithoutACacheStillBuildsTheLayout(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"a.dat": []byte("aaa")})
+	s := newStore(t, f, Config{}) // no cache
+	l, err := s.Prepare(context.Background(), tjob(1, 0))
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if len(l.Entries) != 1 {
+		t.Errorf("layout has %d entries, want 1", len(l.Entries))
+	}
+	if got := f.calls.Load(); got != 1 {
+		t.Errorf("cost %d passes, want 1", got)
+	}
+}
+
+// TestPrepareRefusesAnOversizedSandbox: the gate still guards the pass.
+func TestPrepareRefusesAnOversizedSandbox(t *testing.T) {
+	f := newFakeFetcher(map[string][]byte{"a.dat": []byte("aaa")})
+	f.advertise = 1 << 30
+	s := newStore(t, f, Config{MaxSandboxBytes: 1024, CacheDir: t.TempDir(), CacheBytes: 1 << 20})
+
+	var tooLarge *TooLargeError
+	if _, err := s.Prepare(context.Background(), tjob(1, 0)); !errors.As(err, &tooLarge) {
+		t.Errorf("Prepare = %v, want a TooLargeError", err)
+	}
+	if s.CachedBytes() != 0 || s.CachedEntries() != 0 {
+		t.Error("a refused Prepare cached something")
+	}
+}

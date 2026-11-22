@@ -251,7 +251,40 @@ func (s *Store) Layout(ctx context.Context, job Job) (*Layout, error) {
 		if l, ok := s.cached(job); ok {
 			return l, nil
 		}
-		l, err := s.build(ctx, job)
+		l, err := s.build(ctx, job, false)
+		if err != nil {
+			return nil, err
+		}
+		s.store(job, l)
+		return l, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*Layout), nil
+}
+
+// Prepare makes a job fully readable in ONE pass over its sandbox,
+// recording the layout and filling the byte cache together.
+//
+// Worth calling when a client is about to read a sandbox rather than ask
+// about it -- listing a directory, say. Layout and Materialize do the
+// same work in two passes, because the layout has to exist before
+// anything knows what to cache; here the one pass that is already
+// reading every byte in order to discard it keeps them instead.
+//
+// Returns the layout, so a caller that needed it anyway pays nothing
+// extra.
+func (s *Store) Prepare(ctx context.Context, job Job) (*Layout, error) {
+	if l, ok := s.cached(job); ok {
+		// The layout is already known, so filling is a pass of its own.
+		return l, s.materialize(ctx, job, l)
+	}
+	v, err, _ := s.group.Do(job.cacheKey(), func() (any, error) {
+		if l, ok := s.cached(job); ok {
+			return l, s.materialize(ctx, job, l)
+		}
+		l, err := s.build(ctx, job, s.data.enabled())
 		if err != nil {
 			return nil, err
 		}
@@ -326,7 +359,7 @@ func (s *Store) removeLocked(key Job) {
 
 // build makes one pass over the sandbox, recording names and sizes and
 // keeping no bytes.
-func (s *Store) build(ctx context.Context, job Job) (*Layout, error) {
+func (s *Store) build(ctx context.Context, job Job, spill bool) (*Layout, error) {
 	var (
 		advertised int64
 		known      bool
@@ -345,7 +378,13 @@ func (s *Store) build(ctx context.Context, job Job) (*Layout, error) {
 		_ = pw.CloseWithError(err)
 	}()
 
-	l, err := recordLayout(pr, s.cfg.maxEntriesPerJob())
+	var onFile func(Entry, io.Reader)
+	if spill {
+		onFile = func(e Entry, body io.Reader) {
+			s.spill(entryKey{job: job, name: e.Name}, e.Size, body)
+		}
+	}
+	l, err := recordLayout(pr, s.cfg.maxEntriesPerJob(), onFile)
 	// Unblock the fetcher when the record side gave up first, e.g. on the
 	// entry limit; without this it parks on a write nobody will read.
 	if err != nil {
