@@ -263,6 +263,31 @@ through the pool's collector, and the schedd and collector rate limits,
 which this server inherits from the library. Both are covered in the
 [configuration reference](server-config.md).
 
+## The database
+
+Everything the server keeps for itself -- browser sessions, OAuth2 clients
+and tokens, the embedded IDP's signing keys, saved submit templates, API
+keys, connector grants and webhooks -- lives in one SQLite file,
+`HTTP_API_DB_PATH` (default `$(LOCAL_DIR)/htcondor-api.db`).
+
+It runs in **WAL** mode. Two things follow for an operator:
+
+- **There are three files, not one.** SQLite keeps `htcondor-api.db-wal`
+  and `htcondor-api.db-shm` beside the database. Copy or back up all three
+  together, or restore from a quiesced server; the `.db` file alone can be
+  missing recently committed data. All three are kept mode 0600, because the
+  database holds signing keys and refresh tokens.
+- **Put it on a local disk.** WAL needs shared memory beside the database
+  and working file locking. Some network filesystems provide neither. If
+  WAL cannot be enabled the server still starts and logs a warning naming
+  the mode it got instead -- it will work, but every read will queue behind
+  every write, which shows up as unrelated pages stalling for seconds
+  whenever something writes.
+
+Writes are serialized by SQLite to one at a time; reads are not, and do not
+wait for a writer. A writer that finds the lock held waits up to ten seconds
+rather than failing.
+
 ## Check it works
 
 ```bash
