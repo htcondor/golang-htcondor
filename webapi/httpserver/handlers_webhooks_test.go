@@ -1,11 +1,15 @@
 package httpserver
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/htcondor/golang-htcondor/webapi/webhooks"
 )
 
 // The webhook endpoints' own contract: who may reach them, what they return,
@@ -390,5 +394,45 @@ func TestWebhookFanoutLimitIsConfigurable(t *testing.T) {
 	g := newReauthFixture(t, Config{})
 	if got := g.server.webhookEval.FanoutCap; got <= 0 {
 		t.Errorf("FanoutCap = %d with no configuration; want the package default", got)
+	}
+}
+
+// A receiver that follows the documented recipe verifies a real signature,
+// and one that skips the hex decode does not.
+//
+// hexSecret is the boundary between this server and every receiver ever
+// written against it: the key is 32 raw bytes, and what the create response
+// carries is those bytes hex-encoded. A receiver has to decode before using
+// it, which docs/server-webhooks.md now says outright because getting it
+// wrong is invisible from both ends -- HMAC takes any key, so the undecoded
+// 64-character string still yields a well-formed signature that simply never
+// matches, with nothing logged anywhere to say why.
+//
+// Verified against a real delivery to a Zapier catch hook on 2026-11-22,
+// which is also how the gap in the documentation was found.
+func TestReceiverMustDecodeTheHexSecret(t *testing.T) {
+	secret, err := webhooks.NewSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exactly what a receiver is handed and what it is sent.
+	shown := hexSecret(secret)
+	key := "wh_0f3c.held.-.4242.0"
+	body := []byte(`{"idempotency_key":"wh_0f3c.held.-.4242.0","event":"held"}`)
+	at := time.Now()
+	header := webhooks.Sign(secret, key, body, at)
+
+	decoded, err := hex.DecodeString(shown)
+	if err != nil {
+		t.Fatalf("the secret we hand out is not decodable hex: %v", err)
+	}
+	if err := webhooks.VerifySignature(decoded, key, body, header, at); err != nil {
+		t.Errorf("the documented recipe did not verify a signature we produced: %v", err)
+	}
+
+	// The failure this guards against. If this ever starts passing, the key
+	// is being taken as text somewhere and the documentation is wrong again.
+	if err := webhooks.VerifySignature([]byte(shown), key, body, header, at); err == nil {
+		t.Error("the undecoded hex string verified, so the stated decode requirement is not real")
 	}
 }

@@ -140,6 +140,27 @@ The `X-HTCondor-Signature` header is `t=<unix timestamp>,v1=<hex>`, where the
 hex is `HMAC-SHA256(secret, "<t>.<idempotency key>.<raw body>")`. The secret is
 shown once, when the webhook is created.
 
+**The secret is displayed hex-encoded and must be decoded before use.** The key
+is the 32 raw bytes it decodes to, not the 64-character string you were shown.
+This is worth stating because getting it wrong fails silently: HMAC accepts any
+key, so the wrong one still produces a well-formed 64-character signature that
+simply never matches, with nothing in either system to say why.
+
+```python
+import hashlib, hmac
+
+def verify(secret_shown_once, headers, raw_body):
+    t, v1 = (p.split("=", 1)[1] for p in headers["X-HTCondor-Signature"].split(","))
+    signed = f"{t}.{headers['Idempotency-Key']}.".encode() + raw_body
+    want = hmac.new(bytes.fromhex(secret_shown_once), signed, hashlib.sha256)
+    return hmac.compare_digest(want.hexdigest(), v1)
+```
+
+Note `raw_body` is bytes, joined to the prefix rather than interpolated: sign
+what arrived on the wire, not a re-serialization of it. A framework that parses
+JSON for you and hands back a dict has already lost the exact bytes, and
+re-encoding that dict will reorder or re-space it and fail to match.
+
 The timestamp and the key are inside the signed string on purpose. A signature
 over the body alone can be replayed for ever, and replaying "your job failed"
 is not harmless when it drives somebody's automation. Reject a timestamp more
