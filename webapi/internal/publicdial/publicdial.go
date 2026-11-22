@@ -54,8 +54,20 @@ func (e *ErrBlocked) Error() string {
 	return fmt.Sprintf("refusing to connect to %s: not a routable public address", e.Addr)
 }
 
+// DefaultTimeout is used when a caller asks for none.
+//
+// A guarded client with no timeout is still a footgun: the address is public
+// but it is one somebody else chose, and a host that accepts a connection and
+// then says nothing holds the caller for as long as it likes. There is no
+// caller here that wants to wait indefinitely, so zero means this rather than
+// forever.
+const DefaultTimeout = 15 * time.Second
+
 // Dialer returns a dialer that refuses non-public addresses.
 func Dialer(timeout time.Duration) *net.Dialer {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
 	return &net.Dialer{
 		Timeout: timeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -80,6 +92,9 @@ func Dialer(timeout time.Duration) *net.Dialer {
 // a destination that answers with a redirect is a destination that was
 // configured wrong. Saying so beats following it.
 func Client(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
