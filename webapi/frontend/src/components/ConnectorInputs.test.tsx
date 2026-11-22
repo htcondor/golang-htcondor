@@ -1,8 +1,39 @@
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyConnectorInputs,
+  ConnectorInputs,
   type ConnectorInput,
 } from './ConnectorInputs';
+import { chooseFiles, fetchPickers } from '@/lib/picker';
+
+vi.mock('@/lib/picker', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/picker')>();
+  return { ...actual, chooseFiles: vi.fn(), fetchPickers: vi.fn() };
+});
+
+const drive = {
+  name: 'gdrive',
+  provider: 'gdrive',
+  connector: 'builtin:gdrive',
+  service: 'webapi-builtin-gdrive',
+  method: 'gdrive2',
+  script: '/picker/gdrive.js',
+  api_key: 'devkey',
+  app_id: '1234',
+};
+
+function renderInputs() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <ConnectorInputs value={[]} onChange={() => {}} />
+    </QueryClientProvider>,
+  );
+}
 
 function input(reference: string, name: string): ConnectorInput {
   return { id: reference, reference, name, picker: 'drive' };
@@ -48,5 +79,50 @@ describe('applyConnectorInputs', () => {
     const ref = input('svc+gdrive2://ID/data.csv', 'data.csv');
     const out = applyConnectorInputs('executable = run.sh\n', [ref, ref]);
     expect(out.match(/svc\+gdrive2:\/\/ID\/data\.csv/g)).toHaveLength(1);
+  });
+});
+
+// The button used to say "Opening..." for as long as the chooser was
+// up, so a chooser that never rendered was indistinguishable from one
+// the person was still using. Both states exist now, and they differ.
+describe('ConnectorInputs while a chooser is open', () => {
+  beforeEach(() => {
+    vi.mocked(fetchPickers).mockResolvedValue([drive]);
+    vi.mocked(chooseFiles).mockReset();
+  });
+
+  it('says Opening before the chooser appears, and Choosing once it has', async () => {
+    let reportOpened: (() => void) | undefined;
+    vi.mocked(chooseFiles).mockImplementation(
+      (_p, hooks) =>
+        new Promise(() => {
+          reportOpened = hooks?.onOpened;
+        }),
+    );
+
+    renderInputs();
+    const button = await screen.findByRole('button', { name: /Add from/ });
+    fireEvent.click(button);
+
+    await screen.findByRole('button', { name: 'Opening…' });
+    expect(reportOpened).toBeDefined();
+
+    reportOpened!();
+    await screen.findByRole('button', { name: 'Choosing…' });
+  });
+
+  it('surfaces the error when the chooser never opens', async () => {
+    vi.mocked(chooseFiles).mockRejectedValue(
+      new Error('the file chooser did not open.'),
+    );
+
+    renderInputs();
+    fireEvent.click(await screen.findByRole('button', { name: /Add from/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/did not open/)).toBeInTheDocument(),
+    );
+    // And the button is usable again, rather than stuck.
+    await screen.findByRole('button', { name: /Add from/ });
   });
 });
