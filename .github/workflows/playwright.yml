@@ -239,6 +239,17 @@ jobs:
         docker logs "$NAME" > "$SERVER_LOG" 2>&1
         grep -q '^Password:' "$SERVER_LOG" || {
           echo "no admin credentials in the server output; demo mode did not start"; exit 1; }
+        # The gateway, and therefore the certificate authority the
+        # /info panel needs. Checked here rather than left to the spec:
+        # sshcertreal.full.spec.ts SKIPS where there is no CA, which is
+        # correct for a deployment without a gateway and silent for one
+        # that was supposed to have it. Without this guard the panel's
+        # signing half could stop being covered and the suite would
+        # still be green.
+        grep -q 'SSH gateway listening' "$SERVER_LOG" || {
+          echo "the SSH gateway did not start, so there is no certificate authority;"
+          echo "sshcertreal.full.spec.ts would skip and the real panel would go untested"
+          exit 1; }
 
     - name: Run full suite
       working-directory: webapi/frontend
