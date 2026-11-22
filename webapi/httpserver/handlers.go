@@ -545,6 +545,16 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The Idempotency-Key header, carried on the context down to the one
+	// submit door. The key is checked and claimed there, not here, so
+	// every surface gets the same check; this only has to notice a
+	// header that was sent and says nothing.
+	ctx, err = withIdempotencyKey(ctx, r)
+	if err != nil {
+		s.writeIdempotencyFailure(w, err)
+		return
+	}
+
 	// Read the submit file before handing it over, and report what it
 	// says rather than acting on it. The MCP server has run these checks
 	// since the macro-expansion footgun was found; this path had none at
@@ -592,6 +602,18 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 
 // writeSubmitFailure writes the response for a failed submission.
 func (s *Handler) writeSubmitFailure(ctx context.Context, w http.ResponseWriter, err error) {
+	// An idempotency refusal first, and here rather than at each
+	// handler: 409 is not a failure the client should see as one -- it
+	// means the work is already queued, which is what asking for
+	// idempotency was for -- and the generic branch below would log it
+	// as a server error and answer 500.
+	if s.writeIdempotencyFailure(w, err) {
+		s.logger.Info(logging.DestinationHTTP, "Job submission refused by the idempotency key check",
+			"user", htcondor.GetAuthenticatedUserFromContext(ctx),
+			"access_point", routedSchedd(ctx),
+			"reason", err)
+		return
+	}
 	// Check if it's an authentication error
 	if isAuthenticationError(err) {
 		s.logger.Warn(logging.DestinationHTTP, "Job submission auth failed",

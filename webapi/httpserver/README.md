@@ -319,6 +319,99 @@ quoting. This is the operator's hook into job admission policy,
 equivalent in privilege to writing the schedd's `site_local` config.
 Setting neither knob leaves submit files byte-for-byte unchanged.
 
+### Idempotency keys
+
+A client POSTs a submission, the connection drops before the response
+arrives, and the client cannot tell whether the jobs were queued.
+Retrying may run the work twice; not retrying may never run it at all.
+
+An idempotency key removes the choice. The client sends a key it picks,
+reuses it verbatim on every retry of that submission, and a second
+attempt is **refused with 409** naming the job the first one created:
+
+```
+curl -H 'Idempotency-Key: nightly-2026-11-22' \
+     -H 'Authorization: Bearer ...' \
+     -d @submit.json https://ap.example/api/v1/jobs
+
+409 Conflict
+{"error": "idempotency key \"nightly-2026-11-22\" is already in use by job
+           4312.0, which is still in the queue",
+ "idempotency_key": "nightly-2026-11-22", "job_id": "4312.0"}
+```
+
+A 409 is **not a failure**: it means the work is queued, which is what
+asking for idempotency was for. The client looks `job_id` up instead of
+submitting again. The key is stored on the job as the `IdempotencyKey`
+attribute, so it is visible in `condor_q -af IdempotencyKey` and
+queryable like any other attribute.
+
+The key applies to every surface that submits through this server:
+`POST /api/v1/jobs` (via the header), MCP `submit_job` (via an
+`idempotency_key` argument, offered only where the check is enabled),
+and anything else routed through them.
+
+| knob | default | what it does |
+|---|---|---|
+| `HTTP_API_IDEMPOTENCY_KEY_CHECK` | `AUTO` | `NONE`, `QUEUE`, `FULL`, or `AUTO` — see below |
+| `HTTP_API_IDEMPOTENCY_KEY_RETENTION` | `3600` | seconds a submitted key stays claimed in memory |
+| `HTTP_API_IDEMPOTENCY_KEY_TIMEOUT` | `10` | seconds the two lookups may take together |
+| `HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW` | `0` | seconds of history to search; 0 = all of it |
+
+**The modes.** `FULL` consults the live queue **and** the completed-job
+history; `QUEUE` consults only the queue, so a key used by a job that
+left the queue longer ago than the retention reads as unused. `AUTO`, the
+default, is `FULL` where an htcondordb mirror is configured and `QUEUE`
+where none is. `NONE` enforces nothing — and then a request that sends
+the header is **refused with 400** rather than accepted unguarded,
+because a client that asked for this guarantee and silently did not get
+it is worse off than one told the access point does not offer it. The
+startup log line says which mode is in force, resolved rather than as
+configured.
+
+**`FULL` fails closed.** If the history cannot be read, a keyed
+submission is refused with **503** rather than accepted. A check that
+passes because it could not run is not a check. Unkeyed submissions are
+never affected.
+
+**Where the key is looked for.** The live queue is read from the schedd,
+not from the mirror — the mirror lags by seconds and a retry arrives
+within seconds, so a mirrored read would be least trustworthy exactly
+when it is asked. The history is read from the mirror, where
+`IdempotencyKey` is one of the indexed attributes, so the lookup does not
+scan. The retention above covers the gap between the two: between the
+schedd writing a job's history record and the mirror ingesting it, the
+key is in neither place.
+
+**Keys are scoped to the account.** One account cannot use up another's
+keys, and a retry is by definition the same credential retrying.
+
+**What bounds the guarantee.** The claims are held in this server's
+memory, so they do not survive a restart and are not shared between
+replicas behind a load balancer. The queue and history checks still apply
+in both cases, so what is left exposed is the ingest gap above, not the
+whole history. In **multi-AP mode** the queue half reads only the access
+point a submission was routed to, so a retry that assignment sends
+elsewhere relies on the claim and the history alone. A deployment that
+needs the guarantee to hold across replicas or across access points wants
+the check in the schedd rather than here.
+
+**What a key may contain.** Up to 1024 bytes of UTF-8, no control
+characters, and **no backslash or dollar sign**. Those two are refused
+rather than escaped: a submit-file value is macro-expanded before it is
+read, so a `$` would be a macro reference — `$ENV(NAME)` in a key would
+read *this server's* environment into the job ad — and the documented
+`$(DOLLAR)` escape does not survive two adjacent dollar signs. A
+backslash has no unambiguous spelling in that layer at all. Anything a
+client cannot spell, it can hex or base64. A submit file that sets
+`IdempotencyKey` itself is refused too: the key has to be one the server
+was given, or there is nothing to check it against.
+
+These knobs are **restart-only**. The server holds the claims, and
+rebuilding it on reconfig would drop every key claimed in the retention
+window — turning a reconfig into a window in which a retry is accepted
+twice.
+
 ### Placement (condor_placementd)
 
 Issues and audits access-point credentials for identities that

@@ -21,6 +21,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/appolicy"
 	"github.com/htcondor/golang-htcondor/webapi/dagman"
 	"github.com/htcondor/golang-htcondor/webapi/dbmirror"
+	"github.com/htcondor/golang-htcondor/webapi/idempotency"
 	"github.com/htcondor/golang-htcondor/webapi/interactive"
 	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
 	"github.com/htcondor/golang-htcondor/webapi/matchanalyzer"
@@ -152,6 +153,7 @@ type Server struct {
 	utilMachines   []utilization.Machine
 	utilMachinesAt time.Time
 	submitPolicy   submitpolicy.Policy
+	idempotency    *idempotency.Guard
 	ensureCreds    func(ctx context.Context)
 	// dagmanPath is the access point's condor_dagman binary. See
 	// Config.DagmanPath.
@@ -301,9 +303,25 @@ func (s *Server) submitRemote(ctx context.Context, submitFile string) (int, []*c
 // not above it, so neither path can skip it.
 func (s *Server) submitApplied(ctx context.Context, submitFile string) (int, []*classad.ClassAd, error) {
 	s.ensureCredentials(ctx)
+
+	// The idempotency key, checked and claimed inside the door for the
+	// same reason the credential bootstrap is: a surface that has to
+	// remember is a surface that will forget. The Guard is the REST
+	// surface's, so a key is used up across both.
+	claim, submitFile, err := s.idempotency.Begin(ctx, htcondor.GetAuthenticatedUserFromContext(ctx), submitFile)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer claim.Abandon()
+
 	// scheddFor: the one schedd, or in multi-AP mode the AP the call
 	// was assigned and routed to.
-	return s.scheddFor(ctx).SubmitRemote(s.withSubmitDefaults(ctx), submitFile)
+	cluster, ads, err := s.scheddFor(ctx).SubmitRemote(s.withSubmitDefaults(ctx), submitFile)
+	if err != nil {
+		return 0, nil, err
+	}
+	claim.Commit(cluster)
+	return cluster, ads, nil
 }
 
 // Config holds server configuration
@@ -496,6 +514,13 @@ type Config struct {
 	// exactly the kind this exists to satisfy.
 	SubmitPolicy submitpolicy.Policy
 
+	// Idempotency is the idempotency-key guard, shared with the REST
+	// surface rather than built per surface: a claim has to be visible
+	// to every surface that submits, or a key used by a POST and then
+	// by this server's submit_job tool would pass twice. Nil disables
+	// the check, and the Guard's methods are nil-safe.
+	Idempotency *idempotency.Guard
+
 	// EnsureCredentials is the host's one preparation step for a submit,
 	// run under the caller's context immediately before the job is handed
 	// to the schedd.
@@ -662,6 +687,7 @@ func NewServer(cfg Config) (*Server, error) {
 		utilizationMaxJobs:  cfg.UtilizationMaxJobs,
 		spoolMaxUploadBytes: cfg.SpoolMaxUploadBytes,
 		submitPolicy:        cfg.SubmitPolicy,
+		idempotency:         cfg.Idempotency,
 		ensureCreds:         cfg.EnsureCredentials,
 		dagmanPath:          cfg.DagmanPath,
 		dagmanEnv:           cfg.DagmanEnvironment,

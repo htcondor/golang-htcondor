@@ -214,6 +214,14 @@ type Config struct {
 	SubmitFileDefaults  string
 	SubmitFileOverrides string
 
+	// Idempotency-key enforcement; see HandlerConfig for what each
+	// does. Configurable via HTTP_API_IDEMPOTENCY_KEY_CHECK,
+	// _RETENTION, _TIMEOUT and _HISTORY_WINDOW.
+	IdempotencyKeyCheck         string
+	IdempotencyKeyRetention     time.Duration
+	IdempotencyKeyTimeout       time.Duration
+	IdempotencyKeyHistoryWindow time.Duration
+
 	// Batch-submission template paths.
 	TemplateGlobalPath string // Optional YAML file with operator-curated templates
 	// TemplateUserStoreDBPath is deprecated; the templates store
@@ -628,6 +636,10 @@ func NewServer(cfg Config) (*Server, error) {
 		DBMirrorTokenSubject:        cfg.DBMirrorTokenSubject,
 		SubmitFileDefaults:          cfg.SubmitFileDefaults,
 		SubmitFileOverrides:         cfg.SubmitFileOverrides,
+		IdempotencyKeyCheck:         cfg.IdempotencyKeyCheck,
+		IdempotencyKeyRetention:     cfg.IdempotencyKeyRetention,
+		IdempotencyKeyTimeout:       cfg.IdempotencyKeyTimeout,
+		IdempotencyKeyHistoryWindow: cfg.IdempotencyKeyHistoryWindow,
 		TemplateGlobalPath:          cfg.TemplateGlobalPath,
 		OAuth2Issuer:                cfg.OAuth2Issuer,
 		MCPCIMDEnabled:              cfg.MCPCIMDEnabled,

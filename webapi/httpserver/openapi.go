@@ -2653,6 +2653,13 @@ const openAPISchema = `{
             "required": false,
             "schema": {"type": "string"},
             "description": "Multi-AP mode only: submit to this access point, which must be your home access point or one of its alternates (default: your home access point)"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {"type": "string", "maxLength": 1024},
+            "description": "Makes this submission safe to retry. If a submission carrying the same key already exists -- in the queue or in the completed-job history -- this request is refused with 409 and names the job that has it, instead of queueing the work a second time. Reuse the SAME key verbatim on every retry of one submission; a fresh value per attempt defeats the purpose. Keys are scoped to your own account. May not contain a backslash, a dollar sign or a control character. Not every access point enforces this: where it is turned off, sending the header is a 400 rather than a silently unguarded submission."
           }
         ],
         "requestBody": {
@@ -2711,6 +2718,31 @@ const openAPISchema = `{
           },
           "401": {
             "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key has already been used. The work is already queued or has already run; job_id names the job holding the key. Do not resubmit -- look that job up instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {"type": "string"},
+                    "idempotency_key": {"type": "string"},
+                    "job_id": {"type": "string", "description": "The job holding the key, \"cluster.proc\" (or just the cluster where its procs have not materialized yet). Empty where the holder is a submission this server made moments ago and has not yet learned the cluster of."}
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "An Idempotency-Key was supplied and could not be checked (the completed-job history was unreachable), so the submission was refused rather than accepted unverified. The same request may succeed when retried.",
             "content": {
               "application/json": {
                 "schema": {

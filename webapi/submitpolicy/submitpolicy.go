@@ -93,7 +93,7 @@ func (p Policy) Apply(submitFile string) (string, error) {
 
 	out := submitFile
 	if block := blockOf(p.Overrides, overridesHeader, overridesFooter); block != "" {
-		out = insertBeforeQueue(out, block)
+		out = InsertBeforeQueue(out, block)
 	}
 	if block := blockOf(p.Defaults, defaultsHeader, defaultsFooter); block != "" {
 		out = block + ensureTrailingNewline(out)
@@ -118,7 +118,7 @@ func (p Policy) Check(submitFile string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range customAttributeNames(submitFile) {
+	for _, name := range CustomAttributeNames(submitFile) {
 		if _, ok := controlled[strings.ToLower(name)]; ok {
 			return &ControlledAttributeError{Attribute: name}
 		}
@@ -218,12 +218,21 @@ func probeJobAd(submitText string) (map[string]string, error) {
 	return out, nil
 }
 
-// customAttributeNames returns the attribute named by every line of
+// CustomAttributeNames returns the attribute named by every line of
 // submitText that assigns a custom attribute: `+Name = ...` or
 // `MY.Name = ...` in any case, the two spellings condor_submit accepts.
 // A line continuing the previous one (trailing backslash) is part of a
 // value, not an assignment, and is skipped.
-func customAttributeNames(submitText string) []string {
+//
+// Exported for the other places that have to know whether a submit file
+// claims a particular attribute before deciding what to do with it --
+// webapi/idempotency refuses a file that sets its own key. It is a line
+// scan and not a parse, deliberately: the text may be a DAG node
+// description that condor_submit, not this module, will read. That also
+// bounds what it can see. A file that assembles the name through macro
+// expansion defeats it, so a caller using it to refuse something is
+// closing an easy mistake, not enforcing a boundary.
+func CustomAttributeNames(submitText string) []string {
 	var names []string
 	continued := false
 	for _, raw := range strings.Split(submitText, "\n") {
@@ -269,7 +278,7 @@ func ensureTrailingNewline(s string) string {
 	return s + "\n"
 }
 
-// insertBeforeQueue splices block in ahead of EVERY queue statement.
+// InsertBeforeQueue splices block in ahead of EVERY queue statement.
 // Ahead of the first is where an assignment affects that queue and every
 // one after it; repeating it ahead of each later one keeps a command the
 // file reassigns between two queue statements (which condor_submit
@@ -277,7 +286,9 @@ func ensureTrailingNewline(s string) string {
 // statement gets the block appended: the templates path builds its
 // `queue ... from (...)` line after this runs, so appending still lands
 // ahead of it.
-func insertBeforeQueue(submitFile, block string) string {
+// Exported for webapi/idempotency, which stamps one line into a submit
+// file and needs it to land where this module's overrides land.
+func InsertBeforeQueue(submitFile, block string) string {
 	lines := strings.Split(submitFile, "\n")
 	found := false
 	for i, line := range lines {

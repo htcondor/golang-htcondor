@@ -1018,6 +1018,28 @@ func firstConfigValue(cfg *config.Config, knob string) string {
 //	  log = /home/$ENV(USER)/htcondor-jobs.log
 //	  accounting_group = grp_ap40
 //	@end
+//
+// configSeconds reads a whole number of seconds from name, or zero when
+// it is unset. Zero is also what an unreadable value yields, with a
+// complaint: these knobs all treat zero as "take the default", so a
+// typo degrades to the default rather than refusing to start a server
+// over one line of tuning.
+func configSeconds(cfg *config.Config, name string, logger *logging.Logger) time.Duration {
+	v := strings.TrimSpace(firstConfigValue(cfg, name))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		if logger != nil {
+			logger.Error(logging.DestinationHTTP, "configuration value is not a whole number of seconds; using the default",
+				"parameter", name, "value", v)
+		}
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
 func loadSubmitFileLines(cfg *config.Config, knob string) string {
 	if v, ok := cfg.Get(knob); ok {
 		return v
@@ -2771,6 +2793,10 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		DBMirrorTokenSubject:        firstConfigValue(cfg, "HTTP_API_DBMIRROR_TOKEN_SUBJECT"),
 		SubmitFileDefaults:          loadSubmitFileLines(cfg, "HTTP_API_SUBMIT_FILE_DEFAULTS"),
 		SubmitFileOverrides:         loadSubmitFileLines(cfg, "HTTP_API_SUBMIT_FILE_OVERRIDES"),
+		IdempotencyKeyCheck:         firstConfigValue(cfg, "HTTP_API_IDEMPOTENCY_KEY_CHECK"),
+		IdempotencyKeyRetention:     configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_RETENTION", logger),
+		IdempotencyKeyTimeout:       configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_TIMEOUT", logger),
+		IdempotencyKeyHistoryWindow: configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW", logger),
 		TemplateGlobalPath:          loadTemplateGlobalPath(cfg),
 		HTCondorConfig:              cfg,
 		// LLM/chat configuration. Optional; the chat endpoint
