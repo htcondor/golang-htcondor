@@ -79,6 +79,19 @@ type SandboxOptions struct {
 	// known is false when the sender advertised no size (a peer predating
 	// 8.1.0), and size is then 0 rather than meaning an empty sandbox.
 	OnPreamble func(size int64, known bool) error
+
+	// OnJobCount, if set, is called with the number of jobs the
+	// constraint matched, before any of them is received. Returning an
+	// error aborts the download.
+	//
+	// Worth checking, because a constraint matching NOTHING is not an
+	// error here: the loop runs zero times and the caller gets a valid,
+	// empty archive. So a job that does not exist, or is not the
+	// caller's, is otherwise indistinguishable from one that produced no
+	// output. The count also decides whether names are prefixed with
+	// "cluster.proc", which a caller reading one job's files needs to
+	// know.
+	OnJobCount func(count int) error
 }
 
 // ReceiveJobSandboxWithOptions is ReceiveJobSandbox with per-call options.
@@ -138,6 +151,11 @@ func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w i
 	jobCount, err := responseMsg.GetInt32(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to receive job count: %w", err)
+	}
+	if opts.OnJobCount != nil {
+		if err := opts.OnJobCount(int(jobCount)); err != nil {
+			return err
+		}
 	}
 
 	// 7. EOM (implicit)
