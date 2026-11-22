@@ -174,6 +174,11 @@ func (h *Handler) setupRoutes() {
 	// these are session-only (see connectCaller), because a browser is
 	// the only thing that can complete the flow, and a bearer-token
 	// gate here would be the wrong gate rather than a stricter one.
+	mux.HandleFunc("/api/v1/pickers", h.handlePickers)
+	// The adapter is served from THIS origin, which is what lets the
+	// page's script-src stay 'self' for it; the adapter is what loads
+	// the provider's script, and that is the origin the policy names.
+	mux.HandleFunc("/picker/", h.handlePickerScript)
 	mux.HandleFunc("/api/v1/connect", h.handleConnectCollection)
 	mux.HandleFunc("/api/v1/connect/", h.handleConnectItem)
 

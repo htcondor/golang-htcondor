@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -45,6 +46,32 @@ func newConnectFixture(t *testing.T, groups string) *connectFixture {
 	return newConnectFixtureOpts(t, groups, false)
 }
 
+// newConnectFixtureNoPickerKey configures a chooser missing the
+// developer key, which is the setting that proved a chooser is not a
+// connector property.
+func newConnectFixtureNoPickerKey(t *testing.T, groups string) *connectFixture {
+	t.Helper()
+	f := newConnectFixtureOpts(t, groups, true)
+	cfg, err := config.NewFromReader(strings.NewReader(strings.Join([]string{
+		"HTTP_API_CONNECTORS = builtin:gdrive",
+		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS = " + groups,
+		"HTTP_API_PICKERS = drive",
+		"HTTP_API_PICKER_DRIVE_PROVIDER = gdrive",
+		"HTTP_API_PICKER_DRIVE_CONNECTOR = builtin:gdrive",
+	}, "\n")))
+	if err != nil {
+		t.Fatalf("parse the test configuration: %v", err)
+	}
+	f.h.SetConnectorConfig(cfg)
+	return f
+}
+
+// parseRefForTest bridges to the submit parser, so a reference this
+// page builds is checked against the thing that reads it.
+func parseRefForTest(raw string) (connectors.InputRef, error) {
+	return connectors.ParseInputURL(raw)
+}
+
 // newConnectFixtureWithTwoPickers configures two choosers for the same
 // provider, which is what a site with two labs' credentials looks like.
 func newConnectFixtureWithTwoPickers(t *testing.T, groups string) *connectFixture {
@@ -85,6 +112,13 @@ func pickerLines(on bool) string {
 }
 
 func newConnectFixtureOpts(t *testing.T, groups string, picker bool) *connectFixture {
+	t.Helper()
+	return newConnectFixtureFull(t, groups, picker, true)
+}
+
+// newConnectFixtureFull also says whether the connector is enabled, so
+// a test can turn one off the way an operator does.
+func newConnectFixtureFull(t *testing.T, groups string, picker, enabled bool) *connectFixture {
 	t.Helper()
 
 	db, err := appdb.Open(filepath.Join(t.TempDir(), "app.db"))
@@ -135,6 +169,7 @@ func newConnectFixtureOpts(t *testing.T, groups string, picker bool) *connectFix
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_CLIENT_ID = 1234.apps.googleusercontent.com",
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_CLIENT_SECRET_FILE = " + secretFP,
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS = " + groups,
+		fmt.Sprintf("HTTP_API_CONNECTOR_BUILTIN_GDRIVE_ENABLED = %t", enabled),
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_AUTHORIZATION_URL = " + g.AuthorizationURL(),
 		"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_TOKEN_URL = " + g.TokenURL(),
 		pickerLines(picker),
