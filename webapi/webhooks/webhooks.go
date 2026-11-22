@@ -121,6 +121,16 @@ const (
 	SecretBytes = 32
 )
 
+// SecretGracePeriod is how long a rotated-out signing key keeps verifying.
+//
+// Long enough to update a receiver without hurrying -- a working day plus
+// the night -- and short enough that a key somebody rotated BECAUSE it
+// leaked is not still accepted a week later. The whole point of rotating is
+// usually that the old key should stop working, so this is a compromise
+// rather than a comfort: a user who knows the old key is compromised should
+// rotate twice, which expires the first immediately.
+const SecretGracePeriod = 24 * time.Hour
+
 // PayloadMode says how much of the job a delivery carries.
 type PayloadMode string
 
@@ -187,6 +197,12 @@ type Endpoint struct {
 	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
 	LastStatus     int        `json:"last_status,omitempty"`
 	LastError      string     `json:"last_error,omitempty"`
+
+	// PrevSecretExpiresAt is when the key this endpoint rotated away
+	// from stops being accepted. Shown to the user, because it is the
+	// deadline for updating their receiver -- and absent once the key
+	// has expired, so its presence means "a rotation is in progress".
+	PrevSecretExpiresAt *time.Time `json:"prev_secret_expires_at,omitempty"`
 
 	LastTestAt     *time.Time `json:"last_test_at,omitempty"`
 	LastTestStatus int        `json:"last_test_status,omitempty"`
@@ -458,21 +474,51 @@ const (
 // for. v1 names the scheme so a second one can be added without a receiver
 // having to guess which it is looking at.
 func Sign(secret []byte, key string, body []byte, at time.Time) string {
+	return SignWith([][]byte{secret}, key, body, at)
+}
+
+// SignWith signs with every live key and returns one header carrying them
+// all: "t=<unix>,v1=<hex>,v1=<hex>".
+//
+// More than one only during a rotation's grace period, and that is the
+// reason the format allows it. The receiver matches whichever key it holds,
+// so it can be updated at any point in the window rather than at the same
+// instant as the server. Stripe's scheme does the same thing for the same
+// reason, so a receiver written against that is already shaped for this.
+//
+// The CURRENT key is first. A receiver that reads only the first v1 -- which
+// the documentation tells it not to do -- therefore keeps working as soon as
+// it has been updated, rather than only after the old key expires.
+func SignWith(secrets [][]byte, key string, body []byte, at time.Time) string {
 	ts := strconv.FormatInt(at.Unix(), 10)
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(ts))
-	mac.Write([]byte("."))
-	mac.Write([]byte(key))
-	mac.Write([]byte("."))
-	mac.Write(body)
-	return fmt.Sprintf("t=%s,v1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
+	var b strings.Builder
+	b.WriteString("t=")
+	b.WriteString(ts)
+	for _, secret := range secrets {
+		mac := hmac.New(sha256.New, secret)
+		mac.Write([]byte(ts))
+		mac.Write([]byte("."))
+		mac.Write([]byte(key))
+		mac.Write([]byte("."))
+		mac.Write(body)
+		b.WriteString(",v1=")
+		b.WriteString(hex.EncodeToString(mac.Sum(nil)))
+	}
+	return b.String()
 }
 
 // VerifySignature checks a header this package produced. It exists so the
 // scheme has one implementation that is exercised by tests rather than only
 // described in documentation a receiver author may read differently.
+//
+// A header may carry SEVERAL v1 values during a rotation's grace period, and
+// a match against ANY of them is a valid signature. A receiver that stops at
+// the first one works until the moment somebody rotates, and then fails for
+// a day -- which is the failure this function exists to keep out of other
+// people's code.
 func VerifySignature(secret []byte, key string, body []byte, header string, now time.Time) error {
-	var ts, sig string
+	var ts string
+	var sigs []string
 	for _, part := range strings.Split(header, ",") {
 		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
@@ -482,10 +528,10 @@ func VerifySignature(secret []byte, key string, body []byte, header string, now 
 		case "t":
 			ts = value
 		case "v1":
-			sig = value
+			sigs = append(sigs, value)
 		}
 	}
-	if ts == "" || sig == "" {
+	if ts == "" || len(sigs) == 0 {
 		return fmt.Errorf("the signature header is missing t= or v1=")
 	}
 	secs, err := strconv.ParseInt(ts, 10, 64)
@@ -496,11 +542,21 @@ func VerifySignature(secret []byte, key string, body []byte, header string, now 
 	if d := now.Sub(at); d > SignatureTolerance || d < -SignatureTolerance {
 		return fmt.Errorf("the signature timestamp is %s away from now", d.Round(time.Second))
 	}
+	// The expected value for THIS key, as SignWith would render it for a
+	// single key: "t=<ts>,v1=<hex>".
 	want := Sign(secret, key, body, at)
-	// Constant time, over the whole header value: comparing the hex with
-	// == leaks where the first difference is, which is enough to forge one
-	// byte at a time.
-	if !hmac.Equal([]byte(want), []byte(header)) {
+	_, wantHex, _ := strings.Cut(want, ",v1=")
+
+	// Constant time, and every candidate is compared: comparing hex with
+	// == leaks where the first difference is, and returning early on the
+	// first match leaks which position matched.
+	matched := false
+	for _, sig := range sigs {
+		if hmac.Equal([]byte(sig), []byte(wantHex)) {
+			matched = true
+		}
+	}
+	if !matched {
 		return fmt.Errorf("the signature does not match")
 	}
 	return nil

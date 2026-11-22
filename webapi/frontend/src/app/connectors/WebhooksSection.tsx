@@ -44,7 +44,10 @@ const EVENT_HELP: Record<string, string> = {
 
 export function WebhooksSection() {
   const qc = useQueryClient();
+  // One banner for both moments, because they are the same moment: a
+  // secret that is readable once and never again.
   const [created, setCreated] = useState<WebhookCreated | null>(null);
+  const [createdKind, setCreatedKind] = useState<"created" | "rotated">("created");
   const [tested, setTested] = useState<Record<string, WebhookTestResult>>({});
 
   const dests = useQuery({
@@ -67,6 +70,16 @@ export function WebhooksSection() {
   const createDest = useMutation({
     mutationFn: api.webhooks.create,
     onSuccess: (res) => {
+      setCreatedKind("created");
+      setCreated(res);
+      refresh();
+    },
+  });
+
+  const rotate = useMutation({
+    mutationFn: (id: string) => api.webhooks.rotateSecret(id),
+    onSuccess: (res) => {
+      setCreatedKind("rotated");
       setCreated(res);
       refresh();
     },
@@ -125,7 +138,16 @@ export function WebhooksSection() {
       </div>
 
       {created && (
-        <NewWebhookShown created={created} onDismiss={() => setCreated(null)} />
+        <NewWebhookShown
+          created={created}
+          kind={createdKind}
+          onDismiss={() => setCreated(null)}
+        />
+      )}
+      {rotate.error != null && (
+        <p className="rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {(rotate.error as Error).message}
+        </p>
       )}
 
       {loading && <p className="text-sm text-gray-500">Loading…</p>}
@@ -170,6 +192,8 @@ export function WebhooksSection() {
                     tested={tested[d.id]}
                     testing={test.isPending && test.variables === d.id}
                     onTest={() => test.mutate(d.id)}
+                    onRotate={() => rotate.mutate(d.id)}
+                    rotating={rotate.isPending && rotate.variables === d.id}
                     onRemove={() => removeDest.mutate(d.id)}
                     removing={removeDest.isPending}
                   />
@@ -602,11 +626,17 @@ function CreateSubscriptionForm({
 // value is hex and has to be decoded before it is used as the key.
 function NewWebhookShown({
   created,
+  kind,
   onDismiss,
 }: {
   created: WebhookCreated;
+  kind: "created" | "rotated";
   onDismiss: () => void;
 }) {
+  const rotated = kind === "rotated";
+  const until = created.webhook.prev_secret_expires_at
+    ? new Date(created.webhook.prev_secret_expires_at)
+    : null;
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -620,7 +650,9 @@ function NewWebhookShown({
   return (
     <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4">
       <h3 className="text-sm font-semibold text-amber-900">
-        “{created.webhook.label}” is set up
+        {rotated
+          ? `“${created.webhook.label}” has a new signing secret`
+          : `“${created.webhook.label}” is set up`}
       </h3>
       <p className="text-xs text-amber-800">
         This is the signing secret. Your receiver uses it to check that a
@@ -631,6 +663,24 @@ function NewWebhookShown({
         body. It is never shown again, and everything you point at this
         destination will use it, so you only have to do this once.
       </p>
+      {rotated && (
+        <p className="text-xs text-amber-800">
+          {until ? (
+            <>
+              Your old secret keeps working until{" "}
+              <strong>{until.toLocaleString()}</strong>, and until then every
+              delivery carries both signatures — so nothing is lost while you
+              update your receiver. If you are rotating because the old secret
+              leaked, rotate again now: that retires it immediately.
+            </>
+          ) : (
+            <>
+              Your old secret has already stopped working, so update your
+              receiver now.
+            </>
+          )}
+        </p>
+      )}
       <p className="text-xs text-amber-800">
         It is hex-encoded: <strong>decode it to 32 bytes</strong> before using
         it as the key. Using the text as-is still produces a valid-looking
@@ -673,6 +723,8 @@ function DestinationRow({
   tested,
   testing,
   onTest,
+  onRotate,
+  rotating,
   onRemove,
   removing,
 }: {
@@ -681,6 +733,8 @@ function DestinationRow({
   tested?: WebhookTestResult;
   testing: boolean;
   onTest: () => void;
+  onRotate: () => void;
+  rotating: boolean;
   onRemove: () => void;
   removing: boolean;
 }) {
@@ -731,6 +785,16 @@ function DestinationRow({
           >
             {testing ? "Testing…" : "Test"}
           </button>
+          {/* Confirmed, because it is not undoable: the new secret is
+              shown once, and anything still on the old one has a
+              deadline from this moment. */}
+          <ConfirmButton
+            label={rotating ? "Rotating…" : "Rotate secret"}
+            title="Mint a new signing secret. The old one keeps working for 24 hours, and deliveries carry both signatures until then."
+            compact
+            pending={rotating}
+            onConfirm={onRotate}
+          />
           <ConfirmButton
             label="Delete"
             title={
@@ -769,6 +833,15 @@ function DestinationRow({
           {dest.consecutive_failures > 1 &&
             ` (${dest.consecutive_failures} failures in a row)`}
           . Nothing is lost: when it answers again, the queue drains.
+        </p>
+      )}
+
+      {dest.prev_secret_expires_at && (
+        <p className="mt-2 rounded-sm bg-blue-50 px-2 py-1 text-xs text-blue-900">
+          The signing secret was rotated. The previous one still works until{" "}
+          {new Date(dest.prev_secret_expires_at).toLocaleString()}, and
+          deliveries carry both signatures until then — update your receiver
+          before that time.
         </p>
       )}
 

@@ -107,6 +107,27 @@ The summary stays where it is when you turn it on, so a receiver written
 against it keeps working. An ad over 128 KB is left out with `job_ad_omitted`
 saying why, rather than truncated: half an ad is not a smaller ad.
 
+**Rotating the signing secret.** Press **Rotate secret** (or `POST
+/api/v1/webhooks/{id}/rotate-secret`) and you are given a new one, shown
+once, exactly as at creation. The destination URL, the subscriptions feeding
+it and anything already queued are untouched.
+
+The old key keeps working for **24 hours**, and during that window every
+delivery carries *two* signatures — one per key. Your receiver matches
+whichever it holds, so you can update it whenever you like inside the window
+rather than at the same instant as the server. A receiver that follows the
+verification recipe below needs no change at all to cope with this.
+
+The overlap is not a convenience, it is what makes rotation safe: swapping
+the key outright does not delay deliveries, it **loses** them. A receiver
+that rejects a signature answers 4xx, and a 4xx that is not 408 or 429 is a
+permanent refusal here, so those deliveries are abandoned rather than
+retried once you fix the receiver.
+
+If you are rotating because the old key **leaked**, rotate **twice**. The
+second rotation pushes the compromised key out immediately — only the two
+most recent keys are ever live.
+
 You may hold **10 destinations**.
 
 ### Subscriptions
@@ -243,6 +264,13 @@ hex is `HMAC-SHA256(secret, "<t>.<idempotency key>.<raw body>")`. The secret is
 shown once, when the destination is created, and is the same for everything
 that destination receives.
 
+**There may be more than one `v1=`, and a match against any of them is
+valid.** That happens for 24 hours after the destination's secret is
+rotated, so that a receiver can be updated without dropping deliveries. The
+current key comes first. Scan them all — a receiver that stops at the first
+works perfectly until somebody rotates and then fails for a day, which is
+the kind of bug that gets found at 3am.
+
 **The secret is displayed hex-encoded and must be decoded before use.** The key
 is the 32 raw bytes it decodes to, not the 64-character string you were shown.
 This is worth stating because getting it wrong fails silently: HMAC accepts any
@@ -253,10 +281,12 @@ simply never matches, with nothing in either system to say why.
 import hashlib, hmac
 
 def verify(secret_shown_once, headers, raw_body):
-    t, v1 = (p.split("=", 1)[1] for p in headers["X-HTCondor-Signature"].split(","))
+    parts = [p.split("=", 1) for p in headers["X-HTCondor-Signature"].split(",")]
+    t = next(v for k, v in parts if k == "t")
+    sent = [v for k, v in parts if k == "v1"]          # may be more than one
     signed = f"{t}.{headers['Idempotency-Key']}.".encode() + raw_body
-    want = hmac.new(bytes.fromhex(secret_shown_once), signed, hashlib.sha256)
-    return hmac.compare_digest(want.hexdigest(), v1)
+    want = hmac.new(bytes.fromhex(secret_shown_once), signed, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(want, v1) for v1 in sent)
 ```
 
 Note `raw_body` is bytes, joined to the prefix rather than interpolated: sign
@@ -326,8 +356,6 @@ instead carries:
 
 ## What is not supported
 
-- **Rotating a signing secret.** Replace the destination to get a new one, and
-  re-point its subscriptions.
 - **Custom events.** The job-watch tools accept a ClassAd expression; a
   subscription does not. An expression has no terminal resolution, so it would only ever
   fire for jobs still in the queue, and a webhook whose expression matches

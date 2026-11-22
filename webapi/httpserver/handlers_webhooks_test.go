@@ -664,3 +664,72 @@ func TestReceiverMustDecodeTheHexSecret(t *testing.T) {
 		t.Error("the undecoded hex string verified, so the stated decode requirement is not real")
 	}
 }
+
+// TestRotateSecretAtTheHTTPSurface: a new secret, shown once, with the old
+// one's deadline reported so a receiver can be updated before it lapses.
+func TestRotateSecretAtTheHTTPSurface(t *testing.T) {
+	f := newReauthFixture(t, Config{})
+	id := newWebhookEndpoint(t, f.server,
+		`{"label":"Zap","url":"https://hooks.example.org/x"}`)
+
+	rec := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhooks/"+id+"/rotate-secret", `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	secret, _ := out["signing_secret"].(string)
+	if secret == "" {
+		t.Fatal("rotation returned no signing secret")
+	}
+	if once, _ := out["secret_shown_once"].(bool); !once {
+		t.Error("rotation did not mark the secret as shown once")
+	}
+	hook, _ := out["webhook"].(map[string]any)
+	if hook == nil {
+		t.Fatal("rotation returned no webhook")
+	}
+	// The deadline for updating the receiver. Without it the user has no
+	// way to know how long the old key has.
+	if when, _ := hook["prev_secret_expires_at"].(string); when == "" {
+		t.Error("rotation did not report when the old secret expires")
+	}
+
+	// It is a different secret from the next rotation's, and the
+	// destination URL is untouched.
+	rec2 := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhooks/"+id+"/rotate-secret", `{}`))
+	var out2 map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &out2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if s2, _ := out2["signing_secret"].(string); s2 == secret {
+		t.Error("two rotations produced the same secret")
+	}
+	mine := listWebhooks(t, f.server, "alice")
+	if len(mine) != 1 {
+		t.Fatalf("rotation changed the destination count to %d", len(mine))
+	}
+	if hint, _ := mine[0]["destination_hint"].(string); !strings.Contains(hint, "hooks.example.org") {
+		t.Errorf("rotation disturbed the destination: %q", hint)
+	}
+
+	// Somebody else's destination is not found rather than refused, and
+	// above all is not re-keyed.
+	other := serveWebhooks(t, f.server, userRequest(t, f.server, "bob", []string{"condor-users"},
+		http.MethodPost, "/api/v1/webhooks/"+id+"/rotate-secret", `{}`))
+	if other.Code != http.StatusNotFound {
+		t.Errorf("rotate as another owner: status %d, want 404", other.Code)
+	}
+
+	// GET does not rotate. A secret-minting action behind a safe method
+	// is a link somebody can be made to follow.
+	get := serveWebhooks(t, f.server, userRequest(t, f.server, "alice", []string{"condor-users"},
+		http.MethodGet, "/api/v1/webhooks/"+id+"/rotate-secret", ""))
+	if get.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET rotate-secret: status %d, want 405", get.Code)
+	}
+}

@@ -182,7 +182,7 @@ const endpointColumns = `id, owner, label, payload_mode, created_at, updated_at,
 	consecutive_failures, backoff_until,
 	last_delivery_at, last_status, last_error,
 	last_test_at, last_test_status, last_test_error,
-	backlog_at, backlog_depth, url_data, url_dek`
+	backlog_at, backlog_depth, prev_secret_expires_at, url_data, url_dek`
 
 // scanEndpoint reads one row. The destination is read only far enough to say
 // whether there is one and what host it names; the value itself is handed
@@ -197,6 +197,7 @@ func (s *Store) scanEndpoint(sc interface{ Scan(...any) error }) (*Endpoint, err
 		lastTestAt     sql.NullTime
 		lastTestStatus sql.NullInt64
 		backlogAt      sql.NullTime
+		prevExpires    sql.NullTime
 		urlData        []byte
 		urlDEK         []byte
 	)
@@ -204,7 +205,7 @@ func (s *Store) scanEndpoint(sc interface{ Scan(...any) error }) (*Endpoint, err
 		&ep.ConsecutiveFailures, &backoffUntil,
 		&lastDelivery, &lastStatus, &ep.LastError,
 		&lastTestAt, &lastTestStatus, &ep.LastTestError,
-		&backlogAt, &ep.BacklogDepth, &urlData, &urlDEK); err != nil {
+		&backlogAt, &ep.BacklogDepth, &prevExpires, &urlData, &urlDEK); err != nil {
 		return nil, err
 	}
 	ep.Payload = PayloadMode(mode)
@@ -218,6 +219,13 @@ func (s *Store) scanEndpoint(sc interface{ Scan(...any) error }) (*Endpoint, err
 	setTime(&ep.LastDeliveryAt, lastDelivery)
 	setTime(&ep.LastTestAt, lastTestAt)
 	setTime(&ep.BacklogAt, backlogAt)
+	// Only while it is still live. An expired previous key is no
+	// different from never having rotated, and showing a date in the
+	// past would read as "still accepted".
+	if prevExpires.Valid && prevExpires.Time.After(s.now().UTC()) {
+		t := prevExpires.Time
+		ep.PrevSecretExpiresAt = &t
+	}
 	ep.LastStatus = int(lastStatus.Int64)
 	ep.LastTestStatus = int(lastTestStatus.Int64)
 
@@ -280,16 +288,28 @@ func (s *Store) endpointByID(ctx context.Context, id string) (*Endpoint, error) 
 	return ep, err
 }
 
-// Destination unseals an endpoint's URL and signing secret.
+// Destination unseals an endpoint's URL and every signing key still in use.
 //
 // Separate from every other read, and named for what it does, so that the
 // value cannot travel in a struct that something later serializes. The only
 // callers are the delivery worker and the test button.
-func (s *Store) Destination(ctx context.Context, id string) (destination string, secret []byte, err error) {
-	var urlData, urlDEK, secretData, secretDEK []byte
+//
+// secrets[0] is the current key. A second is present only during a
+// rotation's grace period, and a delivery signs with all of them so a
+// receiver matches whichever it has been updated to.
+func (s *Store) Destination(ctx context.Context, id string) (destination string, secrets [][]byte, err error) {
+	var (
+		urlData, urlDEK       []byte
+		secretData, secretDEK []byte
+		prevData, prevDEK     []byte
+		prevExpires           sql.NullTime
+	)
 	err = s.db.QueryRowContext(ctx,
-		`SELECT url_data, url_dek, secret_data, secret_dek FROM webhook_endpoints WHERE id = ?`, id).
-		Scan(&urlData, &urlDEK, &secretData, &secretDEK)
+		`SELECT url_data, url_dek, secret_data, secret_dek,
+		        prev_secret_data, prev_secret_dek, prev_secret_expires_at
+		   FROM webhook_endpoints WHERE id = ?`, id).
+		Scan(&urlData, &urlDEK, &secretData, &secretDEK,
+			&prevData, &prevDEK, &prevExpires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil, ErrNotFound
 	}
@@ -304,7 +324,91 @@ func (s *Store) Destination(ctx context.Context, id string) (destination string,
 	if err != nil {
 		return "", nil, err
 	}
-	return string(plainURL), plainSecret, nil
+	secrets = [][]byte{plainSecret}
+
+	if len(prevData) > 0 && prevExpires.Valid && prevExpires.Time.After(s.now().UTC()) {
+		plainPrev, err := s.open(prevData, prevDEK)
+		if err != nil {
+			// The current key opened and this one did not, which
+			// should not happen -- they were sealed by the same
+			// server with the same schedule. Deliver signed with
+			// the current key alone rather than failing the
+			// delivery: a receiver that has already been updated
+			// still verifies, and one that has not is no worse off
+			// than if the grace period had ended.
+			return string(plainURL), secrets, nil
+		}
+		secrets = append(secrets, plainPrev)
+	}
+	return string(plainURL), secrets, nil
+}
+
+// RotateSecret mints a new signing key and keeps the old one verifying for
+// SecretGracePeriod.
+//
+// Returns the new key, which is the only time it is readable. The old key
+// is NOT discarded at once: swapping outright would lose deliveries rather
+// than delaying them, because a receiver that rejects a signature answers
+// 4xx and a 4xx that is not 408 or 429 is a permanent refusal here.
+//
+// Rotating again inside the window replaces the previous key with the one
+// just retired, which is what somebody rotating because a key LEAKED
+// wants -- the compromised key stops being accepted immediately.
+func (s *Store) RotateSecret(ctx context.Context, owner, id string) (*Endpoint, []byte, error) {
+	ep, err := s.GetEndpoint(ctx, owner, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	var currentData, currentDEK []byte
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT secret_data, secret_dek FROM webhook_endpoints WHERE id = ?`, id).
+		Scan(&currentData, &currentDEK); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, err
+	}
+
+	// A DEK read back from an unsealed row scans as nil, and a nil
+	// []byte binds as SQL NULL rather than as a zero-length blob --
+	// which the NOT NULL column refuses. The same trap seal() documents,
+	// met here from the other direction: reading a value back out and
+	// writing it to another column.
+	if currentDEK == nil {
+		currentDEK = []byte{}
+	}
+
+	secret, err := NewSecret()
+	if err != nil {
+		return nil, nil, err
+	}
+	secretData, secretDEK, err := s.seal(secret)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sealing the new signing secret: %w", err)
+	}
+
+	now := s.now().UTC()
+	until := now.Add(SecretGracePeriod)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE webhook_endpoints
+		   SET secret_data = ?, secret_dek = ?,
+		       prev_secret_data = ?, prev_secret_dek = ?,
+		       prev_secret_expires_at = ?, updated_at = ?
+		 WHERE id = ? AND owner = ?`,
+		secretData, secretDEK, currentData, currentDEK, until, now, id, owner)
+	if err != nil {
+		return nil, nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, nil, ErrNotFound
+	}
+
+	out, err := s.GetEndpoint(ctx, owner, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	_ = ep
+	return out, secret, nil
 }
 
 // UpdateEndpoint changes a destination's name, payload shape or URL.

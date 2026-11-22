@@ -59,6 +59,24 @@ CREATE TABLE webhook_endpoints (
     secret_data BLOB NOT NULL,
     secret_dek BLOB NOT NULL DEFAULT x'',
 
+    -- The PREVIOUS signing key, kept alive for a grace period after a
+    -- rotation so a receiver can be updated without dropping anything.
+    --
+    -- While this is live a delivery carries TWO signatures, one per key,
+    -- and the receiver matches whichever it holds. The alternative --
+    -- swapping the key outright -- loses deliveries rather than delaying
+    -- them: a receiver that rejects a signature answers 4xx, and a 4xx
+    -- that is not 408 or 429 is a permanent refusal here, so those
+    -- deliveries are abandoned rather than retried once the receiver is
+    -- fixed.
+    --
+    -- NULL expiry means there is no previous key. A row whose expiry has
+    -- passed is treated as having none; the columns are cleared lazily
+    -- rather than by a sweep, since nothing reads them once expired.
+    prev_secret_data BLOB,
+    prev_secret_dek BLOB NOT NULL DEFAULT x'',
+    prev_secret_expires_at TIMESTAMP,
+
     -- 'summary' or 'full'. Summary is the small fixed projection;
     -- full adds the job's whole ad beside it. On the ENDPOINT rather
     -- than the subscription so that one receiver always gets one shape

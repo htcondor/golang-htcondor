@@ -882,6 +882,7 @@ const openAPISchema = `{
           "last_delivery_at": {"type": "string", "format": "date-time"},
           "last_status": {"type": "integer"},
           "last_error": {"type": "string"},
+          "prev_secret_expires_at": {"type": "string", "format": "date-time", "description": "When the key this destination rotated away from stops being accepted. Present only while a rotation is in progress, so its presence means \"two keys are live and deliveries carry two signatures\". Absent once the old key has expired."},
           "last_test_at": {"type": "string", "format": "date-time", "description": "Kept apart from real traffic, so a test does not overwrite the record of the deliveries that matter, nor the reverse."},
           "last_test_status": {"type": "integer"},
           "last_test_error": {"type": "string"},
@@ -1478,6 +1479,26 @@ const openAPISchema = `{
           }}}}},
           "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "500": {"description": "The destination could not be read at all -- the row is gone, or it is sealed and this server has no KEK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/webhooks/{id}/rotate-secret": {
+      "post": {
+        "summary": "Mint a new signing secret for a destination",
+        "description": "Returns a new signing secret, shown only in THIS response, and keeps the previous one verifying for a 24-hour grace period. Deliveries during that window carry TWO signatures -- \"t=<ts>,v1=<new>,v1=<old>\" -- and a receiver matches whichever key it holds, so it can be updated at any point rather than at the same instant as the server. The current key is first.\n\nThe old key is deliberately not discarded at once: swapping outright does not delay deliveries, it loses them, because a receiver that rejects a signature answers 4xx and a 4xx that is not 408 or 429 is a permanent refusal here.\n\nRotating AGAIN inside the window replaces the previous key with the one just retired, so a key known to have leaked stops being accepted immediately. Rotate twice to retire one now.\n\nThe destination URL, the subscriptions feeding it and the delivery queue are all untouched.",
+        "operationId": "rotateWebhookSecret",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Rotated. signing_secret is shown only here.", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "webhook": {"$ref": "#/components/schemas/Webhook"},
+            "signing_secret": {"type": "string", "description": "The new HMAC-SHA256 key, hex-encoded. DECODE IT before use: the key is the 32 raw bytes, not this 64-character string. Not recoverable later."},
+            "secret_shown_once": {"type": "boolean"},
+            "signature_header": {"type": "string"},
+            "idempotency_header": {"type": "string"}
+          }}}}},
+          "404": {"description": "No such destination of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "415": {"description": "Not application/json", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Webhooks are disabled on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

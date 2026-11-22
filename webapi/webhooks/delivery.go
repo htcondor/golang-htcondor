@@ -600,7 +600,7 @@ func NewSender() *Sender {
 }
 
 // Post makes one attempt.
-func (s *Sender) Post(ctx context.Context, destination string, secret []byte, key string, payload []byte, event jobwatch.Event, endpointID string) Attempt {
+func (s *Sender) Post(ctx context.Context, destination string, secrets [][]byte, key string, payload []byte, event jobwatch.Event, endpointID string) Attempt {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, destination, bytes.NewReader(payload))
 	if err != nil {
 		// A URL that will not build a request will not build one next
@@ -612,7 +612,7 @@ func (s *Sender) Post(ctx context.Context, destination string, secret []byte, ke
 	req.Header.Set(IdempotencyHeader, key)
 	req.Header.Set(EventHeader, string(event))
 	req.Header.Set(EndpointHeader, endpointID)
-	req.Header.Set(SignatureHeader, Sign(secret, key, payload, time.Now()))
+	req.Header.Set(SignatureHeader, SignWith(secrets, key, payload, time.Now()))
 
 	resp, err := s.client.Do(req)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -206,11 +207,14 @@ func TestDeliverySucceeds(t *testing.T) {
 	}
 	// The signature has to verify at the receiver with the secret the
 	// creation handed out -- that is the whole point of sending one.
-	_, secret, err := f.store.Destination(context.Background(), f.ep.ID)
+	_, secrets, err := f.store.Destination(context.Background(), f.ep.ID)
 	if err != nil {
 		t.Fatalf("Destination: %v", err)
 	}
-	if err := VerifySignature(secret, got.Key, got.Body, got.Signature, time.Now()); err != nil {
+	if len(secrets) != 1 {
+		t.Fatalf("an endpoint that has never rotated has %d live keys, want 1", len(secrets))
+	}
+	if err := VerifySignature(secrets[0], got.Key, got.Body, got.Signature, time.Now()); err != nil {
 		t.Errorf("the delivered signature did not verify: %v", err)
 	}
 
@@ -547,7 +551,7 @@ func TestSenderRefusesNonPublic(t *testing.T) {
 
 	// The real sender, with its real client.
 	sender := NewSender()
-	a := sender.Post(context.Background(), srv.URL, []byte("secret"), "key", []byte("{}"),
+	a := sender.Post(context.Background(), srv.URL, [][]byte{[]byte("secret")}, "key", []byte("{}"),
 		jobwatch.EventDone, "wh_1")
 	if a.OK() {
 		t.Fatal("the sender reached a loopback destination")
@@ -594,5 +598,84 @@ func TestPruneDeliveriesKeepsPending(t *testing.T) {
 	}
 	if left != 0 {
 		t.Error("the delivered row was not pruned")
+	}
+}
+
+// TestRotatedEndpointDeliversBothSignatures is the rotation contract where
+// it actually matters: on the wire.
+//
+// A receiver updated to the new key and one still on the old must BOTH be
+// able to verify the same delivery, or rotation is just a scheduled outage.
+func TestRotatedEndpointDeliversBothSignatures(t *testing.T) {
+	f := newFixture(t, ScopeJob)
+	ctx := context.Background()
+
+	_, before, err := f.store.Destination(ctx, f.ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	oldKey := before[0]
+
+	_, newKey, err := f.store.RotateSecret(ctx, "alice", f.ep.ID)
+	if err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+
+	f.enqueue(t, 42)
+	if _, err := f.disp.Pass(ctx); err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	seen := f.recv.seen()
+	if len(seen) != 1 {
+		t.Fatalf("the receiver saw %d requests, want 1", len(seen))
+	}
+	got := seen[0]
+
+	if n := strings.Count(got.Signature, "v1="); n != 2 {
+		t.Fatalf("a delivery during the grace period carries %d signatures, want 2: %s",
+			n, got.Signature)
+	}
+	if err := VerifySignature(newKey, got.Key, got.Body, got.Signature, time.Now()); err != nil {
+		t.Errorf("a receiver on the NEW key could not verify: %v", err)
+	}
+	if err := VerifySignature(oldKey, got.Key, got.Body, got.Signature, time.Now()); err != nil {
+		t.Errorf("a receiver still on the OLD key could not verify: %v", err)
+	}
+}
+
+// TestDeliveryAfterGracePeriodDropsTheOldSignature: once the window closes,
+// the retired key is gone from the wire as well as from the store.
+func TestDeliveryAfterGracePeriodDropsTheOldSignature(t *testing.T) {
+	f := newFixture(t, ScopeJob)
+	ctx := context.Background()
+
+	_, before, err := f.store.Destination(ctx, f.ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	oldKey := before[0]
+	if _, _, err := f.store.RotateSecret(ctx, "alice", f.ep.ID); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+
+	f.store.now = func() time.Time {
+		return time.Now().UTC().Add(SecretGracePeriod + time.Minute)
+	}
+	f.enqueue(t, 43)
+	if _, err := f.disp.Pass(ctx); err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	seen := f.recv.seen()
+	if len(seen) != 1 {
+		t.Fatalf("the receiver saw %d requests, want 1", len(seen))
+	}
+	got := seen[0]
+
+	if n := strings.Count(got.Signature, "v1="); n != 1 {
+		t.Errorf("a delivery after the grace period carries %d signatures, want 1: %s",
+			n, got.Signature)
+	}
+	if err := VerifySignature(oldKey, got.Key, got.Body, got.Signature, time.Now()); err == nil {
+		t.Error("the retired key still verifies a delivery sent after its deadline")
 	}
 }

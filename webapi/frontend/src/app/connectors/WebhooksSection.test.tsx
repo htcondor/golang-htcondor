@@ -14,6 +14,7 @@ const create = vi.fn();
 const test_ = vi.fn();
 const remove = vi.fn();
 const deliveries = vi.fn();
+const rotateSecret = vi.fn();
 const listSubs = vi.fn();
 const createSub = vi.fn();
 const removeSub = vi.fn();
@@ -31,6 +32,7 @@ vi.mock('@/lib/api', async () => {
         remove: (id: string) => remove(id),
         test: (id: string) => test_(id),
         deliveries: (id: string) => deliveries(id),
+        rotateSecret: (id: string) => rotateSecret(id),
       },
       webhookSubscriptions: {
         list: () => listSubs(),
@@ -89,6 +91,7 @@ describe('the event notifications panel', () => {
     test_.mockReset();
     remove.mockReset();
     deliveries.mockReset();
+    rotateSecret.mockReset();
     listSubs.mockReset();
     createSub.mockReset();
     removeSub.mockReset();
@@ -411,5 +414,69 @@ describe('the event notifications panel', () => {
     // "given up" rather than "failed": we stopped trying, which is a
     // different thing to report.
     await waitFor(() => expect(screen.getByText(/given up: gone/)).toBeInTheDocument());
+  });
+});
+
+describe('rotating a signing secret', () => {
+  beforeEach(() => {
+    list.mockReset();
+    createSub.mockReset();
+    rotateSecret.mockReset();
+    listSubs.mockReset();
+    deliveries.mockReset();
+    listSubs.mockResolvedValue({ subscriptions: [], events: EVENTS });
+    deliveries.mockResolvedValue({ deliveries: [] });
+  });
+
+  it('shows the new secret once and says the old one still works', async () => {
+    const until = new Date(Date.now() + 24 * 3600_000).toISOString();
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    rotateSecret.mockResolvedValue({
+      webhook: dest({ prev_secret_expires_at: until }),
+      signing_secret: 'newsecret123',
+      secret_shown_once: true,
+      signature_header: 'X-HTCondor-Signature',
+      idempotency_header: 'Idempotency-Key',
+    });
+    await renderSection();
+
+    // Two-click affordance: rotation is not undoable, so it is confirmed.
+    // ConfirmButton's accessible name is its title, not its label.
+    fireEvent.click(await screen.findByRole('button', { name: /Mint a new signing secret/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(rotateSecret).toHaveBeenCalledWith('wh_1'));
+
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('newsecret123')).toBeInTheDocument(),
+    );
+    // The banner has to say this is a rotation, not a new destination.
+    expect(screen.getByText(/has a new signing secret/)).toBeInTheDocument();
+    // And that nothing is lost meanwhile, which is the whole point of
+    // the overlap.
+    expect(screen.getByText(/old secret keeps working until/)).toBeInTheDocument();
+    expect(screen.getByText(/both signatures/)).toBeInTheDocument();
+    // The escape hatch for a leaked key.
+    expect(screen.getByText(/rotate again now/)).toBeInTheDocument();
+  });
+
+  it('shows the deadline on a destination mid-rotation', async () => {
+    const until = new Date(Date.now() + 10 * 3600_000).toISOString();
+    list.mockResolvedValue({
+      webhooks: [dest({ prev_secret_expires_at: until })],
+      events: EVENTS,
+      payload_modes: MODES,
+    });
+    await renderSection();
+    await waitFor(() =>
+      expect(screen.getByText(/previous one still works until/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/update your receiver before that time/)).toBeInTheDocument();
+  });
+
+  it('says nothing about rotation on a destination that has not rotated', async () => {
+    list.mockResolvedValue({ webhooks: [dest()], events: EVENTS, payload_modes: MODES });
+    await renderSection();
+    await waitFor(() => expect(screen.getByText('Slack #jobs')).toBeInTheDocument());
+    expect(screen.queryByText(/previous one still works/)).not.toBeInTheDocument();
   });
 });

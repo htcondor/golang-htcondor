@@ -134,7 +134,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (Stats, error) {
 
 			// One unseal per endpoint rather than per delivery: it is
 			// the same destination and the same key for all of them.
-			destination, secret, err := d.store.Destination(ctx, endpointID)
+			destination, secrets, err := d.store.Destination(ctx, endpointID)
 			if err != nil {
 				// An endpoint deleted between the claim and now, or one
 				// this server cannot unseal. Neither is the delivery's
@@ -148,7 +148,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (Stats, error) {
 				if ctx.Err() != nil {
 					return
 				}
-				d.send(ctx, dl, destination, secret, stat, &mu)
+				d.send(ctx, dl, destination, secrets, stat, &mu)
 			}
 		}(endpointID, deliveries)
 	}
@@ -182,8 +182,8 @@ func (d *Dispatcher) finishUnsendable(ctx context.Context, dl *Delivery, cause e
 // abandoned for running out of attempts: a destination that keeps failing
 // backs off (see Store.Retry) and keeps its place in the queue until it
 // either lands or ages out of MaxDeliveryAge.
-func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string, secret []byte, st *Stats, mu *sync.Mutex) {
-	a := d.sender.Post(ctx, destination, secret, dl.ID, dl.Payload, dl.Event, dl.EndpointID)
+func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string, secrets [][]byte, st *Stats, mu *sync.Mutex) {
+	a := d.sender.Post(ctx, destination, secrets, dl.ID, dl.Payload, dl.Event, dl.EndpointID)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -227,7 +227,7 @@ func (d *Dispatcher) send(ctx context.Context, dl *Delivery, destination string,
 // what the receiver answered right now; whether the queue may flow again is
 // decided by a real delivery.
 func SendTest(ctx context.Context, store *Store, sender *Sender, ep *Endpoint) (Attempt, error) {
-	destination, secret, err := store.Destination(ctx, ep.ID)
+	destination, secrets, err := store.Destination(ctx, ep.ID)
 	if err != nil {
 		return Attempt{}, err
 	}
@@ -243,7 +243,7 @@ func SendTest(ctx context.Context, store *Store, sender *Sender, ep *Endpoint) (
 	if err != nil {
 		return Attempt{}, err
 	}
-	a := sender.Post(ctx, destination, secret, key, payload, TestEvent, ep.ID)
+	a := sender.Post(ctx, destination, secrets, key, payload, TestEvent, ep.ID)
 	cause := a.Cause
 	if a.OK() {
 		cause = ""

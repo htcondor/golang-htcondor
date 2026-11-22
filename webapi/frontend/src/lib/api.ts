@@ -1491,6 +1491,10 @@ export interface Webhook {
   // When this destination may next be posted to. A failing receiver backs
   // off to a ceiling and keeps trying; it is never disabled.
   backoff_until?: string;
+  // When the key this destination rotated away from stops being accepted.
+  // Present only while a rotation is in progress, so its presence means
+  // two keys are live and deliveries carry two signatures.
+  prev_secret_expires_at?: string;
   last_delivery_at?: string;
   last_status?: number;
   last_error?: string;
@@ -2931,6 +2935,15 @@ export const api = {
     // the wrong code.
     test: (id: string): Promise<WebhookTestResult> =>
       fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    // Mints a new signing secret and keeps the old one verifying for a
+    // grace period. Same response shape as creation, because it is the
+    // same moment: a secret readable once and never again.
+    rotateSecret: (id: string): Promise<WebhookCreated> =>
+      fetchJSON(`${BASE}/webhooks/${encodeURIComponent(id)}/rotate-secret`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",

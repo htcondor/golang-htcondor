@@ -335,7 +335,7 @@ func TestCreateAndRead(t *testing.T) {
 	if back != dest {
 		t.Errorf("destination round trip = %q, want %q", back, dest)
 	}
-	if string(backSecret) != string(secret) {
+	if len(backSecret) != 1 || string(backSecret[0]) != string(secret) {
 		t.Error("the signing secret did not survive the round trip")
 	}
 }
@@ -372,7 +372,7 @@ func TestOneSecretManySubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Destination: %v", err)
 	}
-	if string(back) != string(secret) {
+	if len(back) != 1 || string(back[0]) != string(secret) {
 		t.Error("the destination's signing key changed when subscriptions were added")
 	}
 
@@ -498,7 +498,7 @@ func TestDeleteSubscriptionKeepsTheDestination(t *testing.T) {
 		t.Fatalf("the destination went with its last subscription: %v", err)
 	}
 	_, back, err := s.Destination(ctx, ep.ID)
-	if err != nil || string(back) != string(secret) {
+	if err != nil || len(back) != 1 || string(back[0]) != string(secret) {
 		t.Error("the signing key did not survive deleting a subscription")
 	}
 }
@@ -709,4 +709,189 @@ func (fakeSealer) Open(data, dek []byte) ([]byte, error) {
 		out[len(data)-1-i] = b
 	}
 	return out, nil
+}
+
+// TestRotateSecretKeepsTheOldKeyVerifying is the whole reason rotation has a
+// grace period.
+//
+// Swapping a key outright does not delay deliveries, it LOSES them: a
+// receiver that rejects a signature answers 4xx, and a 4xx that is not 408
+// or 429 is a permanent refusal here, so those deliveries are abandoned
+// rather than retried once somebody fixes the receiver.
+func TestRotateSecretKeepsTheOldKeyVerifying(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ep, old := newEndpoint(t, s, "alice", "Zap", "https://hooks.example.org/x")
+
+	rotated, fresh, err := s.RotateSecret(ctx, "alice", ep.ID)
+	if err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+	if string(fresh) == string(old) {
+		t.Fatal("rotation returned the same key")
+	}
+	if len(fresh) != SecretBytes {
+		t.Errorf("new key is %d bytes, want %d", len(fresh), SecretBytes)
+	}
+	if rotated.PrevSecretExpiresAt == nil {
+		t.Fatal("rotation recorded no deadline for the old key")
+	}
+
+	// Both keys are live, new one first.
+	_, live, err := s.Destination(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	if len(live) != 2 {
+		t.Fatalf("%d live keys after a rotation, want 2", len(live))
+	}
+	if string(live[0]) != string(fresh) {
+		t.Error("the current key is not first; a receiver reading only the first v1 would need the retired one")
+	}
+	if string(live[1]) != string(old) {
+		t.Error("the retired key is not the one that was replaced")
+	}
+
+	// A delivery signed with both verifies under EITHER key, which is
+	// what lets a receiver be updated at any point in the window.
+	body := []byte(`{"event":"held"}`)
+	header := SignWith(live, "k", body, time.Now())
+	if err := VerifySignature(fresh, "k", body, header, time.Now()); err != nil {
+		t.Errorf("the new key did not verify: %v", err)
+	}
+	if err := VerifySignature(old, "k", body, header, time.Now()); err != nil {
+		t.Errorf("the old key did not verify during the grace period: %v", err)
+	}
+	// And an unrelated key still does not.
+	if err := VerifySignature([]byte("not a key"), "k", body, header, time.Now()); err == nil {
+		t.Error("an unrelated key verified against a two-signature header")
+	}
+}
+
+// TestRotatedKeyStopsAtTheDeadline: the grace period has to actually end,
+// or rotating a LEAKED key would leave it working indefinitely.
+func TestRotatedKeyStopsAtTheDeadline(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ep, old := newEndpoint(t, s, "alice", "Zap", "https://hooks.example.org/x")
+	if _, _, err := s.RotateSecret(ctx, "alice", ep.ID); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+
+	// Walk past the deadline.
+	s.now = func() time.Time { return time.Now().UTC().Add(SecretGracePeriod + time.Minute) }
+
+	_, live, err := s.Destination(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	if len(live) != 1 {
+		t.Fatalf("%d live keys after the grace period, want 1", len(live))
+	}
+	if string(live[0]) == string(old) {
+		t.Fatal("the retired key is still the current one")
+	}
+
+	body := []byte(`{}`)
+	header := SignWith(live, "k", body, time.Now())
+	if err := VerifySignature(old, "k", body, header, time.Now()); err == nil {
+		t.Error("the retired key still verifies after its deadline")
+	}
+
+	// And the endpoint no longer advertises a deadline, because a date
+	// in the past reads as "still accepted".
+	got, err := s.GetEndpoint(ctx, "alice", ep.ID)
+	if err != nil {
+		t.Fatalf("GetEndpoint: %v", err)
+	}
+	if got.PrevSecretExpiresAt != nil {
+		t.Errorf("an expired grace period is still advertised: %v", got.PrevSecretExpiresAt)
+	}
+}
+
+// TestRotatingTwiceRetiresTheLeakedKeyAtOnce is the escape hatch for the
+// case rotation usually exists for. Somebody who knows a key is compromised
+// needs it to STOP working, not to keep working for another day.
+func TestRotatingTwiceRetiresTheLeakedKeyAtOnce(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ep, leaked := newEndpoint(t, s, "alice", "Zap", "https://hooks.example.org/x")
+
+	if _, _, err := s.RotateSecret(ctx, "alice", ep.ID); err != nil {
+		t.Fatalf("first RotateSecret: %v", err)
+	}
+	_, second, err := s.RotateSecret(ctx, "alice", ep.ID)
+	if err != nil {
+		t.Fatalf("second RotateSecret: %v", err)
+	}
+
+	_, live, err := s.Destination(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	if len(live) != 2 {
+		t.Fatalf("%d live keys, want 2", len(live))
+	}
+	if string(live[0]) != string(second) {
+		t.Error("the newest key is not current")
+	}
+	for _, k := range live {
+		if string(k) == string(leaked) {
+			t.Fatal("the key rotated away from twice is still accepted")
+		}
+	}
+}
+
+// TestRotateSecretIsOwnerScoped: somebody else's destination is not found
+// rather than refused, and above all is not re-keyed.
+func TestRotateSecretIsOwnerScoped(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ep, original := newEndpoint(t, s, "alice", "Zap", "https://hooks.example.org/x")
+
+	if _, _, err := s.RotateSecret(ctx, "bob", ep.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("RotateSecret as another owner = %v, want ErrNotFound", err)
+	}
+	_, live, err := s.Destination(ctx, ep.ID)
+	if err != nil {
+		t.Fatalf("Destination: %v", err)
+	}
+	if len(live) != 1 || string(live[0]) != string(original) {
+		t.Error("another owner's request changed the key")
+	}
+}
+
+// TestVerifyAcceptsAnyOfSeveralSignatures pins the receiver-side contract
+// that rotation depends on, apart from the store.
+func TestVerifyAcceptsAnyOfSeveralSignatures(t *testing.T) {
+	a, b := []byte("key-a-aaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte("key-b-bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	body := []byte(`{"event":"done"}`)
+	at := time.Now()
+	header := SignWith([][]byte{a, b}, "idem", body, at)
+
+	if n := strings.Count(header, "v1="); n != 2 {
+		t.Fatalf("header carries %d signatures, want 2: %s", n, header)
+	}
+	if !strings.HasPrefix(header, "t=") {
+		t.Errorf("header does not start with the timestamp: %s", header)
+	}
+	for name, key := range map[string][]byte{"first": a, "second": b} {
+		if err := VerifySignature(key, "idem", body, header, at); err != nil {
+			t.Errorf("the %s key did not verify: %v", name, err)
+		}
+	}
+	// A single-key header is unchanged in shape, so a receiver written
+	// before rotation existed still works.
+	one := SignWith([][]byte{a}, "idem", body, at)
+	if strings.Count(one, "v1=") != 1 {
+		t.Errorf("a single-key header grew a signature: %s", one)
+	}
+	if one != Sign(a, "idem", body, at) {
+		t.Error("SignWith and Sign disagree for one key")
+	}
+	// The body still has to match: several signatures must not become
+	// several chances to match something else.
+	if err := VerifySignature(a, "idem", []byte("tampered"), header, at); err == nil {
+		t.Error("a tampered body verified")
+	}
 }

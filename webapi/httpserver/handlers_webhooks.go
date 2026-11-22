@@ -194,6 +194,8 @@ func (h *Handler) handleWebhookItem(w http.ResponseWriter, r *http.Request) {
 		}
 	case "test":
 		h.handleTestEndpoint(w, r, id)
+	case "rotate-secret":
+		h.handleRotateEndpointSecret(w, r, id)
 	case "deliveries":
 		h.handleEndpointDeliveries(w, r, id)
 	case "subscriptions":
@@ -312,6 +314,42 @@ func (h *Handler) handleTestEndpoint(w http.ResponseWriter, r *http.Request, id 
 		"ok":     attempt.OK(),
 		"status": attempt.Status,
 		"error":  attempt.Cause,
+	})
+}
+
+// handleRotateEndpointSecret mints a new signing key for a destination.
+//
+// The old key keeps verifying for a grace period and deliveries carry both
+// signatures meanwhile, so a receiver can be updated without dropping
+// anything. Rotating again inside the window retires the older key at once,
+// which is what somebody rotating because a key leaked wants.
+func (h *Handler) handleRotateEndpointSecret(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	session, ok := h.webhookCaller(w, r)
+	if !ok {
+		return
+	}
+	if !h.requireJSONRequest(w, r) {
+		return
+	}
+	ep, secret, err := h.webhooks.RotateSecret(r.Context(), session.Username, id)
+	if h.webhookError(w, err) {
+		return
+	}
+	h.logger.Info(logging.DestinationHTTP, "User rotated a webhook signing secret",
+		"owner", session.Username, "webhook", id)
+
+	// Same shape as creation, because it is the same moment: a secret
+	// that is readable once and never again.
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"webhook":            ep,
+		"signing_secret":     hexSecret(secret),
+		"secret_shown_once":  true,
+		"signature_header":   webhooks.SignatureHeader,
+		"idempotency_header": webhooks.IdempotencyHeader,
 	})
 }
 
