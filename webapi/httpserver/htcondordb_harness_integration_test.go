@@ -13,6 +13,7 @@ import (
 	"time"
 
 	htcondor "github.com/htcondor/golang-htcondor"
+	"github.com/htcondor/golang-htcondor/config"
 )
 
 // Helpers for tests that run real htcondordb daemons: a single-AP
@@ -41,6 +42,38 @@ func htcondordbBinary(t *testing.T) string {
 		t.Skip("htcondordb not found (set HTCONDORDB_BINARY or put it on PATH); skipping the mirror integration test")
 	}
 	return bin
+}
+
+// optionalHTCondorDB locates the daemon without deciding what to do
+// about its absence.
+//
+// htcondordbBinary skips the whole test, which is right for a test that
+// is ABOUT the mirror. A test whose subject is something else, and for
+// which the mirror only adds a branch, needs to ask instead -- and must
+// still fail on HTCONDORDB_BINARY set to something unusable, so a CI job
+// that meant to cover the mirror branch cannot quietly take the other
+// one.
+func optionalHTCondorDB() (string, bool) {
+	if bin := os.Getenv("HTCONDORDB_BINARY"); bin != "" {
+		// Returned whether or not it stats: startHTCondorDB will fail
+		// on it loudly, which is the behaviour htcondordbBinary has for
+		// the same mistake.
+		return bin, true
+	}
+	bin, err := exec.LookPath("htcondordb")
+	return bin, err == nil
+}
+
+// mirrorClientConfig is the HTCondor configuration a mirror client
+// authenticates with: FS throughout, since every process in these tests
+// is the same user.
+func mirrorClientConfig(h *htcondor.CondorTestHarness) *config.Config {
+	cfg := config.NewEmpty()
+	cfg.Set("SEC_DEFAULT_AUTHENTICATION_METHODS", "FS")
+	cfg.Set("SEC_CLIENT_AUTHENTICATION_METHODS", "FS")
+	cfg.Set("UID_DOMAIN", h.GetTrustDomain())
+	cfg.Set("TRUST_DOMAIN", h.GetTrustDomain())
+	return cfg
 }
 
 // htcondordbProc is one htcondordb daemon run outside condor_master,
@@ -211,6 +244,44 @@ func tail(b []byte, n int) []byte {
 func startMirror(t *testing.T, h *htcondor.CondorTestHarness, bin, dir string) {
 	t.Helper()
 	startHTCondorDB(t, h, bin, dir, "")
+}
+
+// startScheddSyncMirror runs an htcondordb that mirrors the harness
+// schedd's own job_queue.log into a "jobs" table, rather than one a test
+// seeds by hand.
+//
+// startMirror is enough wherever the rows are the test's own fixture. It
+// is NOT enough when what is under test reads the jobs table: a fresh
+// database has no such table at all -- schedd-sync is what creates it --
+// so a listing built from it comes back empty, which reads as "this
+// person has no jobs" rather than "nothing is mirroring them".
+//
+// HISTORY is cleared because the harness has no history file to tail and
+// a sync pointed at a missing one logs on every pass; the queue is what
+// a jobs table is built from.
+func startScheddSyncMirror(t *testing.T, h *htcondor.CondorTestHarness, bin, dir string) *htcondordbProc {
+	t.Helper()
+	// htcondordb refuses schedd-sync as root on purpose: it reads
+	// another daemon's files, and doing that with privilege is the
+	// symlink hazard the refusal exists to prevent. Skipped rather than
+	// failed so a root CI container does not report this as broken.
+	if os.Geteuid() == 0 {
+		t.Skip("htcondordb refuses schedd-sync as root; run this suite unprivileged")
+	}
+	// TOKEN as well as FS, which the base configuration's comment
+	// anticipates. A caller arriving through the SSH gateway is credited
+	// with a minted IDTOKEN rather than this process's filesystem
+	// identity, so its client offers [TOKEN SCITOKENS SSL] and an
+	// FS-only database answers DENIED -- "no compatible authentication
+	// methods" -- which surfaces as an empty or unreadable /outputs
+	// several layers up.
+	return startHTCondorDB(t, h, bin, dir, fmt.Sprintf(
+		"HTCONDORDB_SYNC_SCHEDD = true\n"+
+			"HTCONDORDB_JOB_QUEUE_LOG = %s\n"+
+			"HISTORY =\n"+
+			"SEC_DEFAULT_AUTHENTICATION_METHODS = FS, TOKEN\n"+
+			"SEC_TOKEN_POOL_SIGNING_KEY_FILE = %s\n",
+		filepath.Join(h.GetSpoolDir(), "job_queue.log"), h.GetSigningKeyPath()))
 }
 
 func waitFor(t *testing.T, what string, limit time.Duration, ok func() bool) {
