@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -2412,6 +2413,43 @@ func (h *Handler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// clientDisplayName is the name an OAuth2 client registered for itself, or
+// empty if it has none.
+//
+// One read, on a page a person is about to make a trust decision on. It is
+// not cached: a consent page is rendered once per authorization, by a human
+// who is waiting anyway, and a stale name on this particular screen would be
+// worse than the query it saved -- it is the screen that says which
+// application is asking.
+//
+// Any failure is empty rather than an error. A consent page that will not
+// render because a label could not be looked up is a worse outcome than one
+// that falls back to naming the client by its id.
+func (h *Handler) clientDisplayName(ctx context.Context, clientID string) string {
+	if clientID == "" || h.oauth2Provider == nil {
+		return ""
+	}
+	storage := h.oauth2Provider.GetStorage()
+	if storage == nil {
+		return ""
+	}
+	db := storage.GetDB()
+	if db == nil {
+		return ""
+	}
+	var name sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT client_name FROM oauth2_clients WHERE id = ?`, clientID).Scan(&name); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			h.logger.Debug(logging.DestinationHTTP,
+				"Could not read a client's name for the consent page",
+				"client", clientID, "error", err)
+		}
+		return ""
+	}
+	return strings.TrimSpace(name.String)
+}
+
 // consentPageParams defines the parameters for rendering a consent page.
 type consentPageParams struct {
 	Title           string   // Page title (e.g., "Authorize Application" or "Authorize Device")
@@ -2565,6 +2603,30 @@ func (h *Handler) renderConsentPage(ctx context.Context, w http.ResponseWriter, 
 			html.EscapeString(name), html.EscapeString(value))
 	}
 
+	// The application's own name, resolved here rather than at the call
+	// sites, for the same reason the group filtering is: a consent page
+	// that forgot would silently fall back to naming the application by
+	// an opaque id, and there is no way to see that from the rendered
+	// page.
+	//
+	// This is the screen on which somebody decides whether to trust an
+	// application. "client_7d530baec756..." gives them nothing to
+	// recognise, and a user who cannot tell which application is asking
+	// cannot meaningfully approve it. The id stays, below the name and
+	// in smaller type, because it is what an administrator needs when
+	// the same name has been used twice.
+	clientNameHTML := ""
+	if name := h.clientDisplayName(ctx, p.ClientID); name != "" {
+		clientNameHTML = fmt.Sprintf("<p class=\"client-name\">%s</p>",
+			html.EscapeString(name))
+	} else {
+		// A client with no stored name -- seeded, or registered through
+		// dynamic registration without one. Say that plainly rather
+		// than leaving the heading bare, so the id below it reads as
+		// the identification it is.
+		clientNameHTML = "<p class=\"client-name unnamed\">An application that did not give a name</p>"
+	}
+
 	pageHTML := fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head>
@@ -2615,6 +2677,23 @@ func (h *Handler) renderConsentPage(ctx context.Context, w http.ResponseWriter, 
             background: #f0f4ff;
             border-left: 4px solid #667eea;
             border-radius: 6px;
+        }
+        .client-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin: 0 0 6px 0;
+        }
+        .client-name.unnamed {
+            font-weight: 500;
+            font-style: italic;
+            color: #8a6d3b;
+        }
+        .client-id {
+            font-size: 12px;
+            color: #666;
+            margin: 0;
+            word-break: break-all;
         }
         .client-info h2 {
             font-size: 16px;
@@ -2824,7 +2903,8 @@ func (h *Handler) renderConsentPage(ctx context.Context, w http.ResponseWriter, 
         %s
         <div class="client-info">
             <h2>Application</h2>
-            <p><strong>Client ID:</strong> %s</p>
+            %s
+            <p class="client-id"><strong>Client ID:</strong> %s</p>
         </div>
 
         <form method="POST" action="%s" id="consentForm">
@@ -2868,6 +2948,7 @@ func (h *Handler) renderConsentPage(ctx context.Context, w http.ResponseWriter, 
 		html.EscapeString(p.Title),
 		html.EscapeString(p.Username),
 		deviceCodeSection,
+		clientNameHTML,
 		html.EscapeString(p.ClientID),
 		// FormAction now precedes the scope list: the permissions block
 		// moved inside the <form>, so the form tag is emitted first.
