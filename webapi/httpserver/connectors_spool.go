@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/PelicanPlatform/classad/classad"
 
+	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
@@ -223,4 +225,88 @@ func (s *Handler) prepareConnectorInputs(submitFile string) (string, error) {
 	}
 
 	return connectors.RecordInputRefs(rewritten, refs), nil
+}
+
+// connectorsSupplyAll reports whether every input the schedd is still
+// waiting for is one a connector will provide.
+func connectorsSupplyAll(awaiting []string, refs []connectors.InputRef) bool {
+	have := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		have[ref.Name] = true
+	}
+	for _, name := range awaiting {
+		if !have[name] {
+			return false
+		}
+	}
+	return true
+}
+
+// finishConnectorOnlySpool spools the jobs whose every awaited input
+// comes from a connector, which also releases them.
+//
+// SubmitRemote releases a job with nothing to spool and holds one that
+// is waiting for files. A connector reference is rewritten at submit
+// into the plain name its spooled copy will have, so the schedd waits
+// for a file that only this server can supply -- and nothing supplied
+// it unless the caller happened to upload something of its own in the
+// same breath. A batch whose inputs all came from Drive therefore sat
+// at "Spooling input data files" for ever, while the submit was
+// reported as a success: the silent version of not working at all.
+//
+// Only when connectors account for EVERY awaited input. If the job is
+// also waiting for a file the caller holds, the caller's upload is what
+// finishes the spool, and spooling here would release the job without
+// it -- the partial sandbox that connectorUploadReader exists to avoid.
+//
+// Returns a warning per job it could not finish. The job is already in
+// the queue by then, so a failure here is advice about a job that will
+// stay held, not a reason to fail the submission.
+func (s *Handler) finishConnectorOnlySpool(
+	ctx context.Context,
+	r *http.Request,
+	ads []*classad.ClassAd,
+) []string {
+	var warnings []string
+	schedd := s.scheddFor(ctx)
+
+	for _, ad := range ads {
+		awaiting := htcondor.SpoolInputAllowSet(ad)
+		if len(awaiting) == 0 {
+			continue // SubmitRemote released it; there is nothing to send.
+		}
+		refs, err := connectorRefsOf(ad)
+		if err != nil || len(refs) == 0 {
+			continue
+		}
+		if !connectorsSupplyAll(awaiting, refs) {
+			continue // The caller's own upload will finish this one.
+		}
+
+		jobID := jobIDOf(ad)
+		reader, err := s.connectorUploadReader(ctx, r, ad, bytes.NewReader(nil))
+		if err != nil {
+			s.logger.Error(logging.DestinationHTTP,
+				"could not fetch a job's connector files at submit",
+				"job", jobID, "error", err)
+			warnings = append(warnings, fmt.Sprintf(
+				"Job %s stays held: its connector files could not be fetched (%v).", jobID, err))
+			continue
+		}
+		if err := schedd.SpoolJobFilesFromTar(ctx, []*classad.ClassAd{ad}, reader); err != nil {
+			s.logger.Error(logging.DestinationHTTP,
+				"could not spool a job's connector files at submit",
+				"job", jobID, "error", err)
+			warnings = append(warnings, fmt.Sprintf(
+				"Job %s stays held: its connector files could not be spooled (%v).", jobID, err))
+		}
+	}
+	return warnings
+}
+
+// jobIDOf is "cluster.proc", for a message about one job.
+func jobIDOf(ad *classad.ClassAd) string {
+	cluster, _ := ad.EvaluateAttrInt("ClusterId")
+	proc, _ := ad.EvaluateAttrInt("ProcId")
+	return fmt.Sprintf("%d.%d", cluster, proc)
 }
