@@ -157,10 +157,17 @@ export function ConnectorInputs({
           {connect.needsConsent
             ? `Your ${labelFor(connect.picker, list)} authorization is no longer valid.`
             : `This access point has no ${labelFor(connect.picker, list)} authorization from you yet.`}{' '}
-          <a className="underline" href={connect.url}>
+          <a
+            className="underline"
+            href={connect.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Authorize it
-          </a>
-          , then pick the file again.
+          </a>{' '}
+          — this opens a new tab, so the batch you are describing here is
+          not lost. Close that tab when it reports the account connected,
+          then pick the file again.
         </p>
       )}
 

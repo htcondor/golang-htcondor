@@ -315,8 +315,20 @@ func (h *Handler) finishConnect(w http.ResponseWriter, r *http.Request, session 
 
 	// A browser that followed a link gets taken somewhere; anything
 	// else gets the fact.
+	//
+	// The connectors page, not the dashboard: this tab exists only to
+	// authorize, and the dashboard says nothing about whether that
+	// worked. The connectors page lists the account as connected, which
+	// is the one thing the person wants to see before closing the tab.
+	//
+	// Deliberately a fixed path and not a return_to parameter. This
+	// endpoint is shaped like an open redirect, and
+	// TestRedirectTargetCannotComeFromTheRequest exists to keep it from
+	// becoming one; the page that starts the flow opens it in a new tab
+	// and keeps its own state, so nothing needs steering back.
 	if wantsHTML(r) {
-		http.Redirect(w, r, "/?connected="+url.QueryEscape(def.ID.String()), http.StatusFound)
+		http.Redirect(w, r, "/connectors?connected="+url.QueryEscape(def.ID.String()),
+			http.StatusFound)
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{
