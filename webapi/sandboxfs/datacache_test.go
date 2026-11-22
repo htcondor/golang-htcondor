@@ -366,3 +366,155 @@ func TestDataCacheReplacesAnEntry(t *testing.T) {
 		t.Errorf("read %q, want \"second\"", got)
 	}
 }
+
+// staleTree writes a cache directory as a previous run would have left
+// it, and returns one file's path.
+func staleTree(t *testing.T, dir string) string {
+	t.Helper()
+	for _, rel := range []string{
+		"alice/9.0/out.dat",
+		"alice/9.0/sub/deep.dat",
+		"bob/1.2/out.dat",
+		stagingDir + "/e-halfwritten",
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("MkdirAll %q: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+			t.Fatalf("WriteFile %q: %v", path, err)
+		}
+	}
+	return filepath.Join(dir, "alice/9.0/out.dat")
+}
+
+// TestCacheClearedAfterACrash is the restart contract: a crash can leave
+// a committed file or a staging file, and neither survives.
+func TestCacheClearedAfterACrash(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sandbox")
+	committed := staleTree(t, dir)
+
+	c, err := newDataCache(dir, 1<<20, t.Logf)
+	if err != nil {
+		t.Fatalf("newDataCache: %v", err)
+	}
+	c.waitSwept()
+
+	if _, err := os.Stat(committed); err == nil {
+		t.Error("a committed file from the crashed run survived")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	// Only the staging directory, freshly made.
+	if len(entries) != 1 || entries[0].Name() != stagingDir {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("cache directory holds %v, want only %q", names, stagingDir)
+	}
+	if c.Len() != 0 || c.Bytes() != 0 {
+		t.Errorf("cache believes it holds %d entries / %d bytes", c.Len(), c.Bytes())
+	}
+}
+
+// TestDisabledCacheStillReclaims is the bug this was written for: the
+// budget check used to sit above the cleanup, so turning the cache off
+// orphaned everything a previous run had cached, with nothing left
+// running that would ever reclaim it.
+func TestDisabledCacheStillReclaims(t *testing.T) {
+	for _, budget := range []int64{0, -1} {
+		dir := filepath.Join(t.TempDir(), "sandbox")
+		committed := staleTree(t, dir)
+
+		c, err := newDataCache(dir, budget, t.Logf)
+		if err != nil {
+			t.Fatalf("newDataCache(%d): %v", budget, err)
+		}
+		c.waitSwept()
+
+		if _, err := os.Stat(committed); err == nil {
+			t.Errorf("budget %d: a previous run's cache survived being disabled", budget)
+		}
+		// And nothing is recreated, since nothing will be served.
+		if _, err := os.Stat(dir); err == nil {
+			t.Errorf("budget %d: the cache directory was recreated although the cache is off", budget)
+		}
+	}
+}
+
+// TestCacheIsUsableBeforeTheDeleteFinishes: the directory is renamed
+// aside so startup does not wait on deleting a cache of millions of
+// files. Asserted by using the cache with the sweep still outstanding.
+func TestCacheIsUsableBeforeTheDeleteFinishes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sandbox")
+	staleTree(t, dir)
+
+	c, err := newDataCache(dir, 1<<20, t.Logf)
+	if err != nil {
+		t.Fatalf("newDataCache: %v", err)
+	}
+	// Deliberately before waitSwept.
+	k := key(1, 0, "fresh.dat")
+	put(t, c, k, []byte("fresh"))
+	f, ok := c.Open(k)
+	if !ok {
+		t.Fatal("the cache was not usable before the background delete finished")
+	}
+	f.Close()
+
+	c.waitSwept()
+	if _, err := os.Stat(filepath.Join(dir, "alice")); err == nil {
+		t.Error("a previous run's account directory survived the sweep")
+	}
+}
+
+// TestSweepClearsDirectoriesLeftByAnEarlierCrash: a crash DURING the
+// background delete leaves a renamed-aside directory, which no later run
+// would otherwise touch.
+func TestSweepClearsDirectoriesLeftByAnEarlierCrash(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "sandbox")
+
+	orphan := dir + asideSuffix + "fromacrash"
+	if err := os.MkdirAll(filepath.Join(orphan, "alice", "1.0"), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "alice", "1.0", "x"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// Something that merely looks similar must be left alone.
+	unrelated := filepath.Join(parent, "sandbox-other")
+	if err := os.MkdirAll(unrelated, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	c, err := newDataCache(dir, 1<<20, t.Logf)
+	if err != nil {
+		t.Fatalf("newDataCache: %v", err)
+	}
+	c.waitSwept()
+
+	if _, err := os.Stat(orphan); err == nil {
+		t.Error("a directory left by a crash during an earlier sweep survived")
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Errorf("an unrelated sibling directory was removed: %v", err)
+	}
+}
+
+// TestFirstRunNeedsNoDirectory: nothing to clear is not an error.
+func TestFirstRunNeedsNoDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "never", "existed")
+	c, err := newDataCache(dir, 1<<20, t.Logf)
+	if err != nil {
+		t.Fatalf("newDataCache: %v", err)
+	}
+	c.waitSwept()
+	put(t, c, key(1, 0, "a.dat"), []byte("a"))
+	if _, ok := c.Open(key(1, 0, "a.dat")); !ok {
+		t.Error("a cache created from nothing does not work")
+	}
+}

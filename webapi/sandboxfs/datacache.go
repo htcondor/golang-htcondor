@@ -23,8 +23,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // dataCache holds sandbox file bytes on disk.
@@ -53,6 +55,10 @@ type dataCache struct {
 	dir    string
 	budget int64
 	logf   func(string, ...any)
+
+	// swept closes when the background delete of a previous run's
+	// directory has finished. Only tests wait for it.
+	swept chan struct{}
 
 	mu    sync.Mutex
 	index map[entryKey]*list.Element
@@ -97,16 +103,105 @@ func newDataCache(dir string, budget int64, logf func(string, ...any)) (*dataCac
 		index:  map[entryKey]*list.Element{},
 		lru:    list.New(),
 	}
+
+	// Cleared whatever the budget is, and BEFORE the disabled-cache
+	// return: an operator who fills the cache and then turns it off would
+	// otherwise orphan the whole directory, with nothing left running
+	// that would ever reclaim it.
+	if err := c.reset(); err != nil {
+		if budget <= 0 {
+			// Nothing is about to be served from it, so this is a
+			// failure to reclaim space, not a reason to refuse to start.
+			if logf != nil {
+				logf("sandboxfs: could not clear the disabled cache directory %q: %v", dir, err)
+			}
+			return c, nil
+		}
+		return nil, err
+	}
 	if budget <= 0 {
 		return c, nil
-	}
-	if err := os.RemoveAll(dir); err != nil {
-		return nil, fmt.Errorf("sandboxfs: clearing the cache directory: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, stagingDir), 0o700); err != nil {
 		return nil, fmt.Errorf("sandboxfs: preparing the cache directory: %w", err)
 	}
 	return c, nil
+}
+
+// asideSuffix marks a directory renamed out of the way and awaiting
+// deletion.
+const asideSuffix = ".discarding-"
+
+// reset clears whatever a previous run left.
+//
+// Nothing here survives a restart by design: rebuilding the index would
+// mean stat-ing every file to learn sizes each job's layout already has,
+// in order to save re-fetching bytes that are cheap to re-fetch. A crash
+// can leave only a committed file or a staging file, and a rename is
+// atomic, so there is never a half-published entry to recognise.
+//
+// The directory is renamed aside and deleted behind the server rather
+// than removed in place, because removing a cache of millions of files
+// takes minutes and nothing can be served during them. The rename is
+// what makes the directory gone as far as serving is concerned; the
+// delete is bookkeeping.
+func (c *dataCache) reset() error {
+	if c.dir == "" {
+		return nil
+	}
+
+	aside := c.dir + asideSuffix + strconv.FormatInt(time.Now().UnixNano(), 36)
+	switch err := os.Rename(c.dir, aside); {
+	case err == nil, errors.Is(err, fs.ErrNotExist):
+		// Renamed, or there was nothing there.
+	default:
+		// Rename fails when the directory is a mount point, which is a
+		// perfectly ordinary way to deploy a cache. Fall back to the
+		// slow path rather than refusing to run there.
+		if c.logf != nil {
+			c.logf("sandboxfs: could not rename %q aside (%v); clearing it in place", c.dir, err)
+		}
+		if err := os.RemoveAll(c.dir); err != nil {
+			return fmt.Errorf("sandboxfs: clearing the cache directory: %w", err)
+		}
+	}
+
+	c.swept = make(chan struct{})
+	go func() {
+		defer close(c.swept)
+		c.sweepAside()
+	}()
+	return nil
+}
+
+// sweepAside deletes every directory an earlier reset renamed out of the
+// way, including ones a crash during a previous sweep left behind.
+func (c *dataCache) sweepAside() {
+	parent, base := filepath.Dir(c.dir), filepath.Base(c.dir)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) && c.logf != nil {
+			c.logf("sandboxfs: looking for discarded cache directories in %q: %v", parent, err)
+		}
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), base+asideSuffix) {
+			continue
+		}
+		path := filepath.Join(parent, e.Name())
+		if err := os.RemoveAll(path); err != nil && c.logf != nil {
+			c.logf("sandboxfs: discarding %q: %v", path, err)
+		}
+	}
+}
+
+// waitSwept blocks until the background delete has finished. For tests;
+// nothing in the serving path waits for it.
+func (c *dataCache) waitSwept() {
+	if c.swept != nil {
+		<-c.swept
+	}
 }
 
 // enabled reports whether anything is cached at all.
