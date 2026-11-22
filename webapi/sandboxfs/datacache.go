@@ -506,6 +506,19 @@ func (c *dataCache) Bytes() int64 {
 	return c.bytes
 }
 
+// has reports whether an entry is cached, without counting as a use: a
+// presence check is not a read, and treating it as one would keep an
+// entry alive for being asked about.
+func (c *dataCache) has(key entryKey) bool {
+	if !c.enabled() {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.index[key]
+	return ok
+}
+
 // Len is the number of cached entries.
 func (c *dataCache) Len() int {
 	if !c.enabled() {

@@ -33,13 +33,25 @@ var ErrReadBehind = errors.New("sandboxfs: read behind the streamed window")
 
 // DefaultWindow is how much of a stream a SequentialReaderAt retains.
 //
-// Sized from how the SFTP request server actually reads: reads go to
-// SftpServerWorkerCount (8) concurrent workers, each handling at most
-// maxTxPacket (32 KiB by default), so the offsets in flight at any
-// moment span a few hundred kilobytes. Megabytes of retention leaves
-// room for a client with a larger packet size or a straggling worker
-// without making the window a memory concern.
-const DefaultWindow = 4 << 20
+// Sized by measurement, not arithmetic. Reasoning from the server --
+// SftpServerWorkerCount (8) workers, maxTxPacket (32 KiB) each, so a
+// quarter-megabyte in flight -- gives an answer about ten times too
+// small, because what sets the span is the CLIENT's outstanding window,
+// not the server's worker count. One worker takes the highest offset in
+// flight and drags the stream head to it, discarding everything on the
+// way, and then a worker holding a lower offset finds it gone.
+//
+// Driving a real client against a real request server (see sftpjobs), an
+// 8 MiB download fails at a 2 MiB window and first succeeds at 4 MiB,
+// which matches both pkg/sftp's and OpenSSH's default of 64 outstanding
+// 32 KiB requests. So 4 MiB is the floor, not a comfortable setting: a
+// client run with more concurrency (ssh's -R, say) would walk straight
+// through it. 16 MiB is eight times that default window.
+//
+// This only costs memory where a read actually streams. With the byte
+// cache on, files are served from disk and seek freely; the window is
+// for archive downloads and for deployments running without a cache.
+const DefaultWindow = 16 << 20
 
 // SequentialReaderAt adapts a sequential stream to io.ReaderAt for
 // clients that read forwards.
@@ -100,7 +112,10 @@ func (s *SequentialReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	defer s.mu.Unlock()
 
 	if start := s.pos - int64(len(s.buf)); off < start {
-		return 0, fmt.Errorf("%w: offset %d is %d bytes behind", ErrReadBehind, off, start-off)
+		// The window is named so an operator reading the log can see
+		// the gap rather than only that there was one.
+		return 0, fmt.Errorf("%w: offset %d is %d bytes behind a %d byte window",
+			ErrReadBehind, off, start-off, s.window)
 	}
 
 	// Retain at least this call's own span, so a single read larger than

@@ -101,10 +101,15 @@ func (s *Store) Materialize(ctx context.Context, job Job) error {
 // staged is simply not cached, and reading it later streams instead.
 // Only a failure of the pass itself is returned.
 func (s *Store) materialize(ctx context.Context, job Job, l *Layout) error {
-	if !s.data.enabled() {
+	if !s.data.enabled() || s.cachedWhole(job, l) {
 		return nil
 	}
 	_, err, _ := s.fill.Do(job.cacheKey(), func() (any, error) {
+		// Re-checked inside the flight: a caller that waited behind
+		// another's fill has nothing left to do.
+		if s.cachedWhole(job, l) {
+			return nil, nil
+		}
 		pr, pw := io.Pipe()
 		go func() {
 			_ = pw.CloseWithError(s.fetcher.FetchSandbox(ctx, job, pw, s.gate(job)))
@@ -138,6 +143,29 @@ func (s *Store) materialize(ctx context.Context, job Job, l *Layout) error {
 		}
 	})
 	return err
+}
+
+// cachedWhole reports whether every entry worth caching already is.
+//
+// Without this, filling a job whose bytes are all present still costs a
+// full pass -- which is what listing a second directory inside one
+// sandbox would do, once per listing.
+//
+// An entry the cache would refuse anyway does not count as missing, or
+// a sandbox holding one file over the budget would re-fetch forever.
+func (s *Store) cachedWhole(job Job, l *Layout) bool {
+	if !s.data.enabled() {
+		return false
+	}
+	for _, e := range l.Entries {
+		if e.Dir || e.Size > s.data.budget {
+			continue
+		}
+		if !s.data.has(entryKey{job: job, name: e.Name}) {
+			return false
+		}
+	}
+	return true
 }
 
 // spill caches one entry's bytes, giving up quietly on any problem: the
