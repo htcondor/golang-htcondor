@@ -61,11 +61,33 @@ type procID struct {
 // w: Writer where the tar archive will be written
 // Returns: A channel that will receive the error result (nil on success)
 func (s *Schedd) ReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer) <-chan error {
+	return s.ReceiveJobSandboxWithOptions(ctx, constraint, w, SandboxOptions{})
+}
+
+// SandboxOptions tunes a sandbox download.
+type SandboxOptions struct {
+	// OnPreamble, if set, is called with the size a job's sender
+	// advertised, before any of that job's files arrive. Returning an
+	// error aborts the download.
+	//
+	// Called once PER JOB, because one constraint can match many and each
+	// sends its own preamble. A caller enforcing a size limit on a single
+	// job gets one call; one downloading a whole cluster gets the chance
+	// to refuse at each job in turn, having already received the ones
+	// before it.
+	//
+	// known is false when the sender advertised no size (a peer predating
+	// 8.1.0), and size is then 0 rather than meaning an empty sandbox.
+	OnPreamble func(size int64, known bool) error
+}
+
+// ReceiveJobSandboxWithOptions is ReceiveJobSandbox with per-call options.
+func (s *Schedd) ReceiveJobSandboxWithOptions(ctx context.Context, constraint string, w io.Writer, opts SandboxOptions) <-chan error {
 	errChan := make(chan error, 1)
 
 	go func() {
 		defer close(errChan)
-		err := s.doReceiveJobSandbox(ctx, constraint, w)
+		err := s.doReceiveJobSandbox(ctx, constraint, w, opts)
 		errChan <- err
 	}()
 
@@ -73,7 +95,7 @@ func (s *Schedd) ReceiveJobSandbox(ctx context.Context, constraint string, w io.
 }
 
 // doReceiveJobSandbox implements the actual transfer logic
-func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer) error {
+func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer, opts SandboxOptions) error {
 	// Get SecurityConfig from context, HTCondor config, or defaults
 	secConfig, err := GetSecurityConfigOrDefault(ctx, s.cfg, commands.TRANSFER_DATA_WITH_PERMS, "CLIENT", s.address)
 	if err != nil {
@@ -130,7 +152,7 @@ func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w i
 
 	// 8. For each job, receive job ad and files
 	for i := int32(0); i < jobCount; i++ {
-		if err := s.processJobSandbox(ctx, cedarStream, tarWriter, jobCount, i); err != nil {
+		if err := s.processJobSandbox(ctx, cedarStream, tarWriter, jobCount, i, opts); err != nil {
 			return err
 		}
 	}
@@ -150,7 +172,7 @@ func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w i
 }
 
 // processJobSandbox handles the reception of a single job's sandbox
-func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, jobCount int32, i int32) error {
+func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, jobCount int32, i int32, opts SandboxOptions) error {
 	// a. Receive job ClassAd
 	responseMsg := message.NewMessageFromStream(cedarStream)
 	jobAd, err := responseMsg.GetClassAd(ctx)
@@ -264,7 +286,7 @@ func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stre
 	// loop, writing to a tar-backed sink that applies the output-file filter and
 	// remaps. The tool download path performs no final TransferAck (ReceiveAck
 	// left false), preserving its long-standing behavior against the schedd.
-	if err := s.receiveJobFiles(ctx, cedarStream, tarWriter, dirPrefix, transferOutputFiles, outputRemaps); err != nil {
+	if err := s.receiveJobFiles(ctx, cedarStream, tarWriter, dirPrefix, transferOutputFiles, outputRemaps, opts); err != nil {
 		return fmt.Errorf("failed to receive files for job %d.%d: %w", clusterID, procID, err)
 	}
 
@@ -276,14 +298,16 @@ func (s *Schedd) processJobSandbox(ctx context.Context, cedarStream *stream.Stre
 // applying the output-file filter, path-traversal guard and output remaps in a
 // tar-backed Sink. ReceiveAck is left false to preserve the tool's behavior
 // against the schedd's TRANSFER_DATA uploader (which sends no final ack here).
-func (s *Schedd) receiveJobFiles(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, dirPrefix string, transferOutputFiles map[string]bool, outputRemaps map[string]OutputRemap) error {
+func (s *Schedd) receiveJobFiles(ctx context.Context, cedarStream *stream.Stream, tarWriter *tar.Writer, dirPrefix string, transferOutputFiles map[string]bool, outputRemaps map[string]OutputRemap, opts SandboxOptions) error {
 	sink := &tarSink{
 		tw:        tarWriter,
 		dirPrefix: dirPrefix,
 		filter:    transferOutputFiles,
 		remaps:    outputRemaps,
 	}
-	_, err := filetransfer.ReceiveStream(ctx, cedarStream, sink, ftOpts)
+	o := ftOpts
+	o.OnPreamble = opts.OnPreamble
+	_, err := filetransfer.ReceiveStream(ctx, cedarStream, sink, o)
 	return err
 }
 
