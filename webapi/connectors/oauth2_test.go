@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/bbockelm/golang-htcondor/webapi/connectors/mockgoogle"
+	"github.com/htcondor/golang-htcondor/webapi/connectors/mockgoogle"
 )
 
 const (

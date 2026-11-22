@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bbockelm/golang-htcondor/logging"
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
 
 // The /api/v1/connect endpoints: where a user grants this server access

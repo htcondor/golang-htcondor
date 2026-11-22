@@ -10,7 +10,7 @@ import (
 
 	"github.com/PelicanPlatform/classad/classad"
 
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
 
 // Merging a job's connector files into its upload.

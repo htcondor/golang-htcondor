@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/bbockelm/golang-htcondor/config"
-	"github.com/bbockelm/golang-htcondor/logging"
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/config"
+	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
 
 // Wiring the connectors package into the server: where a definition

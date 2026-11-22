@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/golang-htcondor/webapi/httpserver/appdb"
-	"github.com/bbockelm/golang-htcondor/webapi/httpserver/appdb/seal"
+	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb"
+	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb/seal"
 )
 
 func newTestStore(t *testing.T, sealed bool) (*Store, *sql.DB) {

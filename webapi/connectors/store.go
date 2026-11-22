@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bbockelm/golang-htcondor/webapi/httpserver/appdb/seal"
+	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb/seal"
 )
 
 // Storage for connectors this server declares and for what users have

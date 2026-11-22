@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/golang-htcondor/config"
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
-	"github.com/bbockelm/golang-htcondor/webapi/connectors/mockgoogle"
-	"github.com/bbockelm/golang-htcondor/webapi/httpserver/appdb"
+	"github.com/htcondor/golang-htcondor/config"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/webapi/connectors/mockgoogle"
+	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb"
 )
 
 // The /api/v1/connect endpoints, driven the way a browser drives them.

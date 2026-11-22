@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
 
 // The chooser endpoint and the adapter it serves.

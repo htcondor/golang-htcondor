@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
 
 // The Content-Security-Policy a connector's file chooser needs.

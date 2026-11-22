@@ -8,8 +8,8 @@ import (
 
 	"github.com/PelicanPlatform/classad/classad"
 
-	"github.com/bbockelm/golang-htcondor/logging"
-	"github.com/bbockelm/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/connectors"
 )
 
 // Putting a job's connector files into its spool.
