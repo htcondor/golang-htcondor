@@ -30,6 +30,7 @@ import (
 	"time"
 
 	htcondor "github.com/htcondor/golang-htcondor"
+	"github.com/htcondor/golang-htcondor/webapi/idempotency"
 	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
 	"github.com/htcondor/golang-htcondor/webapi/templates"
 )
@@ -473,4 +474,94 @@ func submitTextFrom(t *testing.T, archive []byte) string {
 	}
 	t.Fatal("the test archive has no job.sub in it")
 	return ""
+}
+
+// TestADroppedFileGoesThroughTheIdempotencyGuard.
+//
+// The file service submits through submitJob, the door every other
+// surface uses, rather than calling SubmitRemote itself -- and the
+// reason to pin that with a test rather than a comment is that it was
+// wrong: these two paths called SubmitRemote directly, which skipped
+// the site's submit policy, the credentials a job needs, the access
+// point's request defaults and this guard, all four invisibly.
+//
+// A key on the context is how every surface carries one (the REST
+// header and the MCP argument both land there), so a key seen twice
+// must be refused the second time, naming the job that used it.
+// ModeQueue, because the live queue is all this needs: no mirror, no
+// history.
+func TestADroppedFileGoesThroughTheIdempotencyGuard(t *testing.T) {
+	t.Parallel()
+	env := setupSFTPSubmit(t)
+
+	h := &Handler{logger: testLogger(t), schedd: env.schedd}
+	h.idempotency = idempotency.NewGuard(
+		idempotency.Config{Mode: idempotency.ModeQueue}, idemLookups{h: h})
+	sub := templateSubmitter{h: h}
+
+	tmpl := wrapperTemplateIntegration()
+	rows, err := sftpjobs.ParseCSV(strings.NewReader("sample\nHG001\n"), sftpjobs.CSVLimits{})
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(env.ctx, 3*time.Minute)
+	defer cancel()
+	keyed := idempotency.WithKey(ctx, "sftp-drop-"+fmt.Sprint(time.Now().UnixNano()))
+
+	cluster, err := sub.SubmitRows(keyed, env.account, tmpl, rows)
+	if err != nil {
+		env.harness.PrintScheddLog()
+		t.Fatalf("the first keyed submission failed: %v", err)
+	}
+	defer func() {
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = env.schedd.RemoveJobs(c, fmt.Sprintf("ClusterId == %d", cluster), "test cleanup")
+	}()
+
+	// The key is stamped on the job, which is what makes it findable --
+	// and what job.ad shows somebody debugging a refusal.
+	ads, _, err := env.schedd.QueryWithOptions(ctx, fmt.Sprintf("ClusterId == %d", cluster),
+		&htcondor.QueryOptions{Projection: []string{"ClusterId", idempotency.Attr}, Limit: -1})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(ads) == 0 {
+		t.Fatal("the submitted cluster is not in the queue")
+	}
+	if got, ok := ads[0].EvaluateAttrString(idempotency.Attr); !ok || got == "" {
+		t.Errorf("%s is not on the job, so nothing could match a retry", idempotency.Attr)
+	}
+
+	// The same key again, with a different CSV so nothing else could
+	// account for the refusal.
+	other, err := sftpjobs.ParseCSV(strings.NewReader("sample\nHG002\n"), sftpjobs.CSVLimits{})
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	_, err = sub.SubmitRows(keyed, env.account, tmpl, other)
+	if err == nil {
+		t.Fatal("a second submission with the same key was accepted")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(cluster)) {
+		t.Errorf("error = %v, want it to name job %d, which used the key", err, cluster)
+	}
+
+	// And a dropped archive goes through the same door.
+	archive := tarArchive(t, map[string]string{
+		"job.sub": "universe = vanilla\nexecutable = /bin/true\n" +
+			"transfer_executable = false\nrequest_memory = 64\nqueue\n",
+	})
+	_, err = sub.SubmitTarball(keyed, env.account, &sftpjobs.TarballSubmission{
+		Submit: submitTextFrom(t, archive),
+		Files:  []string{"job.sub"},
+		Source: archiveSource(archive),
+	})
+	if err == nil {
+		t.Fatal("a dropped archive reusing the key was accepted")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(cluster)) {
+		t.Errorf("error = %v, want it to name job %d", err, cluster)
+	}
 }

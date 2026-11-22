@@ -15,6 +15,7 @@
 package sftpjobs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -74,6 +75,11 @@ type Config struct {
 	// convenience.
 	Jobs JobLister
 
+	// JobAds reads one job's ad, which is what job.ad serves. Optional
+	// in the same way: without it a job directory holds its output and
+	// no ad.
+	JobAds JobAdReader
+
 	// Templates and Submitter enable the templates tree: dropping a CSV
 	// into a template's submit/ directory submits one job per row. With
 	// either unset the tree is absent, and the file service serves job
@@ -128,6 +134,9 @@ type FS struct {
 
 	mu     sync.Mutex
 	status map[statusKey]uploadStatus
+	// adCache holds rendered job ads for the channel's lifetime; see
+	// jobAdText.
+	adCache map[[2]int]string
 	// submitted maps a template and a content digest to the cluster it
 	// became, so the same bytes dropped twice are one submission.
 	submitted map[statusKey]int
@@ -176,6 +185,14 @@ func (f *FS) Fileread(req *sftp.Request) (io.ReaderAt, error) {
 	ctx := f.cfg.Context
 
 	switch r.kind {
+	case kindJobAd:
+		text, err := f.jobAdText(ctx, r)
+		if err != nil {
+			f.logf("sftpjobs: reading the ad for %s: %v", jobDirName(r.cluster, r.proc), err)
+			return nil, &os.PathError{Op: "open", Path: req.Filepath, Err: syscall.ENOENT}
+		}
+		return bytes.NewReader([]byte(text)), nil
+
 	case kindJobFile:
 		rc, err := f.cfg.Store.Open(ctx, f.job(r), r.name)
 		if err != nil {
@@ -196,7 +213,7 @@ func (f *FS) Fileread(req *sftp.Request) (io.ReaderAt, error) {
 		}
 		return sandboxfs.NewSequentialReaderAt(rc, f.cfg.Window), nil
 
-	case kindRoot, kindOutputs, kindJobDir:
+	case kindRoot, kindOutputs, kindJobDir, kindJobData:
 		return nil, &os.PathError{Op: "open", Path: req.Filepath, Err: syscall.EISDIR}
 	}
 	if r.kind.inDrop() {
@@ -251,9 +268,29 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 		return out, nil
 
 	case kindJobDir:
-		// Prepare rather than Layout: a client that lists a job
-		// directory is about to read it, and doing both in one pass is
-		// the difference between one drain of the sandbox and two.
+		// No sandbox fetch here, which is the point of the level: data/
+		// is a directory and needs no size, and the ad is one query. An
+		// `ls -lh` of a job therefore costs nothing like an `ls -lh` of
+		// its output, and the unavoidable pass over the sandbox happens
+		// when somebody asks for the files.
+		out := listerAt{dirInfo(dataDirName, time.Time{})}
+		if text, err := f.jobAdText(ctx, r); err != nil {
+			// Shown as absent rather than failing the listing: the
+			// output is still there to fetch, and the ad is a
+			// convenience like the /outputs listing itself.
+			f.logf("sftpjobs: no ad for %s: %v", jobDirName(r.cluster, r.proc), err)
+		} else {
+			out = append(out, fileInfo{
+				name: JobAdFileName, size: int64(len(text)), mode: 0o444,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+		return out, nil
+
+	case kindJobData:
+		// Prepare rather than Layout: a client that lists the output is
+		// about to read it, and doing both in one pass is the
+		// difference between one drain of the sandbox and two.
 		layout, err := f.cfg.Store.Prepare(ctx, f.job(r))
 		if err != nil {
 			return nil, err
@@ -271,7 +308,7 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 		}
 		return f.listLayout(layout, r.name), nil
 
-	case kindJobTar:
+	case kindJobAd, kindJobTar:
 		return nil, &os.PathError{Op: "readdir", Path: p, Err: syscall.ENOTDIR}
 	}
 	if r.kind.inDrop() {
@@ -343,6 +380,21 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 		}
 		return nil, &os.PathError{Op: "stat", Path: p, Err: syscall.ENOENT}
 
+	case kindJobData:
+		// A directory, so no size and nothing to fetch. Whether the job
+		// exists is answered by the listing or the read that follows,
+		// the same way kindJobDir answers it without a lister.
+		return listerAt{dirInfo(dataDirName, time.Time{})}, nil
+
+	case kindJobAd:
+		text, err := f.jobAdText(ctx, r)
+		if err != nil {
+			return nil, &os.PathError{Op: "stat", Path: p, Err: syscall.ENOENT}
+		}
+		return listerAt{fileInfo{
+			name: JobAdFileName, size: int64(len(text)), mode: 0o444,
+		}}, nil
+
 	case kindJobFile:
 		layout, err := f.cfg.Store.Layout(ctx, f.job(r))
 		if err != nil {
@@ -371,11 +423,7 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 		if err != nil {
 			return nil, err
 		}
-		return listerAt{fileInfo{
-			name: jobDirName(r.cluster, r.proc) + tarSuffix,
-			size: size,
-			mode: 0o444,
-		}}, nil
+		return listerAt{fileInfo{name: dataTarName, size: size, mode: 0o444}}, nil
 	}
 	if r.kind.inDrop() {
 		return f.statDrop(r, p)

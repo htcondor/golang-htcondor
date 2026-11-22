@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -219,12 +220,12 @@ func TestListRootAndOutputs(t *testing.T) {
 func TestOutputsDoesNotListArchives(t *testing.T) {
 	f := newTestFS(t, false, fixedJobs{{Cluster: 12, Proc: 0}})
 	for _, name := range listNames(t, f.FS, "/outputs") {
-		if len(name) > 4 && name[len(name)-4:] == tarSuffix {
+		if strings.HasSuffix(name, ".tar") {
 			t.Errorf("/outputs listed the archive %q", name)
 		}
 	}
 	// It is still reachable by name.
-	fi, err := statOne(t, f.FS, "/outputs/12.0.tar")
+	fi, err := statOne(t, f.FS, "/outputs/12.0/data.tar")
 	if err != nil {
 		t.Fatalf("stat of the archive: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestOutputsDoesNotListArchives(t *testing.T) {
 func TestListJobDirectory(t *testing.T) {
 	f := newTestFS(t, true, fixedJobs{{Cluster: 12, Proc: 0}})
 
-	got := listNames(t, f.FS, "/outputs/12.0")
+	got := listNames(t, f.FS, "/outputs/12.0/data")
 	want := []string{"result.csv", "stdout", "sub/"}
 	if len(got) != len(want) {
 		t.Fatalf("job directory = %v, want %v", got, want)
@@ -253,11 +254,11 @@ func TestListJobDirectory(t *testing.T) {
 
 	// Nested levels, including one the tar carried no directory header
 	// for.
-	if got := listNames(t, f.FS, "/outputs/12.0/sub"); len(got) != 2 ||
+	if got := listNames(t, f.FS, "/outputs/12.0/data/sub"); len(got) != 2 ||
 		got[0] != "deep/" || got[1] != "nested.dat" {
 		t.Errorf("sub = %v, want [deep/ nested.dat]", got)
 	}
-	if got := listNames(t, f.FS, "/outputs/12.0/sub/deep"); len(got) != 1 || got[0] != "x.bin" {
+	if got := listNames(t, f.FS, "/outputs/12.0/data/sub/deep"); len(got) != 1 || got[0] != "x.bin" {
 		t.Errorf("sub/deep = %v, want [x.bin]", got)
 	}
 	if n := f.sandbox.calls.Load(); n != 1 {
@@ -283,7 +284,7 @@ func TestStatEntries(t *testing.T) {
 	}
 
 	for name, body := range files {
-		fi, err := statOne(t, f.FS, "/outputs/12.0/"+name)
+		fi, err := statOne(t, f.FS, "/outputs/12.0/data/"+name)
 		if err != nil {
 			t.Fatalf("stat %s: %v", name, err)
 		}
@@ -294,10 +295,10 @@ func TestStatEntries(t *testing.T) {
 			t.Errorf("stat %s says directory", name)
 		}
 	}
-	if fi, err := statOne(t, f.FS, "/outputs/12.0/sub"); err != nil || !fi.IsDir() {
+	if fi, err := statOne(t, f.FS, "/outputs/12.0/data/sub"); err != nil || !fi.IsDir() {
 		t.Errorf("stat of a sandbox directory = %v, %v", fi, err)
 	}
-	if _, err := statOne(t, f.FS, "/outputs/12.0/nope"); err == nil {
+	if _, err := statOne(t, f.FS, "/outputs/12.0/data/nope"); err == nil {
 		t.Error("stat of a missing name succeeded")
 	}
 }
@@ -318,7 +319,7 @@ func TestWithoutAListerJobsAreStillReachable(t *testing.T) {
 	if got := listNames(t, f.FS, "/outputs"); len(got) != 0 {
 		t.Errorf("/outputs = %v, want empty without a lister", got)
 	}
-	if got := listNames(t, f.FS, "/outputs/12.0"); len(got) == 0 {
+	if got := listNames(t, f.FS, "/outputs/12.0/data"); len(got) == 0 {
 		t.Error("a job named directly was not readable without a lister")
 	}
 }
@@ -326,9 +327,9 @@ func TestWithoutAListerJobsAreStillReachable(t *testing.T) {
 func TestReadFileFromCacheIsSeekable(t *testing.T) {
 	f := newTestFS(t, true, fixedJobs{{Cluster: 12, Proc: 0}})
 	// Fill the cache first, as a listing would.
-	listNames(t, f.FS, "/outputs/12.0")
+	listNames(t, f.FS, "/outputs/12.0/data")
 
-	ra, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: "/outputs/12.0/stdout"})
+	ra, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: "/outputs/12.0/data/stdout"})
 	if err != nil {
 		t.Fatalf("Fileread: %v", err)
 	}
@@ -353,7 +354,7 @@ func TestReadFileFromCacheIsSeekable(t *testing.T) {
 
 func TestReadFileWithoutACacheStreams(t *testing.T) {
 	f := newTestFS(t, false, fixedJobs{{Cluster: 12, Proc: 0}})
-	ra, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: "/outputs/12.0/result.csv"})
+	ra, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: "/outputs/12.0/data/result.csv"})
 	if err != nil {
 		t.Fatalf("Fileread: %v", err)
 	}
@@ -380,11 +381,11 @@ func TestReadFileWithoutACacheStreams(t *testing.T) {
 func TestReadArchiveMatchesItsStattedSize(t *testing.T) {
 	f := newTestFS(t, false, fixedJobs{{Cluster: 12, Proc: 0}})
 
-	fi, err := statOne(t, f.FS, "/outputs/12.0.tar")
+	fi, err := statOne(t, f.FS, "/outputs/12.0/data.tar")
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	ra, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: "/outputs/12.0.tar"})
+	ra, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: "/outputs/12.0/data.tar"})
 	if err != nil {
 		t.Fatalf("Fileread: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestReadArchiveMatchesItsStattedSize(t *testing.T) {
 
 func TestDirectoriesAreNotReadable(t *testing.T) {
 	f := newTestFS(t, false, fixedJobs{{Cluster: 12, Proc: 0}})
-	for _, p := range []string{"/", "/outputs", "/outputs/12.0"} {
+	for _, p := range []string{"/", "/outputs", "/outputs/12.0", "/outputs/12.0/data"} {
 		_, err := f.Fileread(&sftp.Request{Method: "Get", Filepath: p})
 		if !errors.Is(err, syscall.EISDIR) {
 			t.Errorf("Fileread(%q) = %v, want EISDIR", p, err)
@@ -449,7 +450,7 @@ func TestDirectoriesAreNotReadable(t *testing.T) {
 func TestWritesAreRefusedWithAReason(t *testing.T) {
 	f := newTestFS(t, false, nil)
 	// A path that EXISTS and cannot be written: read-only.
-	_, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/outputs/12.0/stdout"})
+	_, err := f.Filewrite(&sftp.Request{Method: "Put", Filepath: "/outputs/12.0/data/stdout"})
 	if !errors.Is(err, syscall.EROFS) {
 		t.Errorf("Filewrite of an existing file = %v, want EROFS", err)
 	}
@@ -469,8 +470,8 @@ func TestWritesAreRefusedWithAReason(t *testing.T) {
 // path a client sends can reach another's job.
 func TestEveryPathCarriesTheAccount(t *testing.T) {
 	f := newTestFS(t, true, fixedJobs{{Cluster: 12, Proc: 0}})
-	listNames(t, f.FS, "/outputs/12.0")
-	if _, err := statOne(t, f.FS, "/outputs/12.0.tar"); err != nil {
+	listNames(t, f.FS, "/outputs/12.0/data")
+	if _, err := statOne(t, f.FS, "/outputs/12.0/data.tar"); err != nil {
 		t.Fatalf("stat archive: %v", err)
 	}
 	jobs := f.sandbox.jobs()
@@ -492,7 +493,7 @@ func TestBadPaths(t *testing.T) {
 		"/outputs/+5",
 		"/outputs/ 5",
 		"/outputs/5.",
-		"/outputs/12.0.tar/inside",
+		"/outputs/12.0/data.tar/inside",
 		"/../etc/passwd",
 		"/outputs/../../etc/passwd",
 	} {

@@ -80,8 +80,10 @@ it:
 
 ```sh
 sftp -P 2222 +jobs@ap.example.edu
-# sftp> get -r outputs/12345.0
-rsync -av -e 'ssh -p 2222' +jobs@ap.example.edu:outputs/12345.0/ ./results/
+# sftp> ls -lh outputs                       # your jobs; reads nothing
+# sftp> get outputs/12345.0/job.ad           # what the job was and did
+# sftp> get -r outputs/12345.0/data          # its output
+rsync -av -e 'ssh -p 2222' +jobs@ap.example.edu:outputs/12345.0/data/ ./results/
 ```
 
 The tree is small:
@@ -89,16 +91,39 @@ The tree is small:
 | Path | What it is |
 | --- | --- |
 | `outputs/` | one directory per completed job still in the queue (see below) |
-| `outputs/12345.0/` | that job's sandbox, as files |
-| `outputs/12345.0.tar` | the same sandbox as one archive |
+| `outputs/12345.0/` | that job: its ad and its output |
+| `outputs/12345.0/job.ad` | the job's ClassAd, as `condor_q -l` would print it |
+| `outputs/12345.0/data/` | its output sandbox, as files |
+| `outputs/12345.0/data.tar` | the same sandbox as one archive |
 | `templates/` | submit descriptions to drop a CSV on (see [Job templates](#job-templates)) |
 | `submit/` | drop a tarball holding a `job.sub` (see [Submitting a job of your own](#submitting-a-job-of-your-own)) |
 
-The archive is reachable by name but does **not** appear in a listing of
-`outputs/`, on purpose. Listing it would mean knowing its length, and that
-needs the job's file list — so an `ls outputs/` would have to fetch every
-job's sandbox to answer. Inside the job directory it would be worse: `get -r`
-would fetch every file twice, once loose and once inside the archive.
+**The output sits one level down, under `data/`, and that is what keeps a
+listing cheap.** A spooled sandbox can only be read whole, so putting a size
+next to a file's name costs a transfer of the entire sandbox. With the files
+under `data/`, a job directory holds a directory (no size) and an ad (one
+query) — so `ls -lh outputs` and `ls -lh outputs/12345.0` are both cheap, and
+the one unavoidable pass over the sandbox happens when you ask for the output,
+which is when you expect to wait.
+
+`data.tar` is reachable by name but does **not** appear in a listing, on
+purpose twice over. Listing it would mean knowing its length, which needs the
+job's file list — the very transfer the level above avoids. And listed beside
+`data/`, `get -r` on the job directory would fetch every file twice, once
+loose and once inside the archive.
+
+`job.ad` is the job's ClassAd, rendered the way HTCondor writes one: one
+`Attr = value` per line, sorted, which is the format the starter writes into
+the execute directory as `.job.ad` and the one `condor_q -l` prints. It
+answers what output alone cannot — how much memory the job used, what it
+exited with, when and where it ran, what it was told to run, and which
+template or dropped archive it came from. It exposes nothing the REST API
+does not: the same scoped mirror read serves whole ads to `/api/v1/jobs`. A
+job submitted with an `Idempotency-Key` carries it here as `IdempotencyKey`,
+which is how you find out which key a job already used.
+
+It needs the htcondordb mirror, like the `outputs/` listing itself. Without
+one a job directory holds its output and no ad.
 
 Asking for a shell here gets an explanation rather than a bare failure. The
 surface is read-only; writes are refused with a reason.

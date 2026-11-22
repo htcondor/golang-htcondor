@@ -167,9 +167,9 @@ func TestClientWalksTheTree(t *testing.T) {
 	}
 
 	want := sampleFiles()
-	entries, err := c.ReadDir("/outputs/12.0")
+	entries, err := c.ReadDir("/outputs/12.0/data")
 	if err != nil {
-		t.Fatalf("ReadDir(/outputs/12.0): %v", err)
+		t.Fatalf("ReadDir(/outputs/12.0/data): %v", err)
 	}
 	for _, fi := range entries {
 		if fi.IsDir() {
@@ -188,7 +188,7 @@ func TestClientReadsEveryFile(t *testing.T) {
 	c := dial(t, f)
 
 	for name, want := range sampleFiles() {
-		p := "/outputs/12.0/" + name
+		p := "/outputs/12.0/data/" + name
 		fi, err := c.Stat(p)
 		if err != nil {
 			t.Fatalf("Stat(%s): %v", p, err)
@@ -221,7 +221,7 @@ func TestClientDownloadsAStreamedArchive(t *testing.T) {
 	f := newTestFS(t, false, fixedJobs{{Cluster: 12, Proc: 0}}) // no cache: streams
 	c := dial(t, f)
 
-	const p = "/outputs/12.0.tar"
+	const p = "/outputs/12.0/data.tar"
 	fi, err := c.Stat(p)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
@@ -257,7 +257,7 @@ func TestClientDownloadsALargeStreamedFile(t *testing.T) {
 	f := newTestFSWith(t, sb, false, fixedJobs{{Cluster: 5, Proc: 0}})
 	c := dial(t, f)
 
-	rf, err := c.Open("/outputs/5.0/big.bin")
+	rf, err := c.Open("/outputs/5.0/data/big.bin")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestStreamingWindowHasHeadroom(t *testing.T) {
 	f.cfg.Window = sandboxfs.DefaultWindow / 4
 	c := dial(t, f)
 
-	rf, err := c.Open("/outputs/5.0/big.bin")
+	rf, err := c.Open("/outputs/5.0/data/big.bin")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -303,17 +303,17 @@ func TestClientCannotWrite(t *testing.T) {
 	f := newTestFS(t, true, fixedJobs{{Cluster: 12, Proc: 0}})
 	c := dial(t, f)
 
-	if _, err := c.Create("/outputs/12.0/new.txt"); err == nil {
+	if _, err := c.Create("/outputs/12.0/data/new.txt"); err == nil {
 		t.Error("Create succeeded on a read-only surface")
 	}
-	if err := c.Mkdir("/outputs/12.0/newdir"); err == nil {
+	if err := c.Mkdir("/outputs/12.0/data/newdir"); err == nil {
 		t.Error("Mkdir succeeded")
 	}
-	if err := c.Remove("/outputs/12.0/stdout"); err == nil {
+	if err := c.Remove("/outputs/12.0/data/stdout"); err == nil {
 		t.Error("Remove succeeded")
 	}
 	// And the surface still works afterwards.
-	if _, err := c.ReadDir("/outputs/12.0"); err != nil {
+	if _, err := c.ReadDir("/outputs/12.0/data"); err != nil {
 		t.Errorf("ReadDir after refused writes: %v", err)
 	}
 }
@@ -321,7 +321,7 @@ func TestClientCannotWrite(t *testing.T) {
 func TestClientStatOfAMissingPath(t *testing.T) {
 	f := newTestFS(t, true, fixedJobs{{Cluster: 12, Proc: 0}})
 	c := dial(t, f)
-	for _, p := range []string{"/nope", "/outputs/999.0", "/outputs/12.0/nope"} {
+	for _, p := range []string{"/nope", "/outputs/999.0", "/outputs/12.0/data/nope"} {
 		if _, err := c.Stat(p); err == nil {
 			t.Errorf("Stat(%q) succeeded", p)
 		}

@@ -246,7 +246,9 @@ func readmeText(t templates.Template) string {
 	}
 
 	fmt.Fprintf(&b, "What happened to an upload is in status/ under the same name.\n")
-	fmt.Fprintf(&b, "Output comes back under /%s once the jobs finish.\n", outputsDir)
+	fmt.Fprintf(&b, "Output comes back under /%s/<cluster>.<proc>/%s/ once the jobs\n",
+		outputsDir, dataDirName)
+	fmt.Fprintf(&b, "finish, beside a %s saying what each one did.\n", JobAdFileName)
 	return b.String()
 }
 

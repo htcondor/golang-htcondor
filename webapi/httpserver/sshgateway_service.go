@@ -126,6 +126,7 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 		Account: req.Account,
 		Context: ctx,
 		Jobs:    mirrorJobLister{h: h, account: req.Account},
+		JobAds:  mirrorJobLister{h: h, account: req.Account},
 		// The templates tree needs the library; /submit needs only the
 		// submitter, because a dropped archive describes itself. So an
 		// access point with no template library still offers /submit,

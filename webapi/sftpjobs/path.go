@@ -20,22 +20,31 @@
 // deliberately small:
 //
 //	/outputs/                      one directory per readable job
-//	/outputs/<cluster>.<proc>/     that job's sandbox
-//	/outputs/<cluster>.<proc>.tar  the same sandbox as one archive
+//	/outputs/<cluster>.<proc>/     that job: its ad and its output
+//	/outputs/<cluster>.<proc>/job.ad    the job's ClassAd
+//	/outputs/<cluster>.<proc>/data/     its output sandbox, as files
+//	/outputs/<cluster>.<proc>/data.tar  the same sandbox as one archive
 //	/templates/<id>/               a submit description to drop a CSV on
 //	/templates/<id>/submit/        drop it here; one job per row
 //	/templates/<id>/status/        what happened to each upload
 //	/submit/                       drop a tarball holding a job.sub
 //	/submit/status/                what happened to each one
 //
-// The archive is addressable but NOT listed, which is the one surprising
-// thing here and is on purpose twice over. Listing it would mean knowing
-// its length, and a tar's length needs the job's layout -- so an `ls` of
-// /outputs/ would drain every job's sandbox to answer. And if it were
-// listed inside the job directory, `get -r` on that directory would
-// fetch every file twice, once loose and once inside the archive. A path
-// a client names explicitly is allowed to be expensive; a listing is
-// not.
+// The output sandbox sits one level down, under data/, and that is what
+// keeps a listing cheap. A spooled sandbox can only be read whole, so
+// putting a size next to a file's name costs a transfer of the entire
+// sandbox -- which is what `ls -lh` of a job directory used to do. With
+// the files under data/, a job directory holds a directory (no size)
+// and an ad (one query), so `ls -lh /outputs` and `ls -lh
+// /outputs/<job>` are both cheap and the unavoidable pass happens when
+// somebody actually asks for the output.
+//
+// data.tar is addressable but NOT listed, on purpose twice over.
+// Listing it would mean knowing its length, which needs the job's
+// layout -- the very transfer the level above avoids. And listed beside
+// data/, `get -r` on the job directory would fetch every file twice,
+// once loose and once inside the archive. A path a client names
+// explicitly is allowed to be expensive; a listing is not.
 package sftpjobs
 
 import (
@@ -66,17 +75,28 @@ const (
 	statusDirName = "status"
 )
 
-// tarSuffix marks the archive form of a job.
-const tarSuffix = ".tar"
+// Names inside a job directory.
+//
+// JobAdFileName is HTCondor's own name for a job's ad written as a
+// file: the starter writes .job.ad into the execute directory, and
+// `condor_q -l` prints the same thing. Keeping the name means somebody
+// who has seen one knows what this is.
+const (
+	JobAdFileName = "job.ad"
+	dataDirName   = "data"
+	dataTarName   = dataDirName + ".tar"
+)
 
 type kind int
 
 const (
 	kindRoot kind = iota
 	kindOutputs
-	kindJobDir
-	kindJobFile
-	kindJobTar
+	kindJobDir  // /outputs/<job>
+	kindJobAd   // /outputs/<job>/job.ad
+	kindJobData // /outputs/<job>/data
+	kindJobFile // something inside data/
+	kindJobTar  // /outputs/<job>/data.tar
 
 	// The templates tree. Bounded by kindTemplates and kindDrop rather
 	// than compared against directly; see inTemplates.
@@ -143,30 +163,42 @@ func parsePath(p string) (ref, error) {
 		return ref{kind: kindOutputs}, nil
 	}
 
-	// parts[1] names a job, either as a directory or as an archive.
-	id, isTar := strings.CutSuffix(parts[1], tarSuffix)
-	cluster, proc, ok := parseJobID(id)
+	missing := func() (ref, error) { return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist) }
+
+	cluster, proc, ok := parseJobID(parts[1])
 	if !ok {
-		return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
+		return missing()
 	}
 	r := ref{cluster: cluster, proc: proc}
-
-	if isTar {
-		if len(parts) != 2 {
-			// Nothing lives under the archive.
-			return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
-		}
-		r.kind = kindJobTar
-		return r, nil
-	}
 	if len(parts) == 2 {
 		r.kind = kindJobDir
 		return r, nil
 	}
 
-	r.kind = kindJobFile
-	r.name = path.Join(parts[2:]...)
-	return r, nil
+	switch parts[2] {
+	case JobAdFileName:
+		if len(parts) != 3 {
+			return missing()
+		}
+		r.kind = kindJobAd
+		return r, nil
+	case dataTarName:
+		if len(parts) != 3 {
+			// Nothing lives under the archive.
+			return missing()
+		}
+		r.kind = kindJobTar
+		return r, nil
+	case dataDirName:
+		if len(parts) == 3 {
+			r.kind = kindJobData
+			return r, nil
+		}
+		r.kind = kindJobFile
+		r.name = path.Join(parts[3:]...)
+		return r, nil
+	}
+	return missing()
 }
 
 // parseTemplatePath reads what follows /templates.

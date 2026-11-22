@@ -74,12 +74,18 @@ func (s templateSubmitter) SubmitRows(ctx context.Context, account string,
 	if err := sftpjobs.CheckSpoolVolume(t, len(sub.Rows), s.h.spoolLimits().MaxVolume); err != nil {
 		return 0, err
 	}
-	schedd := s.h.getSchedd()
+	schedd := s.h.scheddFor(ctx)
 	if schedd == nil {
 		return 0, errors.New("no schedd is configured")
 	}
 
-	cluster, procs, err := schedd.SubmitRemote(ctx, text)
+	// submitJob, not SubmitRemote: it is the door every submitting
+	// surface goes through, and going around it is going around the
+	// site's submit policy, the credentials a job needs to run, the
+	// access point's request defaults and the idempotency key. Each of
+	// those is invisible when skipped -- the jobs submit and then
+	// behave differently from the same work submitted on the web page.
+	cluster, procs, err := s.h.submitJob(ctx, text)
 	if err != nil {
 		return 0, err
 	}
@@ -117,7 +123,7 @@ func (s templateSubmitter) SubmitRows(ctx context.Context, account string,
 // error about the cleanup would bury the first.
 func (s templateSubmitter) withdrawCluster(ctx context.Context, cluster int, why string) {
 	constraint := fmt.Sprintf("ClusterId == %d", cluster)
-	if _, err := s.h.getSchedd().RemoveJobs(ctx, constraint, why); err != nil {
+	if _, err := s.h.scheddFor(ctx).RemoveJobs(ctx, constraint, why); err != nil {
 		s.h.logger.Warn(logging.DestinationHTTP, "withdrawing a template submission failed",
 			"cluster", cluster, "reason", why, "error", err)
 	}
@@ -146,12 +152,16 @@ func (s templateSubmitter) SubmitTarball(ctx context.Context, account string,
 	if sub == nil || sub.Source == nil {
 		return 0, errors.New("there is no archive to submit")
 	}
-	schedd := s.h.getSchedd()
+	schedd := s.h.scheddFor(ctx)
 	if schedd == nil {
 		return 0, errors.New("no schedd is configured")
 	}
 
-	cluster, procs, err := schedd.SubmitRemote(ctx, sub.Submit)
+	// submitJob for the same reasons as SubmitRows, and one more that
+	// is specific to this path: the submit description is the
+	// submitter's own, so it is the one most likely to disagree with
+	// the site's policy.
+	cluster, procs, err := s.h.submitJob(ctx, sub.Submit)
 	if err != nil {
 		return 0, err
 	}
