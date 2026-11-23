@@ -171,6 +171,11 @@ type connectorFixture struct {
 	client *http.Client
 	google *mockgoogle.Server
 	schedd *htcondor.Schedd
+	// server is the server under test, for the paths that have no HTTP
+	// surface of their own -- the output sweep is driven by a ticker,
+	// and a test wants to run one pass at a moment it chooses rather
+	// than wait for one.
+	server *Server
 }
 
 // setupConnectorFixture brings all of that up and registers its
@@ -263,6 +268,12 @@ func setupConnectorFixture(t *testing.T) *connectorFixture {
 	}
 	server.SetConnectorConfig(cfg)
 	server.connectorDriveBaseURL = g.DriveBaseURL()
+	server.connectorSheetsBaseURL = g.SheetsBaseURL()
+	// Long enough that the ticker never fires during a test: the tests
+	// run one pass themselves, at a moment they choose. Non-zero so the
+	// submit path does not warn that nothing will be written, which is
+	// also what a real deployment with this feature on looks like.
+	server.connectorOutputSweepInterval = time.Hour
 
 	// A browser session: a connector credential is reachable only from
 	// one, by design, so this is also the only caller that can submit a
@@ -299,13 +310,21 @@ func setupConnectorFixture(t *testing.T) *connectorFixture {
 		client: client,
 		google: g,
 		schedd: htcondor.NewSchedd(location.Name, location.Address),
+		server: server,
 	}
 }
 
 // submit posts a submit file and returns the cluster it created.
 func (f *connectorFixture) submit(t *testing.T, submitFile string) int {
 	t.Helper()
-	body, err := json.Marshal(JobSubmitRequest{SubmitFile: submitFile})
+	return f.submitWith(t, JobSubmitRequest{SubmitFile: submitFile})
+}
+
+// submitWith is submit for a request that carries more than a submit
+// file.
+func (f *connectorFixture) submitWith(t *testing.T, sr JobSubmitRequest) int {
+	t.Helper()
+	body, err := json.Marshal(sr)
 	if err != nil {
 		t.Fatal(err)
 	}

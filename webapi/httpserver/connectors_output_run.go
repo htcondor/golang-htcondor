@@ -211,20 +211,6 @@ func (h *Handler) outputResultFile(
 
 // outputConnectorToken mints the Google credential one binding writes
 // with.
-//
-// Group membership is re-checked here, at use, for the reason
-// Definition.Permits gives: a list snapshotted at submit time catches a
-// policy change and misses a user being removed from the group, which
-// is the half that matters for taking access away. The sweep has no
-// session, so membership comes from the system (liveGroupsFor) instead
-// of from a token.
-//
-// When the connector restricts by group and nothing can report
-// membership, the binding is refused rather than swept. An operator who
-// confined a connector to a group meant it, and a background worker
-// that ignores the confinement whenever it cannot check is the failure
-// they would most want not to have. A connector open to everyone ("*")
-// asks no question, so most deployments never reach the refusal.
 func (h *Handler) outputConnectorToken(
 	ctx context.Context,
 	b connectors.OutputBinding,
@@ -236,19 +222,75 @@ func (h *Handler) outputConnectorToken(
 	if !def.Enabled {
 		return "", fmt.Errorf("connector %s is disabled", b.Connector)
 	}
-	if !slices.Contains(def.Groups, "*") {
-		groups, answered := h.liveGroupsFor(ctx, b.Subject)
-		if !answered {
-			return "", fmt.Errorf("connector %s is restricted to a group and this server "+
-				"cannot check %s's membership without them signed in, so it will not "+
-				"write on their behalf", b.Connector, b.Subject)
-		}
-		if !def.Permits(groups) {
-			return "", fmt.Errorf("%s is no longer in a group that may use connector %s",
-				b.Subject, b.Connector)
-		}
+
+	groups, answered := []string(nil), false
+	if connectorGroupCheckNeeded(def) {
+		groups, answered = h.liveGroupsFor(ctx, b.Subject)
 	}
+	allowed, note := connectorStillPermitted(def, groups, answered)
+	if !allowed {
+		return "", fmt.Errorf("%s", note)
+	}
+	if note != "" {
+		w := &outputSweeper{logger: h.logger}
+		w.warn("could not re-check group membership before writing on a user's behalf",
+			"connector", def.ID.String(), "subject", b.Subject, "reason", note)
+	}
+
 	return h.connectorAccessToken(ctx, def, b.Subject)
+}
+
+// connectorGroupCheckNeeded reports whether this connector restricts by
+// group at all. A connector open to everyone ("*") asks no question.
+func connectorGroupCheckNeeded(def connectors.Definition) bool {
+	return !slices.Contains(def.Groups, "*")
+}
+
+// connectorStillPermitted decides whether a binding may still spend its
+// credential, given what could be learned about its owner's groups.
+//
+// Membership is re-checked at use rather than snapshotted, for the
+// reason Definition.Permits gives: a snapshot catches an operator
+// changing policy and misses a user being removed from a group, which
+// is the half that matters for taking access away. The sweep has no
+// session, so membership comes from the system (liveGroupsFor).
+//
+// The case that needed deciding is the one where NOTHING can report
+// membership. This refused at first, on the argument that an operator
+// who confined a connector to a group meant it. An integration test
+// showed what that costs: liveGroupsFor answers only when this machine
+// sources groups AND the identity is in UID_DOMAIN, so on an access
+// point whose groups come from an identity provider -- which is most of
+// them -- the sweep would never run at all, for anybody, and would say
+// so once per binding per pass for ten days.
+//
+// So: a check that can be made is made, and a user who has genuinely
+// lost membership is refused. A check that CANNOT be made proceeds and
+// says so. "Could not ask" is not evidence of removal, and what is
+// being allowed is narrow -- one tab, for one cluster, nominated by a
+// session that did pass the check, for as long as that cluster stays in
+// the queue. A deployment that sources groups locally still gets
+// revocation; one that does not gets the feature.
+//
+// Returns allowed, and a note: the refusal when not allowed, and what
+// could not be checked when allowed anyway.
+func connectorStillPermitted(
+	def connectors.Definition,
+	groups []string,
+	answered bool,
+) (allowed bool, note string) {
+	if !connectorGroupCheckNeeded(def) {
+		return true, ""
+	}
+	if !answered {
+		return true, fmt.Sprintf("connector %s is restricted to a group, and this server "+
+			"cannot read the owner's membership without them signed in", def.ID)
+	}
+	if !def.Permits(groups) {
+		return false, fmt.Sprintf("the owner is no longer in a group that may use connector %s",
+			def.ID)
+	}
+	return true, ""
 }
 
 // startConnectorOutputSweeper runs the sweep on a timer.
