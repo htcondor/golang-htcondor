@@ -3095,6 +3095,33 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 	demoWebhooks := loadWebhookSettings(cfg, logger)
 	demoAppOnlyGroup, _ := cfg.Get("HTTP_API_WEBUI_APP_ONLY_GROUP")
 
+	// The SSH gateway, when this demo is asked for one.
+	//
+	// Demo mode builds its own server configuration instead of going
+	// through loadMCPConfig, so the gateway's settings -- which normal
+	// mode reads there -- were not read here at all. A demo server
+	// therefore had no gateway, and with no gateway there is no
+	// certificate authority: /api/v1/ssh/ca answers 503, the SSH panel
+	// on /info hides itself, and the browser suite can only drive that
+	// panel against a stubbed CA. The +jobs file service was
+	// unreachable for the same reason.
+	//
+	// Still off unless HTTP_API_SSH_GATEWAY_ADDRESS is set, so a plain
+	// `-demo` binds no second port and mints no CA.
+	demoGatewayAddr, _ := cfg.Get("HTTP_API_SSH_GATEWAY_ADDRESS")
+	demoGatewayHost, _ := cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
+	demoSSHHostKey, _ := cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
+	demoSSHCAKey, _ := cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
+	demoSpoolBufferDir, _ := cfg.Get("HTTP_API_SPOOL_BUFFER_DIR")
+	// And the KEK, without which there is no key store to generate the
+	// gateway's host key and CA into: the gateway refuses to start
+	// rather than mint keys it cannot keep. Read here too so that
+	// turning the gateway on in a demo is one setting plus the KEK the
+	// error message already asks for, and not a source change. Demo
+	// mode without it behaves as before, secrets in the clear in a
+	// throwaway database.
+	demoKEKFile := loadKEKFilePath(cfg, logger)
+
 	// Start condor_master
 	log.Println("Starting condor_master...")
 	condorMaster, err := startCondorMaster(context.Background(), configFile)
@@ -3274,6 +3301,12 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 		InteractiveExtraSubmit: loadInteractiveExtraSubmit(cfg),
 		TemplateGlobalPath:     loadTemplateGlobalPath(cfg),
 		SpoolMaxUploadBytes:    loadSpoolMaxUploadBytes(cfg, logger),
+		SSHGatewayAddress:      demoGatewayAddr,
+		SSHGatewayPublicHost:   demoGatewayHost,
+		SSHHostKeyFile:         demoSSHHostKey,
+		SSHCAKeyFile:           demoSSHCAKey,
+		SpoolBufferDir:         demoSpoolBufferDir,
+		KEKFilePath:            demoKEKFile,
 		DagmanEnvironment:      demoDagmanEnvironment(configFile),
 		HTCondorConfig:         cfg,
 		// In demo mode, the auto-created `admin` IDP user is a real

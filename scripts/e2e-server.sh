@@ -120,6 +120,35 @@ export _CONDOR_HTTP_API_SITE_APP_E2EBARE_GROUPS="*"
 export _CONDOR_HTTP_API_SITE_APPS_RELOAD_INTERVAL="2s"
 echo "site apps directory: $SITE_APPS_DIR"
 
+# The SSH gateway, so the browser tests can drive the certificate panel
+# on /info against a REAL certificate authority.
+#
+# With no gateway there is no CA: /api/v1/ssh/ca answers 503 and the
+# panel correctly hides itself. That is a real branch and
+# sshcert.full.spec.ts covers it with a stub -- but it left the half
+# that actually signs something untested, because demo mode could not
+# mint a CA to sign with.
+#
+# The gateway port is deliberately NOT published out of the container.
+# Nothing in the browser suite connects to it; what the tests need is
+# the CA and the signing endpoint, and both are on the HTTP port. The
+# listener still has to exist, because the CA is only created when the
+# gateway starts.
+#
+# A KEK is required rather than optional here: the gateway refuses to
+# start without a key store to generate its host key and CA into, which
+# is the right refusal -- keys it cannot keep would invalidate every
+# certificate already issued on the next restart. Generated per run into
+# the private run directory, since it protects nothing that outlives the
+# container. od rather than openssl, which the image does not promise.
+KEK_FILE="$RUNDIR/kek"
+od -An -vtx1 -N32 /dev/urandom | tr -d ' \n' > "$KEK_FILE"
+echo >> "$KEK_FILE"
+chmod 0600 "$KEK_FILE"
+export _CONDOR_HTTP_API_KEK_FILE="$KEK_FILE"
+export _CONDOR_HTTP_API_SSH_GATEWAY_ADDRESS="127.0.0.1:2222"
+export _CONDOR_HTTP_API_SSH_GATEWAY_HOST="localhost"
+
 echo "starting htcondor-api -demo on :$PORT"
 "$API_BIN" -demo -listen ":$PORT" &
 API_PID=$!
