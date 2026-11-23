@@ -120,6 +120,11 @@ type Server struct {
 	files map[string][]byte
 	// listable is what files.list returns, by file id -> name.
 	listable map[string]string
+	// downloads counts content reads (alt=media) per file id. A test
+	// asserting how MANY times a file was fetched is asserting something
+	// no other surface shows: a correct sandbox says nothing about how
+	// much was fetched to build it.
+	downloads map[string]int
 
 	// nextStatuses is a queue of HTTP statuses to return instead of
 	// doing the work, for exercising retry and failure paths.
@@ -145,6 +150,7 @@ func New(t *testing.T, cfg Config) *Server {
 		access:       map[string]*token{},
 		files:        map[string][]byte{},
 		listable:     map[string]string{},
+		downloads:    map[string]int{},
 		extraHeaders: map[string]string{},
 	}
 	mux := http.NewServeMux()
@@ -179,6 +185,19 @@ func (s *Server) PickFile(id, name string, content []byte) {
 	defer s.mu.Unlock()
 	s.files[id] = content
 	s.listable[id] = name
+}
+
+// Downloads is how many times a file's CONTENT has been read
+// (alt=media), as opposed to its metadata.
+//
+// For asserting the cost of a submission rather than its result. A
+// batch that spools the right files to the right jobs can still be
+// fetching every file for every job, and nothing in the jobs' sandboxes
+// gives that away.
+func (s *Server) Downloads(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.downloads[id]
 }
 
 // Revoke invalidates a refresh token, as the user withdrawing the
@@ -523,6 +542,9 @@ func (s *Server) handleFileGet(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.mu.Lock()
+	s.downloads[id]++
+	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)

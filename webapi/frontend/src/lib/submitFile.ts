@@ -118,9 +118,22 @@ export function buildCountQueue(n: number): string {
 }
 
 /**
- * Build a `queue var1, var2, ... in (...)` statement from a 2D table.
- * Each row becomes one item; cells are joined by a single space, so
- * cells must not contain whitespace (HTCondor splits items on whitespace).
+ * Build a `queue var1, var2, ... from ((...))` statement from a 2D
+ * table. Each row becomes one line; cells are joined by a single space,
+ * so cells must not contain whitespace (HTCondor splits a row on it).
+ *
+ * `from`, never `in`, and that is the whole correctness of this
+ * function. HTCondor's `in` form takes ONE variable name and splits its
+ * list on whitespace as well as commas, so `queue a, b in (x1 y1, x2
+ * y2)` queues FOUR jobs, each with one value and the second variable
+ * unset -- verified against condor_submit 26.2.0 and against this
+ * repository's own parser, which agree. Only the `from` form reads a
+ * line as a row of columns.
+ *
+ * The doubled parens match webapi/sftpjobs/buildsubmit.go and
+ * buildSubmitFile in app/submit/page.tsx. They make the list's
+ * terminator `))` rather than `)`, which is what lets the row
+ * validation refuse a value that would close the list early.
  *
  * Throws if columns are empty, headers aren't valid identifiers, or any
  * cell contains whitespace.
@@ -161,12 +174,10 @@ export function buildTableQueue(
     }
     items.push(cells.join(' '));
   }
-  // Multi-line form is more readable when there are many rows.
-  if (items.length <= 3) {
-    return `queue ${columns.join(', ')} in (${items.join(', ')})`;
-  }
-  const indented = items.map((it) => '    ' + it).join('\n');
-  return `queue ${columns.join(', ')} in (\n${indented}\n)`;
+  // One row per line, always: the single-line form of `from` reads the
+  // whole list as one row, so there is no short version of this to take.
+  const indented = items.map((it) => '  ' + it).join('\n');
+  return `queue ${columns.join(', ')} from ((\n${indented}\n))`;
 }
 
 // --- Environment encoding -------------------------------------------------
