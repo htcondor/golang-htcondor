@@ -298,3 +298,88 @@ func TestOverridesPrecedeEveryQueue(t *testing.T) {
 		t.Errorf("accounting_group in force for the second queue = %q, want the override\n%s", v, got)
 	}
 }
+
+// A row inside a bracketed item list is not a queue statement, however
+// much it looks like one.
+//
+// InsertBeforeQueue splices ahead of every line whose first token is
+// `queue`, and it used to read the item rows as candidates. A table
+// whose first column holds the word "queue" -- a sample name, a
+// partition name, a parameter -- therefore had the site-policy and
+// idempotency block spliced into the MIDDLE of its own item list, where
+// it is not a submit command at all: it is read as another row, or ends
+// the list, depending on what the block contains.
+//
+// Reachable from the submit page's table, from a dropped CSV, and now
+// from a spreadsheet cell, which is the one nobody edits with HTCondor
+// in mind.
+func TestInsertBeforeQueueSkipsItemRows(t *testing.T) {
+	const block = "+Spliced = true\n"
+	for _, tc := range []struct {
+		name string
+		file string
+		rows []string
+	}{
+		{
+			"a single-column row whose value is the word queue",
+			"executable = /bin/true\nqueue name from (\nalice\nqueue\nbob\n)\n",
+			[]string{"alice", "queue", "bob"},
+		},
+		{
+			"a row whose first cell is the word queue",
+			"executable = /bin/true\nqueue name, seed from (\nalice 1\nqueue 2\nbob 3\n)\n",
+			[]string{"alice 1", "queue 2", "bob 3"},
+		},
+		{
+			"an indented row",
+			"executable = /bin/true\nqueue name from (\n  alice\n  queue\n)\n",
+			[]string{"alice", "queue"},
+		},
+		{
+			"an in-list spanning lines",
+			"executable = /bin/true\nqueue name in (\nalice\nqueue\n)\n",
+			[]string{"alice", "queue"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := InsertBeforeQueue(tc.file, block)
+			// Exactly one splice, and it is ahead of the statement
+			// rather than inside the list.
+			if n := strings.Count(got, block); n != 1 {
+				t.Errorf("the block was spliced %d times, want 1:\n%s", n, got)
+			}
+			if !strings.Contains(got, block+"queue name") {
+				t.Errorf("the block is not ahead of the queue statement:\n%s", got)
+			}
+			// The rows themselves are untouched: each is still a line
+			// of its own holding nothing but the row.
+			for _, row := range tc.rows {
+				var standalone bool
+				for _, line := range strings.Split(got, "\n") {
+					if strings.TrimSpace(line) == row {
+						standalone = true
+						break
+					}
+				}
+				if !standalone {
+					t.Errorf("the item row %q is no longer a line of its own:\n%s", row, got)
+				}
+			}
+		})
+	}
+}
+
+// And a real second queue statement still gets its own splice: the
+// skipping is of ROWS, not of statements after the first.
+func TestInsertBeforeQueueStillSplicesEveryStatement(t *testing.T) {
+	const block = "+Spliced = true\n"
+	file := "executable = /bin/true\nqueue name from (\nalice\nqueue\n)\n" +
+		"executable = /bin/false\nqueue 2\n"
+	got := InsertBeforeQueue(file, block)
+	if n := strings.Count(got, block); n != 2 {
+		t.Errorf("the block was spliced %d times, want 2 (one per statement):\n%s", n, got)
+	}
+	if !strings.Contains(got, block+"queue 2") {
+		t.Errorf("the second statement did not get the block:\n%s", got)
+	}
+}
