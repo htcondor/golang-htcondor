@@ -1624,6 +1624,22 @@ var oauth2AdvertisedScopes = []string{
 // those too (seesAllJobsByPolicy), so they mean something without MCP.
 var mcpOnlyScopes = []string{"mcp:read", "mcp:write"}
 
+// clientAuthMethodsSupported is how a client may authenticate at the token
+// endpoint, for RFC 8414's token_endpoint_auth_methods_supported.
+//
+// All three, always. A confidential client sends its secret in the
+// Authorization header or the form body; a public client holds no secret
+// and sends "none", with PKCE binding the code to it instead
+// (EnforcePKCEForPublicClients in oauth2_provider.go).
+//
+// "none" used to be advertised only when CIMD was enabled, as though CIMD
+// were what made public clients possible. It is not -- it is one way to
+// arrive as one. POST /api/v1/integrations takes a `public` flag and DCR
+// registers public clients, both regardless of CIMD, so with CIMD off the
+// document told a public client that the only method it has is
+// unsupported.
+var clientAuthMethodsSupported = []string{"client_secret_basic", "client_secret_post", "none"}
+
 // advertisedScopes is the scope set this server publishes in its
 // discovery documents: oauth2AdvertisedScopes, less mcp:read and
 // mcp:write where MCP is off, and less mcp:write where MCP is served
@@ -1770,23 +1786,48 @@ func (h *Handler) handleOAuth2Metadata(w http.ResponseWriter, _ *http.Request) {
 		// Nothing here consumed that id_token. The honest advertisement
 		// is the smaller one; see also the OIDC handler left out of the
 		// fosite composition in oauth2_provider.go.
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code", tokenExchangeGrantType},
-		"scopes_supported":                      h.advertisedScopes(),
-		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
-		"code_challenge_methods_supported":      []string{"plain", "S256"},
+		"response_types_supported": []string{"code"},
+		"grant_types_supported":    []string{"authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code", tokenExchangeGrantType},
+		"scopes_supported":         h.advertisedScopes(),
+		// What the token endpoint accepts, which is not conditional on
+		// anything: "none" is how a public client authenticates, and a
+		// public client can exist here whether or not CIMD is on --
+		// POST /api/v1/integrations takes a `public` flag, and DCR
+		// registers public clients too.
+		"token_endpoint_auth_methods_supported": clientAuthMethodsSupported,
+		// S256 only, because that is the only method fosite accepts:
+		// EnablePKCEPlainChallengeMethod is left false in
+		// oauth2_provider.go. "plain" was advertised here from the
+		// commit that first added this document, and it was never
+		// supported.
+		//
+		// Advertising it was not a harmless inaccuracy. fosite checks
+		// the method in HandleAuthorizeEndpointRequest, which runs
+		// AFTER the consent screen, so a client that took the list at
+		// face value walked the user through sign-in and approval and
+		// only then landed on
+		// `error=invalid_request: Clients must use
+		// code_challenge_method=S256, plain is not allowed.`
+		"code_challenge_methods_supported": []string{"S256"},
+		// RFC 8414's pointer to human-readable developer
+		// documentation. The API reference is self-hosted at /docs, and
+		// it is where someone configuring a third-party integration
+		// finds the endpoint that names the signed-in user
+		// (GET /api/v1/whoami), which is what a connection test needs.
+		"service_documentation": issuer + "/docs",
 	}
 
 	if !h.mcpDCRDisabled {
 		metadata["registration_endpoint"] = issuer + h.oauth2EndpointPath("register")
 	}
 
-	// Advertise Client ID Metadata Document support (an https:// client_id is
-	// resolved as a public client) so CIMD-aware MCP clients can skip DCR. Also
-	// surface "none" as a client-auth method, since a CIMD client is public.
+	// Advertise Client ID Metadata Document support, so CIMD-aware MCP
+	// clients can skip DCR: an https:// client_id is resolved as a public
+	// client. The client-auth methods are not touched here -- "none" is
+	// advertised unconditionally above, because CIMD is one way to arrive
+	// as a public client and not the only one.
 	if h.mcpCIMDEnabled {
 		metadata["client_id_metadata_document_supported"] = true
-		metadata["token_endpoint_auth_methods_supported"] = []string{"client_secret_basic", "client_secret_post", "none"}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1856,12 +1897,17 @@ func (h *Handler) handleOAuth2ProtectedResourceMetadata(w http.ResponseWriter, r
 	issuer := h.oauth2Provider.config.AccessTokenIssuer
 
 	metadata := map[string]interface{}{
-		"resource":                              h.protectedResourceIdentifier(r.URL.Path),
-		"authorization_servers":                 []string{issuer},
-		"bearer_methods_supported":              []string{"header"},
-		"resource_signing_alg_values_supported": []string{"RS256"},
-		"scopes_supported":                      h.advertisedScopes(),
-		"resource_documentation":                issuer + "/mcp",
+		"resource":                 h.protectedResourceIdentifier(r.URL.Path),
+		"authorization_servers":    []string{issuer},
+		"bearer_methods_supported": []string{"header"},
+		"scopes_supported":         h.advertisedScopes(),
+		"resource_documentation":   issuer + "/mcp",
+		// resource_signing_alg_values_supported is deliberately absent.
+		// RFC 9728 means by it the algorithms this resource signs its
+		// own responses with, and nothing here signs a response -- the
+		// API answers plain JSON. It claimed RS256, which is the key
+		// the internal IDP signs ID tokens with and has nothing to do
+		// with this resource.
 	}
 	if !h.mcpEnabled {
 		// No /mcp to document; the REST API's reference is /docs.

@@ -397,22 +397,32 @@ func (h *Handler) handleIDPMetadata(w http.ResponseWriter, _ *http.Request) {
 			"profile",
 			"email",
 		},
+		// The authorization code flow, and only that. This listed all
+		// seven combinations while the fosite composition in
+		// idp_provider.go has OAuth2AuthorizeExplicitFactory and
+		// OpenIDConnectExplicitFactory and nothing else: no implicit
+		// factory, no hybrid factory. Every response type here but
+		// "code" was refused, and a client that picked one found out
+		// after the consent screen.
 		"response_types_supported": []string{
 			"code",
-			"token",
-			"id_token",
-			"code token",
-			"code id_token",
-			"token id_token",
-			"code token id_token",
 		},
+		// Only "query" follows. The fragment mode exists to keep tokens
+		// out of a redirect's query string, and tokens never appear on
+		// this redirect -- the code does, and it comes back in the
+		// query.
 		"response_modes_supported": []string{
 			"query",
-			"fragment",
 		},
 		"grant_types_supported": []string{
 			"authorization_code",
 			"refresh_token",
+		},
+		// PKCE is composed (OAuth2PKCEFactory) but was advertised
+		// nowhere, so a client had no way to discover it. S256 only:
+		// EnablePKCEPlainChallengeMethod is left false here too.
+		"code_challenge_methods_supported": []string{
+			"S256",
 		},
 		"subject_types_supported": []string{
 			"public",

@@ -690,6 +690,60 @@ fosite composition **and** publishing a `jwks_uri` with the keys behind it, the
 way the internal IDP does. Doing the first without the second is the state
 described above.
 
+## The discovery document is a promise
+
+Every list in `/.well-known/oauth-authorization-server` is something a client
+will go and do. The same mistake as the OIDC one above is easy to make in each
+of them, and it was: a value sat in a list for years while the server refused
+it.
+
+**`code_challenge_methods_supported` is `S256` and nothing else.** `plain` was
+advertised from the commit that first added this document, and fosite never
+accepted it — `EnablePKCEPlainChallengeMethod` is left false in
+`oauth2_provider.go`, which is the right setting. The cost was not a cosmetic
+inaccuracy. fosite checks the challenge method while building the
+authorization *response*, which happens after the consent screen, so a client
+that believed the list signed the user in, showed them the approval page,
+took their click, and only then redirected to
+
+```
+error=invalid_request
+Clients must use code_challenge_method=S256, plain is not allowed.
+```
+
+**`token_endpoint_auth_methods_supported` always includes `none`.** That is
+how a public client authenticates — it holds no secret, and PKCE binds the
+code to it instead (`EnforcePKCEForPublicClients`). `none` used to be
+advertised only when CIMD was enabled, as though CIMD were what made public
+clients possible. It is one way to arrive as one, not the only way: a user
+creates a public client with `POST /api/v1/integrations` and a `public` flag,
+and DCR registers them too, both regardless of CIMD. With
+`HTTP_API_MCP_CIMD = false` the document told a public client that its only
+method was unsupported.
+
+**`service_documentation` points at `/docs`**, the self-hosted API reference.
+RFC 8414 has the field for exactly the person wiring up a third-party
+integration, who needs `GET /api/v1/whoami` and otherwise has to be told where
+to look.
+
+**`resource_signing_alg_values_supported` is absent** from the
+protected-resource document. RFC 9728 means by it the algorithms this resource
+signs its own responses with; responses here are plain JSON and nothing signs
+them. It claimed `RS256`, which is the internal IdP's ID-token key and has
+nothing to do with this resource.
+
+**The internal IdP advertises `code` alone.** It listed all seven
+response-type combinations while `idp_provider.go` composes the two explicit
+factories and no implicit or hybrid one, so the other six failed at the same
+late stage — and it advertised no `code_challenge_methods_supported` at all
+despite composing PKCE, leaving clients unable to discover it.
+
+`oauth2_metadata_honesty_test.go` and `idp_metadata_honesty_test.go` hold
+these together. They do not compare a document against a second copy of the
+same constant: each reads the advertised list and then exercises the path, so
+a value that is advertised has to survive the flow a client would actually
+take.
+
 ## MCP OAuth2 clients
 
 Clients of the MCP OAuth2 endpoint can register and authenticate several ways.
