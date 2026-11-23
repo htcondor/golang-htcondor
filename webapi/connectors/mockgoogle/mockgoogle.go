@@ -120,6 +120,10 @@ type Server struct {
 	files map[string][]byte
 	// listable is what files.list returns, by file id -> name.
 	listable map[string]string
+	// sheets are the spreadsheets a test put in, by file id, in tab
+	// order. A spreadsheet is not a file with bytes, so it lives here
+	// rather than in files.
+	sheets map[string][]MockTab
 	// downloads counts content reads (alt=media) per file id. A test
 	// asserting how MANY times a file was fetched is asserting something
 	// no other surface shows: a correct sandbox says nothing about how
@@ -150,6 +154,7 @@ func New(t *testing.T, cfg Config) *Server {
 		access:       map[string]*token{},
 		files:        map[string][]byte{},
 		listable:     map[string]string{},
+		sheets:       map[string][]MockTab{},
 		downloads:    map[string]int{},
 		extraHeaders: map[string]string{},
 	}
@@ -157,6 +162,7 @@ func New(t *testing.T, cfg Config) *Server {
 	mux.HandleFunc("/o/oauth2/v2/auth", s.handleAuthorize)
 	mux.HandleFunc("/token", s.handleToken)
 	mux.HandleFunc("/revoke", s.handleRevoke)
+	mux.HandleFunc("/v4/spreadsheets/", s.handleSpreadsheet)
 	mux.HandleFunc("/drive/v3/files", s.handleFilesList)
 	mux.HandleFunc("/drive/v3/files/", s.handleFileGet)
 	s.Server = httptest.NewServer(mux)
@@ -175,6 +181,9 @@ func (s *Server) RevokeURL() string { return s.URL + "/revoke" }
 
 // DriveBaseURL stands in for www.googleapis.com/drive/v3.
 func (s *Server) DriveBaseURL() string { return s.URL + "/drive/v3" }
+
+// SheetsBaseURL stands in for sheets.googleapis.com/v4.
+func (s *Server) SheetsBaseURL() string { return s.URL + "/v4" }
 
 // --- what a test sets up ----------------------------------------------
 
@@ -198,6 +207,28 @@ func (s *Server) Downloads(id string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.downloads[id]
+}
+
+// MockTab is one worksheet a test puts in a spreadsheet. Rows are
+// exactly what the tab holds, ragged ends included -- Google omits
+// trailing empty cells, and a test that only ever supplies rectangles
+// cannot find a client that forgets to pad.
+type MockTab struct {
+	Title string
+	Rows  [][]string
+}
+
+// PickSheet makes a Google Sheet readable by the application, which is
+// what the Picker does under drive.file.
+//
+// Registered as a Drive file as well, because that is how the real one
+// behaves: the spreadsheet has metadata and a mimeType, and no size,
+// since Google's own document types have no bytes to download.
+func (s *Server) PickSheet(id, name string, tabs ...MockTab) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sheets[id] = tabs
+	s.listable[id] = name
 }
 
 // Revoke invalidates a refresh token, as the user withdrawing the
@@ -517,6 +548,29 @@ func (s *Server) handleFileGet(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")
 
 	s.mu.Lock()
+	_, isSheet := s.sheets[id]
+	sheetName := s.listable[id]
+	s.mu.Unlock()
+	if isSheet {
+		if r.URL.Query().Get("alt") == "media" {
+			// Drive refuses to download its own document types; they
+			// have to be exported, or read through their own API.
+			writeDriveError(w, http.StatusForbidden, "fileNotDownloadable",
+				"Only files with binary content can be downloaded. Use Export with Docs Editors files.")
+			return
+		}
+		// No "size": Drive omits it for its own document types, and a
+		// client that decodes a missing size as 0 rather than as absent
+		// would spool an empty file.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":       id,
+			"name":     sheetName,
+			"mimeType": "application/vnd.google-apps.spreadsheet",
+		})
+		return
+	}
+
+	s.mu.Lock()
 	content, ok := s.files[id]
 	s.mu.Unlock()
 	if !ok {
@@ -536,9 +590,10 @@ func (s *Server) handleFileGet(w http.ResponseWriter, r *http.Request) {
 		// against a mock that sends a number, which is exactly the
 		// class of wrongness this package exists to avoid.
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":   id,
-			"name": name,
-			"size": strconv.Itoa(len(content)),
+			"id":       id,
+			"name":     name,
+			"size":     strconv.Itoa(len(content)),
+			"mimeType": "text/csv",
 		})
 		return
 	}
@@ -633,3 +688,119 @@ func verifyPKCE(g *grant, verifier string) bool {
 
 // Deadline is a helper for tests that wait on the mock.
 var Deadline = 5 * time.Second
+
+// handleSpreadsheet serves the two Sheets API reads this package's
+// client makes: the tab list, and one tab's values.
+//
+//	GET /v4/spreadsheets/{id}                     -> sheets.properties
+//	GET /v4/spreadsheets/{id}/values/{a1 range}   -> values
+func (s *Server) handleSpreadsheet(w http.ResponseWriter, r *http.Request) {
+	s.applyHeaders(w)
+	s.mu.Lock()
+	if code, ok := s.takeStatus(); ok {
+		s.mu.Unlock()
+		writeDriveError(w, code, "rigged", "rigged by the test")
+		return
+	}
+	s.mu.Unlock()
+
+	if !s.bearerOK(r) {
+		writeDriveError(w, http.StatusUnauthorized, "authError", "Invalid Credentials")
+		return
+	}
+
+	rest := strings.TrimPrefix(r.URL.Path, "/v4/spreadsheets/")
+	id, after, hasValues := strings.Cut(rest, "/values/")
+
+	s.mu.Lock()
+	tabs, ok := s.sheets[id]
+	s.mu.Unlock()
+	if !ok {
+		// Under drive.file a spreadsheet the application was never
+		// granted does not exist as far as it is concerned.
+		writeDriveError(w, http.StatusNotFound, "notFound", "Requested entity was not found.")
+		return
+	}
+
+	if !hasValues {
+		props := make([]map[string]any, 0, len(tabs))
+		for i, t := range tabs {
+			props = append(props, map[string]any{
+				"properties": map[string]any{
+					"sheetId": i * 100,
+					"title":   t.Title,
+					"gridProperties": map[string]any{
+						"rowCount":    1000,
+						"columnCount": 26,
+					},
+				},
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sheets": props})
+		return
+	}
+
+	title, limit, err := parseA1(after)
+	if err != nil {
+		writeDriveError(w, http.StatusBadRequest, "badRequest", err.Error())
+		return
+	}
+	for _, t := range tabs {
+		if t.Title != title {
+			continue
+		}
+		rows := t.Rows
+		if limit > 0 && len(rows) > limit {
+			rows = rows[:limit]
+		}
+		// Trailing empty cells are omitted, exactly as the real API
+		// does it, so a client that does not pad reads shifted columns.
+		out := make([][]any, 0, len(rows))
+		for _, row := range rows {
+			end := len(row)
+			for end > 0 && row[end-1] == "" {
+				end--
+			}
+			cells := make([]any, 0, end)
+			for _, c := range row[:end] {
+				cells = append(cells, c)
+			}
+			out = append(out, cells)
+		}
+		body := map[string]any{"range": after, "majorDimension": "ROWS"}
+		if len(out) > 0 {
+			// An empty tab has no "values" key at all, rather than an
+			// empty array.
+			body["values"] = out
+		}
+		writeJSON(w, http.StatusOK, body)
+		return
+	}
+	writeDriveError(w, http.StatusBadRequest, "badRequest",
+		"Unable to parse range: "+after)
+}
+
+// parseA1 reads the `'Tab'!1:n` form this package's client sends.
+//
+// Not a general A1 parser: it understands exactly what the client
+// writes, and refuses the rest rather than guessing. A mock that
+// accepted more than the real API would hide a malformed range.
+func parseA1(rng string) (title string, limit int, err error) {
+	quoted, rows, ok := strings.Cut(rng, "!")
+	if !ok {
+		return "", 0, fmt.Errorf("Unable to parse range: %s", rng) //nolint:staticcheck // ST1005: the real API's wording, which is what a stand-in is for
+	}
+	if len(quoted) < 2 || quoted[0] != '\'' || quoted[len(quoted)-1] != '\'' {
+		return "", 0, fmt.Errorf("Unable to parse range: %s", rng) //nolint:staticcheck // ST1005: the real API's wording, which is what a stand-in is for
+	}
+	title = strings.ReplaceAll(quoted[1:len(quoted)-1], "''", "'")
+	first, last, ok := strings.Cut(rows, ":")
+	if !ok || first != "1" {
+		return "", 0, fmt.Errorf("Unable to parse range: %s", rng) //nolint:staticcheck // ST1005: the real API's wording, which is what a stand-in is for
+	}
+	limit, cerr := strconv.Atoi(last)
+	if cerr != nil || limit < 1 {
+		return "", 0, fmt.Errorf("Unable to parse range: %s", rng) //nolint:staticcheck // ST1005: the real API's wording, which is what a stand-in is for
+	}
+	return title, limit, nil
+}

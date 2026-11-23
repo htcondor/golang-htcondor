@@ -178,6 +178,10 @@ func (h *Handler) handleConnectItem(w http.ResponseWriter, r *http.Request) {
 	case "token":
 		h.connectorToken(w, r, session, def)
 	default:
+		if fileID, isSheet := strings.CutPrefix(tail, "sheets/"); isSheet {
+			h.connectorSheet(w, r, session, def, fileID)
+			return
+		}
 		h.writeError(w, http.StatusNotFound, "Not found")
 	}
 }

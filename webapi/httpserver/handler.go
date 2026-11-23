@@ -492,6 +492,9 @@ type Handler struct {
 	// connectorDriveBaseURL overrides the Drive API root. Empty means
 	// the real one; a test points it at a stand-in.
 	connectorDriveBaseURL string
+	// connectorSheetsBaseURL overrides the Sheets API root. Empty means
+	// the real one; a test points it at a stand-in.
+	connectorSheetsBaseURL string
 	// connectorPickerOverride replaces the origins a connector's file
 	// chooser needs in the CSP. Nil means the connectors' own; a test
 	// points it at its stand-in so the policy under test is the policy
