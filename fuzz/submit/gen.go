@@ -339,14 +339,37 @@ func executableFor(u string, s *stream) string {
 // queueStatement keeps the queue line mostly plain. A file whose queue
 // statement is itself a known divergence (`queue 2 in (a b)`) would hide
 // whatever the keywords above it did, so the interesting forms are rare.
+//
+// The bracketed `from (...)` forms are here because their absence cost
+// something. This generator emitted only `queue N` and `in` lists, so
+// the `from` list -- the one form whose items are ROWS of several
+// columns rather than single values -- was never generated, and neither
+// was the doubled-paren spelling this repository's own submit page
+// emitted. A pre-pass in the parser read `from ((rows))` as a delimiter
+// where condor_submit reads the inner "(" as an item, and the fuzzer
+// could not have found it: the shape was not in its vocabulary. The
+// parens are varied deliberately, since the whole difference lives in
+// how many of them there are and where the closing one sits.
 func queueStatement(s *stream) string {
-	switch s.intn(10) {
+	switch s.intn(16) {
 	case 0:
 		return "queue " + strconv.Itoa(s.intn(4)) + "\n"
 	case 1:
 		return "queue x in (a, b)\n"
 	case 2:
 		return "queue x, y in (a, b)\n"
+	case 3:
+		return "queue x from (\na\nb\n)\n"
+	case 4:
+		return "queue x, y from (\n1 2\n3 4\n)\n"
+	case 5:
+		// Not a delimiter: the inner "(" is the first item.
+		return "queue x, y from ((\n1 2\n3 4\n))\n"
+	case 6:
+		// A ")" that is not first on its line is item text.
+		return "queue x, y from (\n1 2)\n3 4\n)\n"
+	case 7:
+		return "queue x from ((a\nb))\n"
 	default:
 		return "queue\n"
 	}

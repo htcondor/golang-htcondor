@@ -371,6 +371,23 @@ var seeds = []seedCase{
 	{input: "executable = /bin/sleep\nqueue name from (\n  x\n  y\n)\n"},
 	{input: "executable = /bin/sleep\narguments = $(x) $(y)\nqueue x, y from (\n1 2\n3 4\n)\n"},
 	{input: "executable = /bin/sleep\narguments = $(x) $(y)\nqueue x, y from (\n1 2 3\n4\n)\n"},
+	// The doubled-paren form. condor_submit has no such form -- `from (`
+	// opens the list and the second "(" is the first item's text -- so a
+	// two-row block is THREE rows, the first of them "(". This parser had
+	// a pre-pass that read it as two, which is the divergence these seeds
+	// were written to catch and now hold shut.
+	{input: "executable = /bin/sleep\narguments = $(x) $(y)\nqueue x, y from ((\n1 2\n3 4\n))\n"},
+	{input: "executable = /bin/sleep\nqueue name from ((\n  x\n  y\n))\n"},
+	{input: "executable = /bin/sleep\narguments = $(x) $(y)\nqueue x, y from ((1 2\n3 4))\n"},
+	// What actually closes a bracketed `from` list: a line whose first
+	// non-blank character is ")". A ")" anywhere else on the line is
+	// ordinary item text, which is what makes the row validation in
+	// webapi/sftpjobs a leading-character rule rather than a search.
+	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx1 y1\nx2 y)2\n)\n"},
+	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx1 y1\nx2 y2)\n)\n"},
+	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx1 y1\n  )\n"},
+	// An empty bracketed list.
+	{input: "executable = /bin/sleep\narguments = $(x)\nqueue x from (\n)\n"},
 
 	// --- parity, exercising item lists written without parentheses ---
 	// HTCondor anchors the parse on the `in` keyword and takes the rest of
@@ -939,6 +956,9 @@ func FuzzSubmitAds(f *testing.F) {
 		if untrimmedFinalLine(src) {
 			t.Skip("known: condor_submit does not trim an unterminated final line")
 		}
+		if selfReferentialItemRow(src) {
+			t.Skip("the oracle does not return: a `from` row referencing its own loop variable")
+		}
 		fresh, _, skip := check(t, src)
 		if skip {
 			return
@@ -999,6 +1019,89 @@ func untrimmedFinalLine(src string) bool {
 		last = src[i+1:]
 	}
 	return last != strings.Trim(last, " \t\r\v\f")
+}
+
+// selfReferentialItemRow reports whether a `queue VARS from (...)` block
+// has a row that expands the loop variable that very row supplies.
+//
+// SubmitHash does not come back from one. `queue a, b from (\nx1 $(b)\n)`
+// hangs condor_submit 26.2.0 for ever -- not a crash, not an error, a
+// spin -- and so hangs the oracle, taking the fuzz worker with it and
+// leaving a reproducer that names an input the engine never finished.
+// Found by this fuzzer the first time the generator was taught the
+// bracketed `from` forms at all, which is the measure of how long the
+// shape had gone unasked.
+//
+// This parser does not hang: it expands the reference to nothing and
+// queues the row, which is why the skip is on the oracle's account and
+// not a divergence to record.
+//
+// Narrow on purpose, because every input this accepts is one the fuzzer
+// stops comparing. Only a `from` list, only a row that names one of the
+// variables THAT list binds, and only the self-reference: a row naming
+// the other column's variable is fine on both sides and is still
+// compared, as is any reference to a variable the statement does not
+// bind.
+func selfReferentialItemRow(src string) bool {
+	for _, stmt := range queueFromStatements(src) {
+		for _, row := range stmt.rows {
+			for _, v := range stmt.vars {
+				if strings.Contains(strings.ToLower(row), "$("+v+")") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// queueFromStatements picks the bracketed `queue VARS from (` blocks out
+// of submit text: the variable names it binds, lowercased because submit
+// macros are case-insensitive, and the rows up to the closing line.
+//
+// Deliberately simple. It is a screen for the fuzzer, not a parser, and
+// it errs towards finding a block: a false positive costs one skipped
+// input, while missing one costs a hung worker.
+func queueFromStatements(src string) []struct {
+	vars []string
+	rows []string
+} {
+	var out []struct {
+		vars []string
+		rows []string
+	}
+	lines := strings.Split(src, "\n")
+	for i := 0; i < len(lines); i++ {
+		head := strings.TrimSpace(strings.ToLower(lines[i]))
+		if !strings.HasPrefix(head, "queue ") || !strings.HasSuffix(head, "(") {
+			continue
+		}
+		mid, _, ok := strings.Cut(strings.TrimPrefix(head, "queue "), " from ")
+		if !ok {
+			continue
+		}
+		var vars []string
+		for _, v := range strings.Split(mid, ",") {
+			if v = strings.TrimSpace(v); v != "" {
+				vars = append(vars, v)
+			}
+		}
+		if len(vars) == 0 {
+			continue
+		}
+		var rows []string
+		for i++; i < len(lines); i++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), ")") {
+				break
+			}
+			rows = append(rows, lines[i])
+		}
+		out = append(out, struct {
+			vars []string
+			rows []string
+		}{vars, rows})
+	}
+	return out
 }
 
 func firstLine(s string) string {
