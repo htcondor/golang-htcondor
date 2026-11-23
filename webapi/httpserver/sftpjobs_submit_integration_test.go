@@ -416,7 +416,7 @@ func TestDroppedArchiveRunsItsOwnExecutable(t *testing.T) {
 				"transfer_executable = false\n" +
 				"transfer_input_files = $(extra)\n" +
 				"request_memory = 64\n" +
-				"queue extra from ((\nnobody-ships-this.dat\n))\n",
+				"queue extra from (\nnobody-ships-this.dat\n)\n",
 		})
 		sub := &sftpjobs.TarballSubmission{
 			Submit: submitTextFrom(t, archive),

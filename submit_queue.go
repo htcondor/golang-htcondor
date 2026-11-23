@@ -370,9 +370,11 @@ func (m *matchingIterator) Count() int {
 // queueFileAccess says which local paths a queue statement may read.
 // An itemdata file or a `matching` glob reads the filesystem of
 // whatever process is parsing, which is not the submitter when the
-// submit file arrived over an API — so the default is nothing, plus the
-// temp files ParseSubmitFile wrote itself for the inline
-// `from ((rows))` form.
+// submit file arrived over an API -- so the default is nothing.
+//
+// allowPaths exists for a caller that has a path it vouches for. It is
+// empty in this package's own use: the inline `from ((rows))` pre-pass
+// that used to fill it is gone, because condor_submit has no such form.
 type queueFileAccess struct {
 	allowAny   bool
 	allowPaths []string
@@ -388,7 +390,7 @@ func (a queueFileAccess) permit(path string) error {
 		}
 	}
 	return fmt.Errorf("queue statement may not read %q: this submit file is parsed without access to the local host; "+
-		"use the inline form (queue vars from ((rows))) or an explicit item list instead", path)
+		"use the inline form (queue vars from (rows)) or an explicit item list instead", path)
 }
 
 // createIteratorFromQueue creates an appropriate iterator from a QueueStatement

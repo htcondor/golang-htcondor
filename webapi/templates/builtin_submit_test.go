@@ -13,14 +13,14 @@ import (
 // UI's /submit page exercises:
 //
 //  1. Take template.Contents (the submit-file body without queue).
-//  2. Append `queue COLS from ((rows))` — the inline form the
+//  2. Append `queue COLS from (rows)` — the bracketed form the
 //     frontend's buildSubmitFile() emits.
 //  3. ParseSubmitFile must succeed (no goyacc "syntax error").
 //  4. submitFile.Submit() must produce one proc per row.
 //  5. Each row's variable substitutions must land in the expected
 //     attribute (e.g. sleep's $(seconds) → Args).
 //
-// This is the regression-guard for the inline-`((...))` pre-processor
+// This is the regression-guard for the bracketed `from (...)` item list
 // in the core submit parser and for the built-in YAML staying
 // parser-clean. It lives in the webapi module because that is where the
 // templates library now resides; it imports the core htcondor package
@@ -109,7 +109,7 @@ func TestBuiltinTemplatesParseAndExpand(t *testing.T) {
 }
 
 // buildBatchSubmitFile is the Go-side mirror of the frontend's
-// buildSubmitFile: append a `queue cols from ((<rows>))` block to the
+// buildSubmitFile: append a `queue cols from (<rows>)` block to the
 // template body. We intentionally produce the exact form the SPA
 // emits so this test catches drift in either direction.
 func buildBatchSubmitFile(tpl templates.Template, rows [][]string) string {
@@ -121,13 +121,13 @@ func buildBatchSubmitFile(tpl templates.Template, rows [][]string) string {
 	sb.WriteString(body)
 	sb.WriteString("\nqueue ")
 	sb.WriteString(strings.Join(templates.ColumnNames(tpl.Columns), ", "))
-	sb.WriteString(" from ((\n")
+	sb.WriteString(" from (\n")
 	for _, r := range rows {
 		sb.WriteString("  ")
 		sb.WriteString(strings.Join(r, " "))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("))\n")
+	sb.WriteString(")\n")
 	return sb.String()
 }
 
@@ -148,8 +148,10 @@ func buildBatchSubmitFile(tpl templates.Template, rows [][]string) string {
 // missing.
 //
 // `in` takes ONE variable name and splits its list on whitespace as
-// well as commas; only `from` reads a line as a row of columns. Checked
-// against condor_submit 26.2.0, which agrees with the parser here.
+// well as commas; only `from` reads a line as a row of columns. And a
+// bracketed list opens on ONE paren, so a doubled one is an item rather
+// than a delimiter. Checked against condor_submit 26.2.0, which agrees
+// with the parser here.
 func TestMultiColumnQueueFormsDisagree(t *testing.T) {
 	const body = "executable = /bin/true\narguments = \"$(name) $(ref)\"\n"
 
@@ -160,8 +162,17 @@ func TestMultiColumnQueueFormsDisagree(t *testing.T) {
 	}{
 		{
 			name:  "from, which is what the UI emits",
-			queue: "queue name, ref from ((\n  a.csv urlA\n  b.csv urlB\n))\n",
+			queue: "queue name, ref from (\n  a.csv urlA\n  b.csv urlB\n)\n",
 			procs: 2,
+		},
+		{
+			// One paren, not two. A second is not a second delimiter:
+			// HTCondor reads the inner "(" as the first item's text, so
+			// the same two rows become three. This parser had a pre-pass
+			// that hid that; see ParseSubmitFileWithOptions.
+			name:  "from with a doubled paren, which adds a row",
+			queue: "queue name, ref from ((\n  a.csv urlA\n  b.csv urlB\n))\n",
+			procs: 3,
 		},
 		{
 			// Pinned, not endorsed: this is the wrong answer, and it is
@@ -192,7 +203,7 @@ func TestMultiColumnQueueFormsDisagree(t *testing.T) {
 	// And the values land in the right job, which the count alone does
 	// not say: two procs with the columns swapped would count the same.
 	sf, err := htcondor.ParseSubmitFile(strings.NewReader(
-		body + "queue name, ref from ((\n  a.csv urlA\n  b.csv urlB\n))\n"))
+		body + "queue name, ref from (\n  a.csv urlA\n  b.csv urlB\n)\n"))
 	if err != nil {
 		t.Fatalf("ParseSubmitFile: %v", err)
 	}

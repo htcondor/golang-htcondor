@@ -10,7 +10,6 @@ import (
 	"math"
 	"os"
 	"os/user"
-	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -273,24 +272,22 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 		return nil, fmt.Errorf("failed to read submit file: %w", err)
 	}
 
-	// Pre-pass: rewrite any `queue VARS from ((<inline rows>))` blocks
-	// into `queue VARS from <tempfile>`. The Go grammar (parser.y)
-	// only knows the from-file and in-list forms, but the table-style
-	// submit page generates the inline-paren form because that's what
-	// HTCondor's own condor_submit accepts. We materialize the rows
-	// to a temp file, let the existing parser handle the rewritten
-	// form, then delete the temp file on the way out — fileIterator
-	// slurps the file fully during ParseSubmitFile so it's safe to
-	// remove immediately afterward.
-	expanded, tempFiles, err := expandInlineQueueBlocks(string(raw))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse submit file: %w", err)
-	}
-	defer func() {
-		for _, p := range tempFiles {
-			_ = os.Remove(p)
-		}
-	}()
+	// There is no pre-pass here, and that is deliberate.
+	//
+	// This used to rewrite `queue VARS from ((<rows>))` into
+	// `queue VARS from <tempfile>`, on the stated grounds that the
+	// doubled-paren form "is what HTCondor's own condor_submit
+	// accepts". It is not. condor_submit has no such form: `from (`
+	// opens a bracketed inline list and the second `(` is simply the
+	// first item's text, so `from ((` and a newline queues one extra
+	// job whose first variable is "(". Confirmed against SubmitHash
+	// 26.2.0 through the differential oracle, where the C++ side
+	// produced three procs for a two-row block and this parser
+	// produced two.
+	//
+	// The seeds for it are in fuzz/submit/differential_test.go. Every
+	// generator in this repository now writes the single-paren form,
+	// which both parsers have always agreed on.
 
 	// We need to parse the submit file in two passes:
 	// 1. Parse to get the queue statement
@@ -304,7 +301,7 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 	// has usually already stored the statements read up to that point — which
 	// Parse then returns with a nil error. A submit file with one bad line
 	// silently lost that line and every command after it.
-	lexer := config.NewLexer(strings.NewReader(expanded))
+	lexer := config.NewLexer(strings.NewReader(string(raw)))
 	stmts, err := config.ParseStrict(lexer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse submit file: %w", err)
@@ -363,9 +360,6 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 
 	// Create iterator from queue statement
 	if queueStmt != nil {
-		// The itemdata rewrite above wrote the inline `from ((rows))`
-		// form to temp files this call created, so those stay readable
-		// even when the submit file itself may not name a local file.
 		// An `in` list is expanded here, before it is cut into items,
 		// because that is the order condor_submit does it in -- see
 		// expandQueueItems. A `from` list is left alone: its lines are rows
@@ -377,8 +371,7 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 			expandedStmt.Items = expandQueueItems(cfg, queueStmt.Items)
 		}
 		iterator, err := createIteratorFromQueue(&expandedStmt, queueFileAccess{
-			allowAny:   opts.AllowLocalAccess,
-			allowPaths: tempFiles,
+			allowAny: opts.AllowLocalAccess,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create queue iterator: %w", err)
@@ -394,130 +387,6 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 	}
 
 	return sf, nil
-}
-
-// inlineQueueBlockOpen matches the opening line of an inline queue
-// block: `queue VAR(, VAR2)* from ((`. The pattern is intentionally
-// loose about whitespace (operators sometimes write `queue x from((`)
-// and case-insensitive about `queue` / `from` (HTCondor itself is).
-var inlineQueueBlockOpen = regexp.MustCompile(`(?i)^\s*(queue\b[^\n]*?\bfrom)\s*\(\(\s*(.*)$`)
-
-// expandInlineQueueBlocks finds `queue ... from ((<rows>))` blocks in
-// the input and rewrites them to `queue ... from <tempfile>`, with
-// the row text written to a fresh temp file. Returns the rewritten
-// input and the paths of any temp files the caller must remove on
-// the way out.
-//
-// Notes:
-//
-//   - The opening `((` and closing `))` may share their line with row
-//     content. We honor both:
-//
-//     queue x from ((    val1
-//     val2
-//     val3))             # all three rows are queued
-//
-//   - Comment lines (#-prefixed) and blank lines inside the block are
-//     dropped to match what fileIterator does when it reads the file.
-//
-//   - Multiple inline blocks in the same submit file are fine; each
-//     gets its own temp file.
-//
-//   - Unterminated blocks return a clear error pointing at the open
-//     line.
-func expandInlineQueueBlocks(in string) (string, []string, error) {
-	lines := strings.Split(in, "\n")
-	var out []string
-	var temps []string
-
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		m := inlineQueueBlockOpen.FindStringSubmatch(line)
-		if m == nil {
-			out = append(out, line)
-			continue
-		}
-
-		queuePrefix := strings.TrimSpace(m[1]) // "queue VARS from"
-		afterOpen := m[2]                      // anything after `((` on the same line
-
-		var rows []string
-		// Same-line close: `... from ((row1)) ...trailing`. trailing
-		// is currently discarded, but we accept the close.
-		if idx := strings.Index(afterOpen, "))"); idx >= 0 {
-			head := strings.TrimSpace(afterOpen[:idx])
-			if head != "" {
-				rows = append(rows, head)
-			}
-		} else {
-			// Same-line content (before first newline) is one row.
-			if h := strings.TrimSpace(afterOpen); h != "" {
-				rows = append(rows, h)
-			}
-			// Consume subsequent lines until `))`.
-			openLine := i + 1 // 1-indexed for the error message
-			closed := false
-			for i++; i < len(lines); i++ {
-				ln := lines[i]
-				if idx := strings.Index(ln, "))"); idx >= 0 {
-					if h := strings.TrimSpace(ln[:idx]); h != "" {
-						rows = append(rows, h)
-					}
-					closed = true
-					break
-				}
-				rows = append(rows, ln)
-			}
-			if !closed {
-				return "", nil, fmt.Errorf(
-					"failed to parse submit file: unterminated 'queue ... from ((' opened at line %d (no closing '))' found)",
-					openLine)
-			}
-		}
-
-		// Strip blanks and comments — fileIterator does the same when
-		// it reads a real on-disk queue file, so the inline form
-		// behaves identically.
-		var keep []string
-		for _, r := range rows {
-			r = strings.TrimSpace(r)
-			if r == "" || strings.HasPrefix(r, "#") {
-				continue
-			}
-			keep = append(keep, r)
-		}
-
-		if len(keep) == 0 {
-			return "", nil, fmt.Errorf(
-				"failed to parse submit file: 'queue ... from ((...))' at line %d has no rows",
-				i+1)
-		}
-
-		tmp, err := os.CreateTemp("", "htcondor-api-queue-*.txt")
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to create temp file for inline queue block: %w", err)
-		}
-		body := strings.Join(keep, "\n") + "\n"
-		if _, werr := tmp.WriteString(body); werr != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-			return "", nil, fmt.Errorf("write temp queue file: %w", werr)
-		}
-		if cerr := tmp.Close(); cerr != nil {
-			_ = os.Remove(tmp.Name())
-			return "", nil, fmt.Errorf("close temp queue file: %w", cerr)
-		}
-		temps = append(temps, tmp.Name())
-		// The path goes in bare. Everything after `from` is the item
-		// file's name verbatim, trimmed and otherwise untouched, so a
-		// path holding `/`, `-`, a space or a quote needs no quoting --
-		// and must not be given any, since quotes would become part of
-		// the name. This used to wrap the path in double quotes because
-		// the grammar accepted only an IDENT or a STRING there, which is
-		// no longer how the tail is read.
-		out = append(out, queuePrefix+" "+tmp.Name())
-	}
-	return strings.Join(out, "\n"), temps, nil
 }
 
 // parseUniverse converts universe string to integer constant.
@@ -670,7 +539,7 @@ func (sf *SubmitFile) checkUniverse() error {
 // It is the submit parser's own answer, iterator included, which is the
 // only place the question can be answered correctly: the queue statement
 // has half a dozen forms, and `queue 2 x in (a, b)` is four processes
-// while `queue name from ((rows))` is as many as there are rows. A caller
+// while `queue name from (rows)` is as many as there are rows. A caller
 // that counts by re-reading the text gets some of those forms wrong, and
 // the ones it gets wrong are the multi-process ones that matter.
 func (sf *SubmitFile) QueueCount() int {

@@ -26,11 +26,11 @@ import (
 
 // BuildSubmit turns a template and a CSV into one submit file.
 //
-// The rows go into the text, as an inline `queue VARS from ((...))`
+// The rows go into the text, as a bracketed `queue VARS from (...)`
 // block. That is safe only because ParseCSV has already refused every
-// value that would mean something to the submit parser -- "))", "$", a
-// line break, a comma, a leading "#" -- and it is the single gate for
-// that. Nothing here re-checks; the rows arrive already validated, and
+// value that would mean something to the submit parser -- a leading
+// ")", "$", a line break, a comma, a leading "#" -- and it is the
+// single gate for that. Nothing here re-checks; the rows arrive already validated, and
 // the only reason this is written down is so that moving the validation
 // is understood to be moving the gate.
 //
@@ -54,12 +54,15 @@ func BuildSubmit(t templates.Template, sub *Submission) (string, error) {
 	// where it came from. A library id, which validateTemplate has
 	// already held to idPattern, not user text.
 	fmt.Fprintf(&b, "+%s = \"%s\"\n", AttrTemplate, t.ID)
-	fmt.Fprintf(&b, "queue %s from ((\n", strings.Join(sub.Vars, ", "))
+	// One "(", not two. A second one is not a delimiter: condor_submit
+	// reads it as the first item's text, so `from ((` queues an extra
+	// job whose first variable is "(". See ParseSubmitFileWithOptions.
+	fmt.Fprintf(&b, "queue %s from (\n", strings.Join(sub.Vars, ", "))
 	for _, row := range sub.Rows {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	b.WriteString("))\n")
+	b.WriteString(")\n")
 	return b.String(), nil
 }
 

@@ -8,7 +8,7 @@ import (
 // TestQueueCountAndVars: the submit parser is the only thing that knows how
 // many processes a queue statement makes, because the statement has several
 // forms that count differently. A caller re-reading the text got `queue 2 x
-// in (a, b)` and the inline `from ((rows))` form wrong, which is why these
+// in (a, b)` and the bracketed `from (rows)` form wrong, which is why these
 // are exported rather than re-derived.
 func TestQueueCountAndVars(t *testing.T) {
 	for _, tc := range []struct {
@@ -22,8 +22,12 @@ func TestQueueCountAndVars(t *testing.T) {
 		{"literal count", "executable = r.sh\nqueue 10\n", 10, nil},
 		{"item list", "executable = r.sh\nqueue name in (a, b)\n", 2, []string{"name"}},
 		{"count times item list", "executable = r.sh\nqueue 2 name in (a, b)\n", 4, []string{"name"}},
-		{"inline rows", "executable = r.sh\nqueue name from ((\nalice\nbob\ncarol\n))\n", 3, []string{"name"}},
-		{"several vars", "executable = r.sh\nqueue a, b from ((\n1, 2\n3, 4\n))\n", 2, []string{"a", "b"}},
+		{"inline rows", "executable = r.sh\nqueue name from (\nalice\nbob\ncarol\n)\n", 3, []string{"name"}},
+		{"several vars", "executable = r.sh\nqueue a, b from (\n1, 2\n3, 4\n)\n", 2, []string{"a", "b"}},
+		// A doubled paren is not a second delimiter: the inner "(" is the
+		// first item's text, so this is THREE rows, not two. See
+		// ParseSubmitFileWithOptions for what used to happen here.
+		{"doubled paren is an item", "executable = r.sh\nqueue a, b from ((\n1, 2\n3, 4\n))\n", 3, []string{"a", "b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sf, err := ParseSubmitFile(strings.NewReader(tc.raw))
@@ -50,7 +54,7 @@ func TestQueueCountAndVars(t *testing.T) {
 // outlive the call, so a caller that sorts or overwrites them in place
 // would be editing the file's own state.
 func TestQueueVarsIsACopy(t *testing.T) {
-	sf, err := ParseSubmitFile(strings.NewReader("executable = r.sh\nqueue a, b from ((\n1, 2\n))\n"))
+	sf, err := ParseSubmitFile(strings.NewReader("executable = r.sh\nqueue a, b from (\n1, 2\n)\n"))
 	if err != nil {
 		t.Fatalf("parsing: %v", err)
 	}

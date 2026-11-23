@@ -37,13 +37,19 @@ import (
 // exist because the submit parser would otherwise accept the file and
 // do something else entirely:
 //
-//   - A row containing "))" ENDS the inline itemdata block, and
-//     everything after it is read as submit-file text. Measured against
-//     the real parser: a clean three-row CSV queues three jobs, while
-//     the same CSV with "))" in row two either fails with a parse error
-//     naming lines nobody wrote, or queues a DIFFERENT set of jobs than
-//     the spreadsheet describes. Which of the two depends on the value,
-//     so neither is something to let through.
+//   - A row whose first non-blank character is ")" ENDS the bracketed
+//     itemdata block, and everything after it is read as submit-file
+//     text. Measured against the real parser: a clean three-row CSV
+//     queues three jobs, while the same CSV with a ")" row either fails
+//     with a parse error naming lines nobody wrote, or queues a
+//     DIFFERENT set of jobs than the spreadsheet describes. Which of the
+//     two depends on the value, so neither is something to let through.
+//
+//     It is the position that matters, not the character: a ")" anywhere
+//     but the start of a row is ordinary item text, which is why this is
+//     a row rule beside the "#" rule rather than a search of every
+//     value. Pinned in fuzz/submit/differential_test.go against the real
+//     SubmitHash.
 //   - A row starting with "#", or blank after trimming, is dropped as a
 //     comment -- so a job silently disappears rather than failing.
 //   - A value containing "$" is macro-expanded when the submit file
@@ -235,10 +241,6 @@ func checkCSVValue(v string, limits CSVLimits) error {
 	if strings.ContainsRune(v, 0) {
 		return errors.New("the value contains a NUL byte")
 	}
-	if strings.Contains(v, "))") {
-		return errors.New(`the value contains "))", which would end the job list early: ` +
-			`the rest of the file is then read as submit commands, and the jobs that run are not the ones listed here`)
-	}
 	if strings.Contains(v, "$") {
 		return errors.New(`the value contains "$", which the submit file would expand as a macro rather than use as text`)
 	}
@@ -260,6 +262,10 @@ func checkRow(row string) error {
 	}
 	if strings.HasPrefix(trimmed, "#") {
 		return errors.New(`the row starts with "#", which is dropped as a comment rather than queued`)
+	}
+	if strings.HasPrefix(trimmed, ")") {
+		return errors.New(`the row starts with ")", which would end the job list early: ` +
+			`the rest of the file is then read as submit commands, and the jobs that run are not the ones listed here`)
 	}
 	return nil
 }
