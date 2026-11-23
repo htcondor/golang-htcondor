@@ -337,7 +337,7 @@ func TestAuthzLogDenial(t *testing.T) {
 	if a.LogDenial(log, nil, "127.0.0.1:1", errors.New("cedar/server: command 60004 (DC_RECONFIG) refused: session (authenticated=false encrypted=false) does not meet the command's security level")) {
 		t.Error("security-level refusal reported as an authorization denial")
 	}
-	if !a.LogDenial(log, nil, "127.0.0.1:1", fmt.Errorf("cedar/server: command 81103 () refused: identity %q is not authorized for this command under current policy", cedarserver.UnauthenticatedFQU)) {
+	if !a.LogDenial(log, nil, "127.0.0.1:1", fmt.Errorf("cedar/server: command 81103 () refused: identity %q does not satisfy any of the command's authorization levels [READ]", cedarserver.UnauthenticatedFQU)) {
 		t.Fatal("policy refusal not logged")
 	}
 	if !a.LogDenial(log, nil, "127.0.0.1:1", errors.New("cedar/server: command 60004 (DC_RECONFIG) refused: authorization levels [ADMINISTRATOR] are outside the session's authorization limits [READ WRITE]")) {

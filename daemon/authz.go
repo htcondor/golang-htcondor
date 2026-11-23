@@ -156,8 +156,10 @@ func (a *Authz) CommandName(cmd int) string {
 }
 
 // refusedRE matches the error cedar's Server.ServeConn returns when the
-// Authorizer refuses a command: it names the command and the identity, which
-// is unauthenticated@unmapped for a peer that did not authenticate.
+// Authorizer refuses a command: it names the command, the identity -- which
+// is unauthenticated@unmapped for a peer that did not authenticate -- and the
+// levels the identity failed. The levels are not captured here; LogDenial
+// takes them from the server's own registration instead.
 // limitedRE matches the one it returns when the command's levels are outside
 // the authorization limits of the peer's credential (an IDTOKEN's
 // condor:/<LEVEL> scopes), which cedar checks before the Authorizer. The
@@ -166,7 +168,7 @@ func (a *Authz) CommandName(cmd int) string {
 // handler for, which cedar answers CMD_NOT_FOUND and marks with
 // security.ErrCommandNotFound.
 var (
-	refusedRE  = regexp.MustCompile(`command (\d+) \([^)]*\) refused: identity ("(?:[^"\\]|\\.)*") is not authorized`)
+	refusedRE  = regexp.MustCompile(`command (\d+) \([^)]*\) refused: identity ("(?:[^"\\]|\\.)*") does not satisfy any of the command's authorization levels`)
 	limitedRE  = regexp.MustCompile(`command (\d+) \([^)]*\) refused: authorization levels \[([^\]]*)\] are outside the session's authorization limits \[([^\]]*)\]`)
 	notFoundRE = regexp.MustCompile(`no authenticated handler for command (\d+)`)
 )
