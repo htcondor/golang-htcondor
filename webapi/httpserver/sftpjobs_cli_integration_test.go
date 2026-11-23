@@ -300,6 +300,11 @@ func TestSFTPCLIDrivesTheJobsService(t *testing.T) {
 
 	// What /outputs does on an access point with no htcondordb.
 	//
+	// This branch runs only on a machine without the binary, so it is
+	// the laptop's version of the check;
+	// TestSFTPCLIReadsTheOutputsNotice is the one that runs everywhere,
+	// by configuring a mirror-less access point on purpose.
+	//
 	// The job directories come from the mirror, and the service answers
 	// its absence by SAYING so rather than serving an empty directory --
 	// "you have no jobs" and "this access point cannot tell you" are
@@ -556,4 +561,136 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(raw)
+}
+
+// The notice a real client is given when /outputs cannot be listed.
+//
+// TestSFTPCLIDrivesTheJobsService checks this already -- but only on a
+// machine with no htcondordb binary, and CI always installs one. That
+// branch therefore never ran there, which left the half of the service
+// most likely to be misconfigured in the field, an access point with no
+// job index, covered on a laptop and nowhere else.
+//
+// So this one configures an access point WITHOUT a mirror on purpose,
+// whatever the machine has installed: no Collector and no
+// HTCondorConfig, which are what dbMirror.Enabled() reads. Nothing is
+// submitted, because nothing needs to be. The only question here is
+// what a client is TOLD about a listing that cannot be built, and the
+// only way to ask it is to fork the client that discards the server's
+// message -- which is the whole reason the answer is a file.
+func TestSFTPCLIReadsTheOutputsNotice(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test (forks a real HTCondor and a real sftp)")
+	}
+	for _, bin := range []string{"condor_master", "sftp"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not in PATH; skipping", bin)
+		}
+	}
+
+	harness := htcondor.SetupCondorHarness(t)
+	if err := harness.WaitForDaemons(); err != nil {
+		t.Fatalf("daemons: %v", err)
+	}
+	// No WaitForStartd: nothing runs here, so an execute node is not
+	// part of the question and waiting for one would be 45 seconds spent
+	// on nothing.
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	collector := htcondor.NewCollector(harness.GetCollectorAddr())
+	location, err := collector.LocateDaemon(ctx, "Schedd", "")
+	if err != nil {
+		t.Fatalf("locate schedd: %v", err)
+	}
+
+	account := currentUser(t)
+	workDir := t.TempDir()
+
+	listenAddr, issuerURL := reserveAddr(t)
+	server, err := NewServer(Config{
+		ListenAddr:               listenAddr,
+		OAuth2Issuer:             issuerURL,
+		ScheddName:               location.Name,
+		ScheddAddr:               location.Address,
+		UserHeader:               "X-Test-User",
+		UserHeaderTrustAnyUnsafe: true,
+		SigningKeyPath:           harness.GetSigningKeyPath(),
+		TrustDomain:              harness.GetTrustDomain(),
+		UIDDomain:                harness.GetTrustDomain(),
+		OAuth2DBPath:             filepath.Join(harness.GetSpoolDir(), "oauth2-sftpnotice.db"),
+		KEKFilePath:              writeKEK(t, workDir),
+		EnableMCP:                true,
+		SSHGatewayAddress:        "127.0.0.1:0",
+		SSHGatewayPublicHost:     "127.0.0.1",
+		// Collector and HTCondorConfig deliberately absent. That is the
+		// configuration under test, and leaving them out makes the
+		// refusal deterministic rather than depending on what happens
+		// to be advertising to this harness's collector.
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	startErr := make(chan error, 1)
+	go func() { startErr <- server.Start() }()
+	defer func() {
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = server.Shutdown(c)
+	}()
+
+	gwAddr := waitForGateway(t, server, startErr)
+	gwPort, err := portOf(gwAddr)
+	if err != nil {
+		t.Fatalf("gateway address %q: %v", gwAddr, err)
+	}
+	keyPath := filepath.Join(workDir, "id_ed25519")
+	issueCertFor(t, ctx, issuerURL, account, keyPath)
+
+	noticePath := filepath.Join(workDir, "notice")
+	batchPath := filepath.Join(workDir, "notice.sftp")
+	script := "ls -l /outputs\nget /outputs/" + sftpjobs.OutputsNoticeName +
+		" " + noticePath + "\n"
+	if err := os.WriteFile(batchPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write batch: %v", err)
+	}
+
+	out, sftpErr := runSFTP(t, ctx, gwPort, keyPath, batchPath)
+	t.Logf("sftp exit=%v transcript:\n%s", sftpErr, out)
+
+	// The listing has to SUCCEED. A failed readdir is the behaviour this
+	// replaced: `sftp -b` stops on it, so the session's exit code is the
+	// assertion -- and the user would have been given the word "Failure"
+	// and nothing else.
+	if sftpErr != nil {
+		t.Fatalf("listing /outputs without a mirror failed, so the reason reached "+
+			"nobody: %v\n%s", sftpErr, out)
+	}
+	if !strings.Contains(out, sftpjobs.OutputsNoticeName) {
+		t.Fatalf("the listing does not offer %s, so /outputs reads as \"you have no "+
+			"finished jobs\":\n%s", sftpjobs.OutputsNoticeName, out)
+	}
+	// What the client prints when it renders a readdir failure. Asserted
+	// against because this is the exact text that made the reason
+	// invisible, and its absence is what the file is for.
+	if strings.Contains(out, "readdir") || strings.Contains(out, "Failure") {
+		t.Errorf("the client was given a readdir failure after all:\n%s", out)
+	}
+
+	notice := readFile(t, noticePath)
+	// The server's own sentence, which is the diagnosis. Asserted on the
+	// word naming the missing piece rather than the whole string, since
+	// the sentence belongs to the lister and may be reworded.
+	if !strings.Contains(notice, "htcondordb") {
+		t.Errorf("the notice does not name what is missing:\n%s", notice)
+	}
+	if !strings.Contains(notice, "/outputs/1234.0/data") {
+		t.Errorf("the notice does not say a job can still be fetched by name:\n%s", notice)
+	}
+	// And that it is addressed to the person reading it, not to the
+	// operator: a user who cannot act on this has to know that.
+	if !strings.Contains(notice, "access point") {
+		t.Errorf("the notice does not say whose problem this is:\n%s", notice)
+	}
 }
