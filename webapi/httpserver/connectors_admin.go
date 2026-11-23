@@ -444,7 +444,7 @@ func (s *Handler) adminTestConnector(w http.ResponseWriter, r *http.Request, id 
 		// use, which looks identical to a broken one from outside.
 		problems = append(problems, "no groups, so nobody may use it")
 	}
-	if _, err := s.connectorSecret(r, def); err != nil {
+	if _, err := s.connectorSecret(r.Context(), def); err != nil {
 		problems = append(problems, fmt.Sprintf("the client secret could not be read: %v", err))
 	}
 	if def.Kind == connectors.KindOAuth2 && def.Transfer == connectors.TransferDirect {

@@ -2631,10 +2631,27 @@ export const api = {
 
     // schedd names the access point in multi-AP mode (the home access
     // point when omitted).
-    submit: (submitFile: string, schedd?: string): Promise<SubmitResponse> =>
+    //
+    // queue carries a table of per-job parameters as data. Sent that
+    // way rather than written into submitFile because HTCondor's
+    // item-row split is not something this side should have to
+    // reproduce: whitespace AND commas separate fields, nothing quotes,
+    // and the only way a value can hold either is a separator the
+    // server adds. Keeping it there is also what keeps a control
+    // character out of the submit file anyone here can read or
+    // download. When queue is given, submitFile must carry no queue
+    // statement -- the server appends one.
+    submit: (
+      submitFile: string,
+      schedd?: string,
+      queue?: { vars: string[]; rows: string[][] },
+    ): Promise<SubmitResponse> =>
       fetchJSON(`${BASE}/jobs${schedd ? `?schedd=${encodeURIComponent(schedd)}` : ''}`, {
         method: "POST",
-        body: JSON.stringify({ submit_file: submitFile }),
+        body: JSON.stringify({
+          submit_file: submitFile,
+          ...(queue ? { queue_vars: queue.vars, queue_rows: queue.rows } : {}),
+        }),
       }),
 
     // Upload input files for a previously-submitted job using multipart.
@@ -2972,6 +2989,36 @@ export const api = {
     // the other half and is the user's to do there.
     disconnect: (id: string): Promise<void> =>
       fetchJSON(`${BASE}/connect/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+    // A picked spreadsheet's tabs. The file id is what the Picker gave
+    // this page; the token that reads it never leaves the server.
+    sheetTabs: (
+      id: string,
+      fileId: string,
+    ): Promise<{ fileId: string; name: string; tabs: { id: number; title: string }[] }> =>
+      fetchJSON(
+        `${BASE}/connect/${encodeURIComponent(id)}/sheets/${encodeURIComponent(fileId)}`,
+      ),
+
+    // One tab's cells, header row included. truncated says the tab was
+    // longer than the server will read -- worth showing, because a
+    // short table submits fewer jobs than the spreadsheet lists.
+    sheetValues: (
+      id: string,
+      fileId: string,
+      tab: string,
+    ): Promise<{
+      fileId: string;
+      name: string;
+      tab: string;
+      rows: string[][];
+      truncated: boolean;
+      maxRows: number;
+    }> =>
+      fetchJSON(
+        `${BASE}/connect/${encodeURIComponent(id)}/sheets/${encodeURIComponent(fileId)}` +
+          `?tab=${encodeURIComponent(tab)}`,
+      ),
   },
 
   // Outbound webhooks. Session-authenticated on the server, like

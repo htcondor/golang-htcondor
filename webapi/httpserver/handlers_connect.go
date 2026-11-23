@@ -178,6 +178,10 @@ func (h *Handler) handleConnectItem(w http.ResponseWriter, r *http.Request) {
 	case "token":
 		h.connectorToken(w, r, session, def)
 	default:
+		if fileID, isSheet := strings.CutPrefix(tail, "sheets/"); isSheet {
+			h.connectorSheet(w, r, session, def, fileID)
+			return
+		}
 		h.writeError(w, http.StatusNotFound, "Not found")
 	}
 }
@@ -228,7 +232,7 @@ func (h *Handler) beginConnect(w http.ResponseWriter, r *http.Request, session *
 		return
 	}
 
-	secret, err := h.connectorSecret(r, def)
+	secret, err := h.connectorSecret(r.Context(), def)
 	if err != nil {
 		h.logger.Error(logging.DestinationHTTP, "connector has no usable client secret",
 			"connector", def.ID.String(), "error", err)
@@ -270,7 +274,7 @@ func (h *Handler) finishConnect(w http.ResponseWriter, r *http.Request, session 
 		return
 	}
 
-	secret, err := h.connectorSecret(r, def)
+	secret, err := h.connectorSecret(r.Context(), def)
 	if err != nil {
 		h.writeError(w, http.StatusServiceUnavailable,
 			fmt.Sprintf("Connector %q is not usable; its client secret could not be read", def.ID))
@@ -408,7 +412,7 @@ func (h *Handler) connectorToken(w http.ResponseWriter, r *http.Request, session
 		return
 	}
 
-	secret, err := h.connectorSecret(r, def)
+	secret, err := h.connectorSecret(r.Context(), def)
 	if err != nil {
 		h.writeError(w, http.StatusServiceUnavailable,
 			fmt.Sprintf("Connector %q is not usable; its client secret could not be read", def.ID))

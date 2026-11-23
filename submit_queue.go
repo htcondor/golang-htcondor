@@ -124,6 +124,17 @@ func (l *listIterator) Values() map[string]string {
 	return values
 }
 
+// UnitSeparator is ASCII US (0x1F), HTCondor's field separator for
+// itemdata rows.
+//
+// A row containing one is split on US ALONE -- whitespace and commas
+// stop being separators for that row -- which makes it the only way a
+// loop variable's value can hold a space or a comma. condor_submit
+// relies on this itself: it rejoins every multi-column row with US
+// before sending itemdata to the schedd, so US on the wire is the
+// normal case rather than an exotic one.
+const UnitSeparator = "\x1f"
+
 // splitItemColumns splits one item into the values of numCols loop variables,
 // matching HTCondor's own split.
 //
@@ -133,9 +144,18 @@ func (l *listIterator) Values() map[string]string {
 // is empty once trimmed yields NO columns at all, which is how HTCondor
 // leaves every loop variable holding the previous row's value: see the note
 // on SubmitStepFromQArgs::select_rowdata.
+//
+// Unless the row contains a US, in which case US is the only separator.
+// SubmitForeachArgs::split_item does this at
+// src/condor_utils/submit_utils.cpp:9349 ("autodetected US separator"),
+// turning off whitespace splitting for that row while still trimming
+// whitespace from each field's edges. The schedd keeps an independent
+// copy of the same rule for materialization, in
+// JobFactory::LoadRowData. This parser used to treat US as ordinary
+// text, so `a b<US>c` gave "a"/"b c" here and "a b"/"c" in HTCondor.
 func splitItemColumns(item string, numCols int) []string {
 	const (
-		tokenSeps = ", \t"
+		commaSeps = ", \t"
 		tokenWS   = " \t"
 		// maxColumns is HTCondor's cutoff for padding: at or above it, a
 		// row splits only where there are separators instead of being
@@ -145,6 +165,14 @@ func splitItemColumns(item string, numCols int) []string {
 
 	item = strings.TrimSuffix(item, "\n")
 	item = strings.TrimSuffix(item, "\r")
+
+	// Autodetected before the trim, as HTCondor does it, though no trim
+	// could remove a US byte anyway.
+	tokenSeps := commaSeps
+	if strings.Contains(item, UnitSeparator) {
+		tokenSeps = UnitSeparator
+	}
+
 	item = strings.Trim(item, tokenWS)
 	if item == "" {
 		return nil
