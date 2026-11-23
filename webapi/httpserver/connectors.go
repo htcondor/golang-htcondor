@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/logging"
@@ -24,6 +26,54 @@ func (s *Handler) newConnectors(params *config.Config) {
 	s.connectorConfig = connectorConfigFor(params)
 	s.connectorStored = connectors.NewStore(s.db, s.sealer)
 	s.connectorFlows = connectors.NewFlow()
+	s.connectorOutputSweepInterval = s.outputSweepIntervalFor(params)
+}
+
+// outputSweepIntervalFor reads HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL.
+//
+// Unset is OFF, unlike most intervals here, because what this one starts
+// writes to a user's Google account while they are not present. An
+// operator turns that on by naming a cadence; there is no default
+// cadence to fall back to, so a malformed value leaves it off rather
+// than silently picking one.
+//
+// Read at startup. The running ticker does not re-read it, so changing
+// it takes a restart rather than a condor_reconfig -- said here because
+// the rest of the connector configuration does reload.
+func (s *Handler) outputSweepIntervalFor(params *config.Config) time.Duration {
+	if params == nil {
+		return 0
+	}
+	const key = "HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL"
+	raw, ok := params.Get(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return 0
+	}
+	raw = strings.TrimSpace(raw)
+	// A bare number has no unit, which time.ParseDuration refuses --
+	// and that refusal is wanted: "5" could be seconds or minutes, and
+	// guessing wrong on this knob means sweeping 60 times too often.
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		s.logger.Error(logging.DestinationHTTP,
+			"Could not read the connector output sweep interval; the sweep stays off",
+			"parameter", key, "value", raw, "error", err,
+			"expected", "a duration with a unit, such as 5m")
+		return 0
+	}
+	if d <= 0 {
+		return 0
+	}
+	// A sub-minute sweep asks the queue and Google about the same
+	// finished jobs faster than they can change, and a provider's rate
+	// limit is a real consequence. Raise it and say so.
+	if d < time.Minute {
+		s.logger.Warn(logging.DestinationHTTP,
+			"The connector output sweep interval is below one minute; using one minute",
+			"parameter", key, "value", raw)
+		d = time.Minute
+	}
+	return d
 }
 
 // connectorConfigFor builds the configuration-backed source.

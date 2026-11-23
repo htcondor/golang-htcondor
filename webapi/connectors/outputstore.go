@@ -39,6 +39,14 @@ type OutputBinding struct {
 	Tab    string
 	// JobFile is the file in each job's sandbox holding its result.
 	JobFile string
+	// UserScoped is how the sweep names this binding's jobs when it asks
+	// the queue about them: User == Subject when true (a placementd
+	// account, whose jobs carry the whole account), Owner == the local
+	// part when false. Recorded at creation from what the submitting
+	// session was itself scoped by, rather than recomputed later from
+	// the account -- two implementations of that question can disagree,
+	// and the one that matters is the one the submission ran under.
+	UserScoped bool
 
 	CreatedAt time.Time
 	// RetiredAt is set when nothing is left to append. A retired
@@ -79,17 +87,19 @@ func (s *Store) PutOutputBinding(ctx context.Context, b OutputBinding) error {
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO connector_output_bindings
-			(subject, schedd, cluster, connector, file_id, tab, job_file, created_at, retired_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+			(subject, schedd, cluster, connector, file_id, tab, job_file,
+			 user_scoped, created_at, retired_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
 		ON CONFLICT(subject, schedd, cluster) DO UPDATE SET
 			connector = excluded.connector,
 			file_id   = excluded.file_id,
 			tab       = excluded.tab,
 			job_file  = excluded.job_file,
+			user_scoped = excluded.user_scoped,
 			created_at = excluded.created_at,
 			retired_at = NULL`,
 		b.Subject, b.Schedd, b.Cluster, b.Connector.String(),
-		b.FileID, b.Tab, b.JobFile, s.clock())
+		b.FileID, b.Tab, b.JobFile, b.UserScoped, s.clock())
 	if err != nil {
 		return fmt.Errorf("recording the output binding for cluster %d: %w", b.Cluster, err)
 	}
@@ -108,7 +118,8 @@ func (s *Store) OpenOutputBindings(ctx context.Context, limit int) ([]OutputBind
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT subject, schedd, cluster, connector, file_id, tab, job_file, created_at
+		SELECT subject, schedd, cluster, connector, file_id, tab, job_file,
+		       user_scoped, created_at
 		  FROM connector_output_bindings
 		 WHERE retired_at IS NULL
 		 ORDER BY created_at
@@ -123,7 +134,7 @@ func (s *Store) OpenOutputBindings(ctx context.Context, limit int) ([]OutputBind
 		var b OutputBinding
 		var connector string
 		if err := rows.Scan(&b.Subject, &b.Schedd, &b.Cluster, &connector,
-			&b.FileID, &b.Tab, &b.JobFile, &b.CreatedAt); err != nil {
+			&b.FileID, &b.Tab, &b.JobFile, &b.UserScoped, &b.CreatedAt); err != nil {
 			return nil, fmt.Errorf("reading an output binding: %w", err)
 		}
 		id, perr := ParseID(connector)
@@ -154,11 +165,12 @@ func (s *Store) OutputBindingFor(
 	var b OutputBinding
 	var connector string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT subject, schedd, cluster, connector, file_id, tab, job_file, created_at
+		SELECT subject, schedd, cluster, connector, file_id, tab, job_file,
+		       user_scoped, created_at
 		  FROM connector_output_bindings
 		 WHERE subject = ? AND schedd = ? AND cluster = ? AND retired_at IS NULL`,
 		subject, schedd, cluster).Scan(&b.Subject, &b.Schedd, &b.Cluster, &connector,
-		&b.FileID, &b.Tab, &b.JobFile, &b.CreatedAt)
+		&b.FileID, &b.Tab, &b.JobFile, &b.UserScoped, &b.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OutputBinding{}, ErrNoBinding
 	}

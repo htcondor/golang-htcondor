@@ -175,6 +175,12 @@ type JobSubmitRequest struct {
 	// also the only way it stays out of anything a person reads.
 	QueueVars []string   `json:"queue_vars,omitempty"`
 	QueueRows [][]string `json:"queue_rows,omitempty"`
+	// OutputSheet nominates a spreadsheet for the submission's results:
+	// each job's declared result file is appended to it as the job
+	// finishes. This request is the only moment at which that can be
+	// nominated, which is what bounds the credential the appending
+	// later spends -- see connectors_output_bind.go.
+	OutputSheet *SubmitOutputSheet `json:"output_sheet,omitempty"`
 }
 
 // JobSubmitResponse represents a job submission response
@@ -604,10 +610,28 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	// not even get.
 	warnings := submitlint.Inspect(submitFile).Advisory()
 
+	// A nominated output spreadsheet is checked BEFORE the jobs are
+	// queued, so a destination that cannot be written, or a results
+	// file that will never come back, is a 400 rather than a batch of
+	// identical warnings about jobs that are already running.
+	binding, bindWarnings, err := s.prepareOutputBinding(ctx, r, req.OutputSheet, submitFile)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	warnings = append(warnings, bindWarnings...)
+
 	clusterID, procAds, err := s.submitJob(ctx, submitFile)
 	if err != nil {
 		s.writeSubmitFailure(ctx, w, err)
 		return
+	}
+
+	// Recorded after the submit, because the cluster id is half of what
+	// the binding authorizes. A failure here is advice, not an error:
+	// the jobs exist and will run whatever this says.
+	if warning := s.recordOutputBinding(ctx, binding, clusterID); warning != "" {
+		warnings = append(warnings, warning)
 	}
 
 	// A job whose every awaited input comes from a connector has

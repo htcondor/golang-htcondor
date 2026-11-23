@@ -495,6 +495,12 @@ type Handler struct {
 	// connectorSheetsBaseURL overrides the Sheets API root. Empty means
 	// the real one; a test points it at a stand-in.
 	connectorSheetsBaseURL string
+	// connectorOutputSweepInterval is how often finished jobs' results
+	// are appended to the spreadsheets their submissions nominated.
+	// Zero is off, which is the default: the sweep spends a user's
+	// Google credential with nobody present, so it is turned on
+	// deliberately. HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL.
+	connectorOutputSweepInterval time.Duration
 	// connectorPickerOverride replaces the origins a connector's file
 	// chooser needs in the CSP. Nil means the connectors' own; a test
 	// points it at its stand-in so the policy under test is the policy
@@ -3452,6 +3458,12 @@ func (h *Handler) Start(ctx context.Context, ln net.Listener, protocol string) e
 
 	// Start session cleanup goroutine
 	h.startSessionCleanup(h.ctx)
+
+	// Append finished jobs' results to the spreadsheets their
+	// submissions nominated. A no-op unless an operator set an
+	// interval; see startConnectorOutputSweeper for why it is off by
+	// default and refused in multi-AP mode.
+	h.startConnectorOutputSweeper(h.ctx)
 
 	// Start periodic ping goroutine if enabled
 	if h.pingInterval > 0 {

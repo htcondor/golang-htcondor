@@ -286,21 +286,58 @@ func requestedTTL(r *http.Request) time.Duration {
 // The returned errors are safe to show a caller: they name missing
 // server configuration, not anything about the token.
 func (s *Handler) redeemContext(r *http.Request, owner string, authz []string) (context.Context, error) {
+	ctx, err := s.actAsOwner(r.Context(), owner, authz, shareActLifetime)
+	if err != nil {
+		// The caller shows these, so they name missing server
+		// configuration and nothing about the token.
+		return nil, err
+	}
+	return ctx, nil
+}
+
+// shareActLifetime bounds a minted acting credential.
+//
+// Short because it is used immediately and never handed out: the call
+// that mints it makes its schedd connection and is done.
+const shareActLifetime = 2 * time.Minute
+
+// actAsOwner builds the schedd-facing context an action on owner's
+// behalf runs under: a freshly minted, short-lived JWT asserting owner,
+// limited to authz, cached and wrapped in a TOKEN-only SecurityConfig.
+//
+// WithToken alone is not enough -- every schedd path reads the
+// SecurityConfig directly from ctx (see schedd_transfer.go,
+// NewQmgmtConnection). This mirrors the tail of
+// createAuthenticatedContext.
+//
+// Shared by every path that acts for a user who is not making the
+// request: a redeemed share URL, and the connector output sweep. Both
+// rest on an authorization the user gave earlier, and both must act AS
+// that user rather than as this daemon -- a daemon credential on the
+// local schedd is a queue superuser, which would make either feature a
+// way to read any job's sandbox. Minting for the owner is what keeps
+// the blast radius to the account that asked for it.
+func (s *Handler) actAsOwner(
+	ctx context.Context,
+	owner string,
+	authz []string,
+	lifetime time.Duration,
+) (context.Context, error) {
 	// Re-add the @uidDomain suffix the schedd's Owner attribute lacks.
 	username := owner
 	if !strings.Contains(username, "@") {
 		if s.uidDomain == "" {
-			return nil, fmt.Errorf("UID_DOMAIN not configured; cannot redeem share token")
+			return nil, fmt.Errorf("UID_DOMAIN not configured; cannot act for a user")
 		}
 		username = username + "@" + s.uidDomain
 	}
 	if s.trustDomain == "" {
-		return nil, fmt.Errorf("TRUST_DOMAIN not configured; cannot redeem share token")
+		return nil, fmt.Errorf("TRUST_DOMAIN not configured; cannot act for a user")
 	}
 
 	// Limited to authz, which generateMCPAccessJWT refuses to leave
 	// empty: a token with no limits carries everything its subject may
-	// do, which is more than any share URL is for.
+	// do, which is more than any of these callers is for.
 	now := time.Now()
 	jwt, err := generateMCPAccessJWT(
 		filepath.Dir(s.signingKeyPath),
@@ -308,21 +345,21 @@ func (s *Handler) redeemContext(r *http.Request, owner string, authz []string) (
 		username,
 		s.trustDomain,
 		now.Unix(),
-		now.Add(2*time.Minute).Unix(),
+		now.Add(lifetime).Unix(),
 		authz,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to authorize share token")
+		return nil, fmt.Errorf("failed to mint a credential for %s", username)
 	}
-	entry, err := s.tokenCache.AddValidated(jwt, username, now.Add(2*time.Minute))
+	entry, err := s.tokenCache.AddValidated(jwt, username, now.Add(lifetime))
 	if err != nil {
-		return nil, fmt.Errorf("failed to authorize share token")
+		return nil, fmt.Errorf("failed to mint a credential for %s", username)
 	}
 	secConfig, err := configureSecurityForToken(s.clientConfig, jwt, entry.SessionCache, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to authorize share token")
+		return nil, fmt.Errorf("failed to mint a credential for %s", username)
 	}
-	ctx := WithToken(r.Context(), jwt)
+	ctx = WithToken(ctx, jwt)
 	ctx = htcondor.WithSecurityConfig(ctx, secConfig)
 	ctx = htcondor.WithAuthenticatedUser(ctx, username)
 	return ctx, nil

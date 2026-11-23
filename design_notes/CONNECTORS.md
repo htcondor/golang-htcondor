@@ -921,3 +921,162 @@ than grow a second one.
   because the entry point must not be shaped in a way that excludes it,
   not because anything has asked for it. Build it when an access point
   turns out to need it.
+
+## The output sweep
+
+Results go the other way too: a submission can nominate a spreadsheet,
+and each job's declared result file is appended to it when that job
+finishes. Reading the sheet as the job table is the input half and needs
+nothing new; writing results back is the half with a credential in it.
+
+```
+HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL = 5m   # unset means off
+```
+
+**Off unless an operator names a cadence.** Every other interval here has
+a default; this one does not, because what it starts writes to a user's
+Google account while they are not present. A malformed value leaves it
+off rather than picking a cadence, and a bare number is malformed on
+purpose — `5` could be seconds or minutes, and guessing wrong means
+sweeping sixty times too often. Read at startup; the ticker does not
+re-read it, so changing it takes a restart even though the rest of the
+connector configuration reloads.
+
+### The binding row is the authorization
+
+A connector credential is otherwise reachable only from the browser
+session that owns it. At job completion there is no session, so the
+sweep mints from the owner's stored grant — which, on its own, would be
+a general capability over that account. What bounds it is that the sweep
+may only touch a `(spreadsheet, tab)` some session nominated, for a
+cluster that session submitted. A session can create a binding; the
+sweep cannot. Retiring one ends that authority outright rather than
+setting a flag, because cluster ids are reused and a stale binding must
+not be what the next submission inherits.
+
+### It acts as the user, never as this daemon
+
+The sweep needs the queue (which procs finished) and the sandbox (the
+result file). A daemon credential on the local schedd is a queue
+superuser, so a sweep holding one would be a way to read any job's
+sandbox on the machine — driven by a row in a table. Instead it mints a
+short-lived IDTOKEN asserting the binding's owner, limited to READ and
+WRITE, exactly as a redeemed share URL does (`actAsOwner`, shared by
+both). WRITE is needed because retrieving a sandbox stamps
+`StageOutStart`/`StageOutFinish` on the job ad.
+
+The queue question is also scoped to the owner, not to the cluster id
+alone. Cluster ids are reused; retirement makes a collision unlikely
+rather than impossible, and the failure it would otherwise produce is
+one person's job results appended to another person's spreadsheet. The
+clause is built by `ownerscope.Constrain`, so the owner term cannot be
+escaped by the rest of the expression.
+
+**Not available in multi-AP mode.** `scheddFor` there answers only from
+a routed request's context and fails closed without a caller credential,
+deliberately. The sweep has no request, and manufacturing a route for it
+would be defeating that check rather than satisfying it. The sweep
+refuses to start and says so.
+
+### Group membership is re-checked at use
+
+Same rule as the spool path, for the same reason: a list snapshotted at
+submit time catches an operator changing policy and misses a user being
+removed from the group, which is the half that matters for taking access
+away. With no session, membership comes from the system
+(`liveGroupsFor`). When a connector restricts by group and nothing can
+report membership, the binding is refused rather than swept — an
+operator who confined a connector to a group meant it, and a background
+worker that ignores the confinement whenever it cannot check is the
+failure they would most want not to have. A connector open to everyone
+(`*`) asks no question, so most deployments never reach the refusal.
+
+### Appending at most once
+
+`values.append` has no idempotency key: it inserts wherever the table
+currently ends, so an append that happens twice leaves two identical
+rows and nobody can say which was spurious. So a job is recorded as
+appended **after** the append succeeds, the record is insert-only, and a
+**failed** append marks nothing and is retried — safe for exactly one
+reason, that an append which failed added nothing. No other failure in
+the sequence has that property. A job whose result file is missing or
+unreadable is accounted for with the reason instead, since it will not
+become readable; a tab with no header row is the opposite, and accounts
+for nothing, so adding a header makes the next sweep fill it.
+
+`INSERT_ROWS`, not `OVERWRITE`: a total or a note below the table would
+otherwise be written over. `RAW`, not `USER_ENTERED`: `USER_ENTERED`
+reads `=cmd` as a formula and `1/2` as a date, so a job's output would
+silently become something else.
+
+### Why there is no goroutine per job
+
+One sweeper, one pass over the open bindings. The unit of work is the
+binding — one submission, one destination — so a cluster of 100,000
+jobs is one queue query and one header read, not 100,000 watchers. The
+per-job state is a row, not a goroutine, which is also what makes a
+crash mid-pass harmless: the next pass recomputes what is outstanding.
+
+A submission retires as soon as every job is accounted for and none can
+still arrive. Waiting for the cluster to *leave* the queue would be
+wrong rather than merely slow: `SubmitRemote` keeps spooled jobs queued
+for ten days after completion (`LeaveJobInQueue`), so a finished batch
+would be re-read every pass for ten days to learn nothing. A removed job
+is not waited for either — it will never produce a result.
+
+That ten-day window is also why the sweep is not racing anything: a
+completed job stays readable for far longer than any sweep interval. The
+one exception is a submit file that sets `leave_in_queue` itself, which
+`SubmitRemote` defers to; such jobs can leave immediately, and their
+results can be missed.
+
+### Nominating a destination
+
+```json
+POST /api/v1/jobs
+{ "submit_file": "...",
+  "output_sheet": { "connector": "builtin:gdrive", "file_id": "...",
+                    "tab": "results", "job_file": "result.json" } }
+```
+
+The submit request is the **only** moment at which a binding can be
+created, and it requires a browser session: a binding is a standing
+instruction to spend a connector credential later, and only the session
+holding one can leave it. A caller authenticated some other way has no
+connector to bind.
+
+**Everything that can be refused is refused before the jobs are queued.**
+After the submit the jobs exist, and a problem found then can only be
+reported as advice about a batch that is already running — so a
+destination that cannot be written, or a results file that will never
+come back, is a 400 rather than ten thousand identical warnings. Checked
+up front: the connector exists, is enabled and is permitted to the
+caller's groups; the tab exists and has a header row; `job_file` is a
+name rather than a path, because the sweep reads the sandbox's top level
+and nothing else.
+
+**Whether the file comes back has three answers, not two.** An absent
+`transfer_output_files` brings back everything new in the sandbox, so
+there is nothing to say. A list naming the file is fine. A list that
+does *not* name it is refused — that submission cannot work. A list
+built from a macro is the third: it cannot be checked here, and a
+warning is honest where a refusal would be a guess.
+
+A submit file that sets `leave_in_queue` itself gets a warning rather
+than a refusal: `SubmitRemote` defers to it, so those jobs may leave
+before a sweep sees them, but the submission is otherwise fine and the
+submitter is the one who can judge.
+
+Recording the binding happens *after* the submit, because the cluster id
+is half of what it authorizes, and a failure there is advice rather than
+an error — the jobs exist and will run whatever it says. The same goes
+for a sweep interval that is not configured: the binding is recorded and
+the response says plainly that nothing will be written.
+
+### Still open
+
+- **No UI yet.** The API takes `output_sheet`; the submit page needs a
+  destination picker beside the existing table source.
+- **`checkSheetDestination` is covered only by its refusals.** The
+  happy path needs the mock provider and a session, which means the
+  integration fixture rather than a unit test.
