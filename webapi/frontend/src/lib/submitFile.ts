@@ -469,3 +469,79 @@ export function parseCSV(text: string): { columns: string[]; rows: string[][] } 
   const rows = lines.slice(1).map(split);
   return { columns: header, rows };
 }
+
+// --- Per-job connector inputs ---------------------------------------------
+
+/**
+ * The queue variable that carries one job's connector file reference.
+ *
+ * It appears in the generated submit file, so it is named for a reader
+ * of that file rather than for this code.
+ */
+export const CONNECTOR_INPUT_VAR = 'connector_input';
+
+/** The macro a template uses to transfer this row's connector file. */
+export const CONNECTOR_INPUT_MACRO = `$(${CONNECTOR_INPUT_VAR})`;
+
+/**
+ * One picked file, as the table needs it.
+ *
+ * `name` is the plain filename and `reference` is the connector URL
+ * the access point fetches at submit time.
+ */
+export interface ConnectorRowFile {
+  name: string;
+  reference: string;
+}
+
+/**
+ * Build the queue columns and rows for per-job connector inputs.
+ *
+ * Each picked file becomes one job. The template's first column gets
+ * the plain FILENAME, exactly as the directory-upload mode does, so a
+ * template already written around `$(thatcolumn)` keeps working: the
+ * file arrives in the sandbox under its basename either way. The
+ * reference itself rides in an extra column, because that is the only
+ * part the submitter never writes by hand.
+ *
+ * A template with no columns of its own queues on the reference alone,
+ * which is still one job per file.
+ *
+ * Throws rather than silently producing a submit file that means
+ * something else:
+ *   - a reference containing whitespace would be split by HTCondor into
+ *     two input files (PickedFile names are screened for this upstream,
+ *     so reaching here means the screen was bypassed);
+ *   - a template that already declares a column of this name, because
+ *     then one of the two meanings has to lose and neither choice is
+ *     safe to make silently.
+ */
+export function buildConnectorTable(
+  templateColumns: string[],
+  files: ConnectorRowFile[],
+): { columns: string[]; rows: string[][] } {
+  if (templateColumns.includes(CONNECTOR_INPUT_VAR)) {
+    throw new Error(
+      `This template already has a column named "${CONNECTOR_INPUT_VAR}", which is ` +
+        `the name used for the file each job gets from the connector. Rename the ` +
+        `template's column.`,
+    );
+  }
+  for (const f of files) {
+    if (/\s/.test(f.reference)) {
+      throw new Error(
+        `The reference for "${f.name}" contains whitespace, which HTCondor would ` +
+          `read as two separate input files.`,
+      );
+    }
+  }
+
+  const columns = [...templateColumns, CONNECTOR_INPUT_VAR];
+  const rows = files.map((f) => {
+    const row = templateColumns.map(() => '');
+    if (templateColumns.length > 0) row[0] = f.name;
+    row.push(f.reference);
+    return row;
+  });
+  return { columns, rows };
+}

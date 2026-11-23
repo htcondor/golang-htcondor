@@ -56,12 +56,23 @@ import {
   bodyHasCoreResourceRequests,
   bodyHasQueueLine,
   bodyHasResourceRequests,
+  buildConnectorTable,
+  CONNECTOR_INPUT_MACRO,
   ensureTransferInput,
   getAttribute,
   readResourcesFromBody,
   setAttribute,
+  type ConnectorRowFile,
   type ResourceFieldMask,
 } from '@/lib/submitFile';
+import {
+  chooseFiles,
+  fetchPickers,
+  fileReference,
+  partitionPicked,
+  type Picker,
+} from '@/lib/picker';
+import { providerNames } from '@/lib/connectorNames';
 
 type TemplateMode = 'library' | 'custom';
 
@@ -70,7 +81,10 @@ type TemplateMode = 'library' | 'custom';
 //   count  — no per-job parameters; submit N copies (HTCondor `queue N`).
 //            Use when each job needs only ProcId-based differentiation.
 //   upload — directory/tarball mode; one row per contained file.
-type TableSource = 'manual' | 'count' | 'upload';
+//   drive  — one row per file picked from a connector. Like upload,
+//            except the bytes never reach this browser: the row
+//            carries a reference the access point fetches at submit.
+type TableSource = 'manual' | 'count' | 'upload' | 'drive';
 
 const MAX_TABLE_COUNT = 10000;
 
@@ -376,6 +390,35 @@ export default function SubmitPage() {
     [uploadFiles, columnNames],
   );
 
+  // driveFiles holds the per-job files picked from a connector in
+  // 'drive' mode: one job per file, as 'upload' mode does, except
+  // that the bytes never come near this browser. The access point
+  // fetches each one at submit from the reference recorded here.
+  const [driveFiles, setDriveFiles] = useState<ConnectorRowFile[]>([]);
+
+  // driveTable is the queue this submission would make. It can throw
+  // -- a template column already called connector_input, a name that
+  // would split -- so the error is carried rather than raised, to be
+  // shown next to the table instead of blanking the page.
+  const driveTable = useMemo(() => {
+    try {
+      return {
+        ...buildConnectorTable(
+          active.columns.map((c) => c.name),
+          driveFiles,
+        ),
+        error: null as string | null,
+      };
+    } catch (e) {
+      return {
+        columns: active.columns.map((c) => c.name),
+        rows: [] as string[][],
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driveFiles, columnNames]);
+
   // --- Inputs section state -----------------------------------------
   const [files, setFiles] = useState<DroppedFile[]>([]);
   // Files chosen out of a third-party account. Not uploads: these go
@@ -601,6 +644,17 @@ export default function SubmitPage() {
       let body: string;
       if (tableSource === 'count') {
         body = buildSubmitFileWithCount(effectiveContents, count);
+      } else if (tableSource === 'drive') {
+        // The reference rides in a queue column, so each job transfers
+        // its own file; the server rewrites it to the plain name the
+        // spooled copy will have. transfer_input_files has to name the
+        // column, or nothing transfers at all.
+        if (driveTable.error) throw new Error(driveTable.error);
+        body = buildSubmitFile(
+          ensureTransferInput(effectiveContents, CONNECTOR_INPUT_MACRO),
+          driveTable.columns,
+          driveTable.rows,
+        );
       } else {
         const effectiveRows = tableSource === 'upload' ? uploadRows : rows;
         body = buildSubmitFile(
@@ -731,7 +785,11 @@ export default function SubmitPage() {
   // user's edits but preserves the manual rows in state) doesn't
   // silently re-enable the button on stale data.
   const effectiveRowsForGate =
-    tableSource === 'upload' ? uploadRows : rows;
+    tableSource === 'upload'
+      ? uploadRows
+      : tableSource === 'drive'
+        ? driveTable.rows
+        : rows;
   // Queue-line guard. The page synthesizes the queue statement from
   // the table rows; any queue line in the body would either duplicate
   // or contradict the synthesized one. Surface this BEFORE the user
@@ -1418,12 +1476,21 @@ export default function SubmitPage() {
           // files and we don't let the user edit them — every change
           // comes from re-picking. In 'manual' mode the parent's
           // setRows handles user edits as before.
-          rows={tableSource === 'upload' ? uploadRows : rows}
+          rows={
+            tableSource === 'upload'
+              ? uploadRows
+              : tableSource === 'drive'
+                ? driveTable.rows
+                : rows
+          }
           setRows={setRows}
           source={tableSource}
           setSource={setTableSource}
           uploadFiles={uploadFiles}
           setUploadFiles={setUploadFiles}
+          driveFiles={driveFiles}
+          setDriveFiles={setDriveFiles}
+          driveError={driveTable.error}
           count={count}
           setCount={setCount}
         />
@@ -2833,6 +2900,9 @@ function TableSection({
   setSource,
   uploadFiles,
   setUploadFiles,
+  driveFiles,
+  setDriveFiles,
+  driveError,
   count,
   setCount,
 }: {
@@ -2843,6 +2913,9 @@ function TableSection({
   setSource: (s: TableSource) => void;
   uploadFiles: DroppedFile[];
   setUploadFiles: (f: DroppedFile[]) => void;
+  driveFiles: ConnectorRowFile[];
+  setDriveFiles: (f: ConnectorRowFile[]) => void;
+  driveError: string | null;
   count: number;
   setCount: (n: number) => void;
 }) {
@@ -2857,7 +2930,9 @@ function TableSection({
   // columns — that's the single-job fallback the page used to render
   // hardcoded; we now expose it as the explicit "Run N copies" option.
   const subtitle =
-    source === 'count'
+    source === 'drive'
+      ? `One job per file from the connected account. ${driveFiles.length} file${driveFiles.length === 1 ? '' : 's'} picked.`
+      : source === 'count'
       ? `Will submit ${Math.max(1, Math.floor(count) || 1)} cop${count === 1 ? 'y' : 'ies'} of the template.`
       : source === 'upload'
         ? `One job per file from the upload. ${uploadFiles.length} file${uploadFiles.length === 1 ? '' : 's'} loaded.`
@@ -2883,9 +2958,18 @@ function TableSection({
             From directory / tarball
           </ModeButton>
         )}
+        <ModeButton active={source === 'drive'} onClick={() => setSource('drive')}>
+          From a connected account
+        </ModeButton>
       </div>
 
-      {source === 'count' ? (
+      {source === 'drive' ? (
+        <DriveSource
+          files={driveFiles}
+          setFiles={setDriveFiles}
+          error={driveError}
+        />
+      ) : source === 'count' ? (
         <CountSource count={count} setCount={setCount} />
       ) : columns.length === 0 ? (
         <div className="text-sm text-gray-500">
@@ -3056,6 +3140,165 @@ function TableSection({
 // inside sees the file at its basename. Preserving directory
 // structure would require materialising it on the worker, which the
 // HTCondor input-transfer flow doesn't do for us.
+// DriveSource is the per-job half of the connectors feature: one job
+// per file picked from a connected account.
+//
+// It is the directory-upload mode with the bytes taken out. Nothing is
+// read in this browser; each row carries a reference, and the access
+// point fetches that file into the job's spool at submit. That is why
+// a 50 GB input is as cheap here as a 50 KB one, and why the page can
+// offer files this machine has never seen.
+function DriveSource({
+  files,
+  setFiles,
+  error,
+}: {
+  files: ConnectorRowFile[];
+  setFiles: (f: ConnectorRowFile[]) => void;
+  error: string | null;
+}) {
+  const pickers = useQuery({
+    queryKey: ['pickers'],
+    queryFn: fetchPickers,
+    staleTime: 5 * 60 * 1000,
+  });
+  const list = pickers.data ?? [];
+  const [busy, setBusy] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const [connect, setConnect] = useState<{ url: string; label: string } | null>(null);
+  const [refused, setRefused] = useState<{ name: string; problem: string }[]>([]);
+
+  const open = async (p: Picker) => {
+    setPickError(null);
+    setRefused([]);
+    setConnect(null);
+    setBusy(true);
+    setChoosing(false);
+    try {
+      const out = await chooseFiles(p, { onOpened: () => setChoosing(true) });
+      if (out.kind === 'cancelled') return;
+      if (out.kind === 'needs-connect') {
+        setConnect({ url: out.connectUrl, label: providerNames[p.provider] ?? p.name });
+        return;
+      }
+      const { usable, rejected } = partitionPicked(out.files);
+      setRefused(rejected.map((r) => ({ name: r.file.name, problem: r.problem })));
+      // Picking the same file twice would make two jobs reading one
+      // file, which is never what the second pick meant.
+      const have = new Set(files.map((f) => f.reference));
+      const add: ConnectorRowFile[] = [];
+      for (const f of usable) {
+        const reference = fileReference(p, f);
+        if (have.has(reference)) continue;
+        have.add(reference);
+        add.push({ name: f.name, reference });
+      }
+      if (add.length > 0) setFiles([...files, ...add]);
+    } catch (e) {
+      setPickError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setChoosing(false);
+    }
+  };
+
+  if (list.length === 0) {
+    return (
+      <div className="text-sm text-gray-500">
+        This access point has no connected-account chooser configured.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {list.map((p) => (
+          <button
+            key={p.name}
+            type="button"
+            className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+            disabled={busy}
+            onClick={() => void open(p)}
+          >
+            {busy ? (choosing ? 'Choosing…' : 'Opening…') : `Add from ${providerNames[p.provider] ?? p.name}…`}
+          </button>
+        ))}
+        <span className="text-gray-500">
+          One job per file. Fetched by the access point at submit — nothing is
+          uploaded from this browser.
+        </span>
+      </div>
+
+      {connect && (
+        <p className="text-xs text-amber-800" data-testid="drive-needs-connect">
+          This access point has no {connect.label} authorization from you yet.{' '}
+          <a
+            className="underline"
+            href={connect.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Authorize it
+          </a>{' '}
+          — this opens a new tab, so the batch you are describing here is not
+          lost. Close that tab when it reports the account connected, then pick
+          the files again.
+        </p>
+      )}
+
+      {pickError && (
+        <p className="text-xs text-red-700" data-testid="drive-error">
+          {pickError}
+        </p>
+      )}
+
+      {refused.length > 0 && (
+        <ul className="text-xs text-red-700" data-testid="drive-refused">
+          {refused.map((r) => (
+            <li key={r.name}>
+              <span className="font-mono">{r.name}</span> {r.problem}. Rename it
+              where it lives and pick it again.
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-700" data-testid="drive-table-error">
+          {error}
+        </p>
+      )}
+
+      {files.length === 0 ? (
+        <div className="text-sm text-gray-500">
+          No files picked yet. Pick one or more and each becomes a job.
+        </div>
+      ) : (
+        <>
+          <ul className="divide-y divide-gray-200 rounded border border-gray-200 text-xs">
+            {files.map((f) => (
+              <li key={f.reference} className="flex items-center justify-between px-2 py-1">
+                <span className="truncate">
+                  <span className="font-mono">{f.name}</span>
+                </span>
+                <button
+                  type="button"
+                  className="ml-2 shrink-0 text-gray-500 underline hover:text-gray-800"
+                  onClick={() => setFiles(files.filter((x) => x.reference !== f.reference))}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 // CountSource is the "Run N copies" alternative to the per-job table.
 // Renders a single integer input bound to `count`. The parent
 // synthesizes `queue N` at submit time. Useful when each job needs

@@ -43,6 +43,7 @@ func (s *Handler) connectorUploadReader(
 	if err != nil {
 		return nil, err
 	}
+	refs = refsThisProcAwaits(ad, refs)
 	if len(refs) == 0 {
 		return upload, nil
 	}
@@ -309,4 +310,39 @@ func jobIDOf(ad *classad.ClassAd) string {
 	cluster, _ := ad.EvaluateAttrInt("ClusterId")
 	proc, _ := ad.EvaluateAttrInt("ProcId")
 	return fmt.Sprintf("%d.%d", cluster, proc)
+}
+
+// refsThisProcAwaits narrows a cluster's connector references to the
+// ones this proc is actually waiting for.
+//
+// ConnectorInputs is recorded once for the whole submission, so every
+// proc's ad lists every reference the submission mentioned. That is
+// right when the files are common to the batch -- each proc transfers
+// all of them -- and badly wrong when they are per-job: a batch of N
+// files would fetch all N for each of N procs, N^2 fetches, and give
+// every sandbox N-1 files it never asked for.
+//
+// The proc's own awaited set is the authority on what it needs, and it
+// is the same set the schedd is holding it for.
+//
+// Conservative when that set is empty or unreadable: an empty set here
+// would otherwise mean "fetch nothing", and a job released with an
+// empty sandbox is a worse failure than a redundant fetch. Narrowing
+// only ever happens on evidence.
+func refsThisProcAwaits(ad *classad.ClassAd, refs []connectors.InputRef) []connectors.InputRef {
+	awaiting := htcondor.SpoolInputAllowSet(ad)
+	if len(awaiting) == 0 {
+		return refs
+	}
+	want := make(map[string]bool, len(awaiting))
+	for _, name := range awaiting {
+		want[name] = true
+	}
+	out := make([]connectors.InputRef, 0, len(refs))
+	for _, ref := range refs {
+		if want[ref.Name] {
+			out = append(out, ref)
+		}
+	}
+	return out
 }

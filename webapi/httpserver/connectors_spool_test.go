@@ -370,3 +370,56 @@ func TestConnectorsSupplyAllMatchesTheSandboxName(t *testing.T) {
 		t.Error("the provider's file id was matched as if it were a filename")
 	}
 }
+
+// Which of a submission's connector files one proc fetches.
+//
+// ConnectorInputs is recorded once for the whole submission, so every
+// proc's ad lists every reference. That is right for files common to
+// the batch and wrong for per-job ones, where it would turn N files
+// across N jobs into N^2 fetches and give every sandbox N-1 files it
+// never asked for.
+func TestRefsAreNarrowedToWhatTheProcAwaits(t *testing.T) {
+	const both = "webapi-builtin-gdrive+gdrive2://1A/a.csv webapi-builtin-gdrive+gdrive2://2B/b.csv"
+	refs, err := connectors.DecodeInputRefs(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	named := func(got []connectors.InputRef) []string {
+		out := make([]string, 0, len(got))
+		for _, r := range got {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+
+	t.Run("per-job: this proc awaits one of them", func(t *testing.T) {
+		ad := adWithRefs(t, both)
+		if err := ad.Set("TransferInput", "a.csv"); err != nil {
+			t.Fatal(err)
+		}
+		if got := named(refsThisProcAwaits(ad, refs)); len(got) != 1 || got[0] != "a.csv" {
+			t.Errorf("fetched %v, want just a.csv; the other proc's file is not this one's", got)
+		}
+	})
+
+	t.Run("common inputs: this proc awaits both", func(t *testing.T) {
+		ad := adWithRefs(t, both)
+		if err := ad.Set("TransferInput", "a.csv, b.csv"); err != nil {
+			t.Fatal(err)
+		}
+		if got := named(refsThisProcAwaits(ad, refs)); len(got) != 2 {
+			t.Errorf("fetched %v, want both; narrowing must not touch common inputs", got)
+		}
+	})
+
+	// An empty awaited set means "could not tell", never "fetch
+	// nothing": releasing a job with an empty sandbox is a worse
+	// failure than fetching a file it did not need.
+	t.Run("nothing readable: keep everything", func(t *testing.T) {
+		ad := adWithRefs(t, both)
+		if got := named(refsThisProcAwaits(ad, refs)); len(got) != 2 {
+			t.Errorf("fetched %v with no TransferInput to go on; want all of them", got)
+		}
+	})
+}
