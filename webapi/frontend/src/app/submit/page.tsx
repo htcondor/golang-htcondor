@@ -8,7 +8,7 @@
 //
 //   2. Table — one row per job in the batch, columns named by the
 //      template's variables. The page synthesizes
-//      `queue <cols> from ((...))` from this.
+//      `queue <cols> from (...)` from this.
 //
 //   3. Inputs — file uploads attached after submission.
 //
@@ -908,7 +908,7 @@ export default function SubmitPage() {
           return { ok: false, error: 'contents must be non-empty' };
         }
         // Reject bodies that include a queue line. The page synthesizes
-        // `queue <cols> from ((...))` from the table rows and a
+        // `queue <cols> from (...)` from the table rows and a
         // hand-written queue would either duplicate that line (HTCondor
         // submit error) or produce a job count that doesn't match the
         // user's table. Rejecting here surfaces the problem to the LLM
@@ -4110,12 +4110,18 @@ function reshapeRows(prev: string[][], cols: TemplateColumn[]): string[][] {
 }
 
 // buildSubmitFile glues a template's body to a synthesized
-// `queue cols from ((...))` line. We emit the table inline rather than
+// `queue cols from (...)` line. We emit the table inline rather than
 // shipping a CSV file to keep submission a single API call.
 //
-// HTCondor's "queue ... from ((...))" syntax accepts whitespace-
-// separated row records inside double parens. We quote each cell so
-// values containing spaces survive intact.
+// HTCondor's "queue ... from (...)" syntax reads each line inside the
+// parens as one row of whitespace- or comma-separated cells. We quote
+// each cell so values containing spaces survive intact.
+//
+// ONE paren. A second is not a delimiter -- condor_submit reads it as
+// the first item's text, so `from ((` queues an extra job whose first
+// variable is "(". This emitted two for a long time, and a pre-pass in
+// the Go submit parser hid it from everything except condor_submit
+// itself.
 function buildSubmitFile(
   contents: string,
   columns: string[],
@@ -4130,7 +4136,7 @@ function buildSubmitFile(
     .filter((r) => !r.every((c) => c.trim() === ''))
     .map((r) => r.map(quoteCell).join(' '))
     .join('\n  ');
-  return `${body}\nqueue ${colsLine} from ((\n  ${rowsBody}\n))\n`;
+  return `${body}\nqueue ${colsLine} from (\n  ${rowsBody}\n)\n`;
 }
 
 // buildSubmitFileWithCount appends a flat `queue N` to the body. Used

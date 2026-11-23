@@ -13,14 +13,14 @@ import (
 // UI's /submit page exercises:
 //
 //  1. Take template.Contents (the submit-file body without queue).
-//  2. Append `queue COLS from ((rows))` — the inline form the
+//  2. Append `queue COLS from (rows)` — the bracketed form the
 //     frontend's buildSubmitFile() emits.
 //  3. ParseSubmitFile must succeed (no goyacc "syntax error").
 //  4. submitFile.Submit() must produce one proc per row.
 //  5. Each row's variable substitutions must land in the expected
 //     attribute (e.g. sleep's $(seconds) → Args).
 //
-// This is the regression-guard for the inline-`((...))` pre-processor
+// This is the regression-guard for the bracketed `from (...)` item list
 // in the core submit parser and for the built-in YAML staying
 // parser-clean. It lives in the webapi module because that is where the
 // templates library now resides; it imports the core htcondor package
@@ -109,7 +109,7 @@ func TestBuiltinTemplatesParseAndExpand(t *testing.T) {
 }
 
 // buildBatchSubmitFile is the Go-side mirror of the frontend's
-// buildSubmitFile: append a `queue cols from ((<rows>))` block to the
+// buildSubmitFile: append a `queue cols from (<rows>)` block to the
 // template body. We intentionally produce the exact form the SPA
 // emits so this test catches drift in either direction.
 func buildBatchSubmitFile(tpl templates.Template, rows [][]string) string {
@@ -121,13 +121,13 @@ func buildBatchSubmitFile(tpl templates.Template, rows [][]string) string {
 	sb.WriteString(body)
 	sb.WriteString("\nqueue ")
 	sb.WriteString(strings.Join(templates.ColumnNames(tpl.Columns), ", "))
-	sb.WriteString(" from ((\n")
+	sb.WriteString(" from (\n")
 	for _, r := range rows {
 		sb.WriteString("  ")
 		sb.WriteString(strings.Join(r, " "))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("))\n")
+	sb.WriteString(")\n")
 	return sb.String()
 }
 

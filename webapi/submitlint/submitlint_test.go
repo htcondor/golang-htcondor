@@ -237,7 +237,7 @@ func TestWarnUndefinedMacrosUnparseable(t *testing.T) {
 // submit file this package cannot parse is passed through to the schedd,
 // which is the authority on what it accepts.
 func TestInspectSubmitFileUnparseable(t *testing.T) {
-	insp := Inspect("queue from ((\n")
+	insp := Inspect("queue from (\n")
 	if insp.Fatal != nil {
 		t.Errorf("an unparseable submit file must not be rejected locally: %v", insp.Fatal)
 	}
