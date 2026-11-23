@@ -130,10 +130,11 @@ export function buildCountQueue(n: number): string {
  * repository's own parser, which agree. Only the `from` form reads a
  * line as a row of columns.
  *
- * The doubled parens match webapi/sftpjobs/buildsubmit.go and
- * buildSubmitFile in app/submit/page.tsx. They make the list's
- * terminator `))` rather than `)`, which is what lets the row
- * validation refuse a value that would close the list early.
+ * One paren, matching webapi/sftpjobs/buildsubmit.go and
+ * buildSubmitFile in app/submit/page.tsx. A second is not a second
+ * delimiter: condor_submit looks for a single `(` to decide the list is
+ * bracketed, so the inner one would be the first item's text and the
+ * block would queue one job more than it has rows.
  *
  * Throws if columns are empty, headers aren't valid identifiers, or any
  * cell contains whitespace.
@@ -177,7 +178,7 @@ export function buildTableQueue(
   // One row per line, always: the single-line form of `from` reads the
   // whole list as one row, so there is no short version of this to take.
   const indented = items.map((it) => '  ' + it).join('\n');
-  return `queue ${columns.join(', ')} from ((\n${indented}\n))`;
+  return `queue ${columns.join(', ')} from (\n${indented}\n)`;
 }
 
 // --- Environment encoding -------------------------------------------------

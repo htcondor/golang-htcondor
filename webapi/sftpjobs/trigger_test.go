@@ -336,7 +336,7 @@ func TestDuplicateUploadIsOneSubmission(t *testing.T) {
 func TestRefusedCSVIsReportedInStatus(t *testing.T) {
 	f := newTriggerFS(t)
 	err := writeCSV(t, f.FS, blastDir+"/submit/bad.csv",
-		"sample,reads\nHG001,a.fastq\nHG002,b))c\n")
+		"sample,reads\nHG001,a.fastq\n),b.fastq\n")
 	if err == nil {
 		t.Fatal("a CSV with an injected row was accepted")
 	}
@@ -344,7 +344,7 @@ func TestRefusedCSVIsReportedInStatus(t *testing.T) {
 		t.Error("it was submitted anyway")
 	}
 	st := readStatus(t, f.FS, blastDir+"/status/bad.csv")
-	for _, want := range []string{"state: refused", "row 3", "))"} {
+	for _, want := range []string{"state: refused", "row 3", `starts with ")"`} {
 		if !strings.Contains(st, want) {
 			t.Errorf("status %q does not contain %q", st, want)
 		}

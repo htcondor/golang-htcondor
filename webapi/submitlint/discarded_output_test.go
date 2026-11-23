@@ -143,14 +143,14 @@ func TestQueueVariableCountsAsVariation(t *testing.T) {
 }
 
 // TestInlineRowsCount covers the form the web submission page actually
-// posts: `queue <vars> from ((rows))`, one process per row. The config
+// posts: `queue <vars> from (rows)`, one process per row. The config
 // grammar cannot parse that form at all, so counting the processes by
 // re-reading the text reported 0 and the collision check never fired on
 // the page most likely to produce it. The count comes from the submit
 // parser's own iterator instead.
 func TestInlineRowsCount(t *testing.T) {
 	raw := "executable = run.sh\noutput = run.out\nerror = run.err\nlog = run.log\n" +
-		"queue name from ((\nalice\nbob\ncarol\n))\n"
+		"queue name from (\nalice\nbob\ncarol\n)\n"
 	warnings := strings.Join(Inspect(raw).Warnings, "\n")
 	if !strings.Contains(warnings, "3 processes") {
 		t.Errorf("expected one process per row:\n%s", warnings)
@@ -161,7 +161,7 @@ func TestInlineRowsCount(t *testing.T) {
 // row variable in the file name makes it differ per process.
 func TestInlineRowsVaryingNamesDoNotWarn(t *testing.T) {
 	raw := "executable = run.sh\noutput = $(name).out\nerror = $(name).err\nlog = run.log\n" +
-		"queue name from ((\nalice\nbob\n))\n"
+		"queue name from (\nalice\nbob\n)\n"
 	if got := Inspect(raw).Warnings; len(got) != 0 {
 		t.Errorf("a row variable in the name varies per process; got %v", got)
 	}

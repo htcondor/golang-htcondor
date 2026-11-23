@@ -121,7 +121,7 @@ func (f *FS) dropReadmeText() string {
 	fmt.Fprintf(&b, "The archive may be up to %d bytes.\n", f.dropLimit())
 	b.WriteString("Your submit description is parsed without access to this host, so\n")
 	b.WriteString("include, include command, $ENV() and `queue ... from <file>` do not\n")
-	b.WriteString("work. Use the inline form: queue var from ((row\\nrow)).\n\n")
+	b.WriteString("work. Use the inline form: queue var from (row\\nrow).\n\n")
 	b.WriteString("The submission happens when your client closes the file. An interrupted\n")
 	b.WriteString("transfer submits nothing.\n\n")
 	fmt.Fprintf(&b, "The same archive dropped twice within %s is one submission rather\n",

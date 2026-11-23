@@ -175,7 +175,7 @@ THE WORKFLOW:
           and which columns the table will use.
   step 2. Provide per-job parameters. Three options:
             - set_table_rows — one row per job, cells fill column variables. The
-              page synthesizes "queue <cols> from ((...))" automatically.
+              page synthesizes "queue <cols> from (...)" automatically.
             - set_table_count — N identical jobs (HTCondor "queue N"). Use when
               the body needs only $(ProcId)-based variation, or for a one-off
               "just run it once" job. Default count is 1.

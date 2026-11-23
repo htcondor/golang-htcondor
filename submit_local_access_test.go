@@ -127,16 +127,17 @@ func TestParseSubmitFileNoItemdataFile(t *testing.T) {
 }
 
 // TestParseSubmitFileInlineItemdataStillWorks checks the refusal does
-// not catch the inline `queue vars from ((rows))` form, whose temp file
-// ParseSubmitFile writes itself. That form is how the web API submits
-// table-shaped job sets, and it never names a caller-chosen path.
+// not catch the bracketed `queue vars from (rows)` form, which names no
+// path at all -- the rows are in the submit file. That form is how the
+// web API submits table-shaped job sets, so a refusal here would stop
+// every batch submission rather than only the ones reading the host.
 func TestParseSubmitFileInlineItemdataStillWorks(t *testing.T) {
 	raw := `executable = /bin/true
 arguments = $(sample) $(events)
-queue sample, events from ((
+queue sample, events from (
   alpha, 100
   beta, 200
-))
+)
 `
 	sf, err := ParseSubmitFile(strings.NewReader(raw))
 	if err != nil {

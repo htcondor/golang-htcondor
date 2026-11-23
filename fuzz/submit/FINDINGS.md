@@ -341,12 +341,12 @@ the only way to express such a path. That reasoning was wrong -- the verbatim
 rule *is* how such a path is expressed -- so the stripping is gone and the two
 parsers agree.
 
-The one thing that depended on the stripping was internal: the pre-pass that
-rewrites `queue VARS from ((rows))` into `queue VARS from <tempfile>` quoted
+The one thing that depended on the stripping was internal: a pre-pass that
+rewrote `queue VARS from ((rows))` into `queue VARS from <tempfile>` quoted
 the temp path, because the grammar once accepted only an IDENT or a STRING
-there. It writes the path bare now. A temp path containing a space is pinned
-by a test of its own, since every temp directory a developer is likely to have
-is space-free and nothing else would notice.
+there. That pre-pass has since been deleted outright -- see "A doubled paren
+is not a delimiter" below -- and the verbatim-name rule is now pinned by a
+test that names a real item file in a directory with a space in it.
 
 **An inline item list had to be parenthesised.** HTCondor anchors the queue
 parse on the `in`/`from` keyword and takes the rest of the line as the item
@@ -1948,6 +1948,58 @@ Measured cut-offs, all against SubmitHash:
 
 A loop variable named after one of the iterator's bookkeeping entries (Step,
 Row, ItemIndex) wins over it, which is what condor_submit does.
+
+## A doubled paren is not a delimiter
+
+Fixed, and the fix was a deletion. `queue VARS from ((rows))` queued one job
+more under condor_submit than it did here, the extra one having `(` as its
+first variable.
+
+This parser had a pre-pass that recognised `from ((` ... `))` and wrote the
+rows to a temp file. Its comment said the doubled form was "what HTCondor's
+own condor_submit accepts". It is not, and nothing had ever asked: HTCondor
+looks for a single `(` to decide the list is bracketed, so the second one is
+simply the first item's text.
+
+| statement | condor_submit | before the fix |
+|---|---|---|
+| `from ((\n1 2\n3 4\n))` | `(`, `1 2`, `3 4` | `1 2`, `3 4` |
+| `from ((a\nb))` | `(a`, `b` | `a`, `b` |
+| `from (\n1 2\n3 4\n)` | `1 2`, `3 4` | same |
+
+Two things kept it hidden, and both are worth more than the bug. The
+generator emitted only `queue N` and `in` lists, so no `from` list of any
+spelling was ever generated -- the one form whose items are rows of several
+columns was outside the fuzzer's vocabulary. And every generator in this
+repository wrote the doubled form, so the submit files the webapi produced
+were the ones the pre-pass was built to read: the two agreed with each other
+and both differed from HTCondor.
+
+`queueStatement` in gen.go now emits bracketed `from` lists, doubled parens
+among them, and the shapes are parity seeds.
+
+An empty bracketed list is not an error on either side: `queue x from (\n)`
+queues the count with the loop variable expanding to nothing. The old
+pre-pass refused it with "no rows". Note that `condor_submit` the TOOL then
+declines to submit, with "has only empty queue commands"; that check is in
+condor_submit.V6/submit.cpp rather than in SubmitHash, so it is outside both
+what this parser mirrors and what the oracle can see.
+
+## SubmitHash does not return from a row that expands its own loop variable
+
+Not fixed here, and not ours: `queue a, b from (\nx1 $(b)\n)` hangs
+condor_submit 26.2.0 for ever. Not a crash and not an error -- a spin. The
+row supplies `b` and expands `b` at the same time. `queue a from (\n$(a)\n)`
+does it too; a row naming the OTHER column's variable is fine, as is a
+reference to a variable the statement does not bind, and the `in` form is
+unaffected because its items are not rows.
+
+This parser expands the reference to nothing and queues the row, so the
+divergence is an oracle that never comes back rather than two answers to
+compare. `selfReferentialItemRow` in differential_test.go skips the shape,
+narrowly, and TestSelfReferentialItemRowIsNarrow pins the edges. Found within
+minutes of teaching the generator bracketed `from` lists, which is the measure
+of how long the shape had gone unasked.
 
 ## An inline item list cut before its macros were expanded
 
