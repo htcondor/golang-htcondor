@@ -12,6 +12,12 @@
 //     somewhere else -- Drive and the like -- so a job can read or write
 //     files there. We hold the credential, which is why that section
 //     disconnects rather than deletes.
+//   - Your own machines over SSH. A certificate your laptop holds that
+//     lets it act as you here. The same direction as the first section
+//     -- something outside holding a credential for this account -- and
+//     a section of its own because the holder is not an app: nothing
+//     consented on your behalf, there is no client and no scope screen,
+//     and what was granted is a shell.
 //   - Event notifications. This server posts to a service when your jobs
 //     change state. Nothing outside gains any access; we reach out to it.
 //
@@ -39,6 +45,7 @@ import { ScopeChips } from "@/components/ScopeChips";
 import { WebhooksSection } from "./WebhooksSection";
 import { ConnectedServicesSection } from "./ConnectedServicesSection";
 import { GrantsSection } from "./GrantsSection";
+import { SSHSection } from "./SSHSection";
 
 // The scopes worth offering as checkboxes. The server narrows whatever is
 // asked for to what the account could consent to, so an unavailable one here
@@ -163,6 +170,18 @@ export default function ConnectorsPage() {
           />
         )}
       </section>
+
+      <hr className="border-gray-200" />
+
+      {/* Directly after the apps, because it is the same arrow: a
+          credential held OUTSIDE that acts as you HERE. It moved off
+          /info, which is a readout -- version, uptime, your groups --
+          and was the one thing on that page that did something.
+
+          Renders nothing where the deployment has no SSH certificate
+          authority, which is a statement about the installation rather
+          than a fault. */}
+      <SSHSection />
 
       <hr className="border-gray-200" />
 

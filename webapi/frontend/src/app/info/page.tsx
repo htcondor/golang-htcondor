@@ -1,14 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  api,
-  ApiError,
-  type DBMirrorHealth,
-  type DBMirrorTest,
-  type SSHCertificate,
-} from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { api, type DBMirrorHealth, type DBMirrorTest } from "@/lib/api";
 
 export default function InfoPage() {
   const {
@@ -122,7 +116,28 @@ export default function InfoPage() {
         )}
       </Section>
 
-      {session?.authenticated && <SSHAccessSection />}
+      {/* SSH setup moved to /connectors.
+
+          It is the same kind of thing as the rest of that page -- a
+          credential something outside holds to act as you here -- and
+          it was the only thing on /info that DID something rather than
+          reporting something. The pointer stays because this is where
+          people learned to look for it. */}
+      {session?.authenticated && (
+        <Section title="SSH access">
+          <p className="text-sm text-gray-600">
+            Trusting the gateway, issuing a certificate for one of your own
+            machines, and withdrawing one, are on the{" "}
+            <a
+              href="/connectors"
+              className="text-brand-700 underline hover:text-brand-900"
+            >
+              Connectors
+            </a>{" "}
+            page.
+          </p>
+        </Section>
+      )}
 
       {/* Admin-only: HTCondor config readout. Hidden entirely for
           non-admins (the endpoint also gates server-side, so a
@@ -780,197 +795,5 @@ function Row({
         {value}
       </dd>
     </>
-  );
-}
-
-// SSHAccessSection hands a browser user the two things they need to
-// reach a job over SSH: what to trust, and a certificate to present.
-//
-// Rendered only when a certificate authority exists. GET /ssh/ca answers
-// 503 when none is configured, which is a statement about the
-// deployment rather than a failure, so the section disappears instead of
-// showing an error -- an access point with no gateway should not have a
-// broken-looking panel about one.
-//
-// The public key is pasted rather than generated here. A browser cannot
-// read ~/.ssh/id_ed25519.pub, and generating a keypair in the page would
-// mean delivering a private key through a browser -- which is worse than
-// asking for one line, and a private key is the one thing this flow is
-// built never to move.
-function SSHAccessSection() {
-  const {
-    data: ca,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ["ssh", "ca"],
-    queryFn: api.ssh.ca,
-    retry: false,
-  });
-
-  const [publicKey, setPublicKey] = useState("");
-  const [lifetimeHours, setLifetimeHours] = useState(12);
-  const [cert, setCert] = useState<SSHCertificate | null>(null);
-  const [issueError, setIssueError] = useState<string | null>(null);
-
-  const issue = useMutation({
-    mutationFn: () =>
-      api.ssh.certificate(publicKey.trim(), lifetimeHours * 3600),
-    onMutate: () => {
-      setIssueError(null);
-      setCert(null);
-    },
-    onSuccess: (c) => setCert(c),
-    onError: (e) =>
-      setIssueError(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  if (isLoading) return null;
-  // 503 is "this deployment has no certificate authority", not a fault.
-  if (error || !ca) return null;
-
-  const host = ca.gateway_host;
-  const port = ca.gateway_port && ca.gateway_port !== 22 ? ca.gateway_port : 0;
-  const sshCmd = host
-    ? `ssh ${port ? `-p ${port} ` : ""}${host}`
-    : "ssh <gateway host>";
-
-  return (
-    <Section title="SSH access">
-      <p className="text-sm text-gray-600">
-        Reach a job over SSH without approving a browser prompt each time. A
-        certificate is issued once and works until it expires.
-      </p>
-
-      <div className="mt-4 space-y-4">
-        <div>
-          <div className="text-sm font-medium text-gray-700">
-            1. Trust the gateway
-          </div>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Append this to <code>~/.ssh/known_hosts</code>. Without it the first
-            connection asks you to verify a fingerprint by hand.
-          </p>
-          <CopyableBlock text={ca.known_hosts_line} />
-          <p className="text-xs text-gray-500 mt-1">
-            CA fingerprint: <span className="font-mono">{ca.fingerprint}</span>
-          </p>
-        </div>
-
-        <div>
-          <div className="text-sm font-medium text-gray-700">
-            2. Get a certificate
-          </div>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Paste the <strong>public</strong> half of a key you already have —
-            the contents of <code>~/.ssh/id_ed25519.pub</code>. Your private key
-            stays on your machine and is never sent.
-          </p>
-          <textarea
-            value={publicKey}
-            onChange={(e) => setPublicKey(e.target.value)}
-            rows={3}
-            spellCheck={false}
-            placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... you@laptop"
-            className="mt-2 w-full rounded-sm border border-gray-300 px-3 py-2 font-mono text-xs"
-          />
-          <div className="mt-2 flex items-center gap-3">
-            <label className="text-xs text-gray-600">
-              Valid for{" "}
-              <select
-                value={lifetimeHours}
-                onChange={(e) => setLifetimeHours(Number(e.target.value))}
-                className="rounded-sm border border-gray-300 px-2 py-1 text-xs"
-              >
-                <option value={1}>1 hour</option>
-                <option value={12}>12 hours</option>
-                <option value={24}>24 hours</option>
-              </select>
-            </label>
-            <button
-              onClick={() => issue.mutate()}
-              disabled={!publicKey.trim() || issue.isPending}
-              className="rounded-sm bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
-            >
-              {issue.isPending ? "Issuing…" : "Issue certificate"}
-            </button>
-          </div>
-          {issueError && (
-            <p className="mt-2 text-sm text-red-600">{issueError}</p>
-          )}
-        </div>
-
-        {cert && (
-          <div>
-            <div className="text-sm font-medium text-gray-700">
-              3. Save it beside your key
-            </div>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Save as <code>~/.ssh/id_ed25519-cert.pub</code> — the same name as
-              your private key with <code>-cert.pub</code> appended. ssh finds
-              it there on its own. Issued to{" "}
-              <span className="font-mono">{cert.principal}</span>, expires{" "}
-              {new Date(cert.valid_before).toLocaleString()}.
-            </p>
-            <CopyableBlock
-              text={cert.certificate}
-              download="id_ed25519-cert.pub"
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Then connect: <code className="font-mono">{sshCmd}</code>
-              {host
-                ? null
-                : " — ask your administrator for the gateway's name."}
-            </p>
-          </div>
-        )}
-      </div>
-    </Section>
-  );
-}
-
-// CopyableBlock shows one long line that a person has to get into a file
-// exactly, with both ways of doing that: the clipboard, and a download
-// for when the clipboard is not available or the line is long enough
-// that a failed paste would be silent.
-function CopyableBlock({
-  text,
-  download,
-}: {
-  text: string;
-  download?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="mt-2">
-      <pre className="overflow-x-auto rounded-sm border border-gray-200 bg-gray-50 p-2 font-mono text-xs whitespace-pre-wrap break-all">
-        {text}
-      </pre>
-      <div className="mt-1 flex gap-3">
-        <button
-          onClick={() => {
-            navigator.clipboard
-              .writeText(text)
-              .then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              })
-              .catch(() => setCopied(false));
-          }}
-          className="text-xs text-brand-700 hover:text-brand-900 underline"
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-        {download && (
-          <a
-            href={`data:application/octet-stream;charset=utf-8,${encodeURIComponent(text + "\n")}`}
-            download={download}
-            className="text-xs text-brand-700 hover:text-brand-900 underline"
-          >
-            Download
-          </a>
-        )}
-      </div>
-    </div>
   );
 }
