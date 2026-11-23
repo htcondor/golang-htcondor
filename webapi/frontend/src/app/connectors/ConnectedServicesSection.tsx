@@ -21,6 +21,8 @@ import { api, type ConnectorStatus } from "@/lib/api";
 import { connectorLabel } from "@/lib/connectorNames";
 import { ConfirmButton } from "@/components/ConfirmButton";
 
+const TH = "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500";
+
 export function ConnectedServicesSection() {
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery({
@@ -62,15 +64,9 @@ export function ConnectedServicesSection() {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-3 py-2 text-left font-medium text-gray-700">
-                Service
-              </th>
-              <th className="px-3 py-2 text-left font-medium text-gray-700">
-                Status
-              </th>
-              <th className="px-3 py-2 text-left font-medium text-gray-700">
-                Last used
-              </th>
+              <th className={TH}>Service</th>
+              <th className={TH}>Status</th>
+              <th className={TH}>Last used</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
@@ -121,13 +117,22 @@ function ConnectorRow({
             is a different thing from never having connected and needs a
             different sentence: reconnecting fixes it, and nothing else will. */}
         {connector.needs_consent ? (
-          <span className="text-amber-700">
-            Needs reconnecting — the provider stopped renewing this
+          <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
+            Needs reconnecting
           </span>
         ) : connector.connected ? (
-          <span className="text-green-700">Connected</span>
+          <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+            Connected
+          </span>
         ) : (
-          <span className="text-gray-500">Not connected</span>
+          <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+            Not connected
+          </span>
+        )}
+        {connector.needs_consent && (
+          <div className="mt-1 text-xs text-gray-500">
+            The provider stopped renewing this. Reconnecting fixes it; nothing else will.
+          </div>
         )}
       </td>
       <td className="px-3 py-2 text-gray-700">

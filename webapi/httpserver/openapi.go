@@ -934,6 +934,22 @@ const openAPISchema = `{
           "metadata_endpoint": {"type": "string", "description": "The discovery document, for a service that can read one instead of being told each URL."}
         }
       },
+      "Grant": {
+        "type": "object",
+        "description": "One app's hold on your account. A row is an app, not a token: several authorizations by the same client collapse into one.",
+        "properties": {
+          "client_id": {"type": "string"},
+          "client_name": {"type": "string", "description": "What the client calls itself, where it has a name at all."},
+          "owned_by_caller": {"type": "boolean", "description": "A client you registered yourself, which you can also delete outright through /integrations/{id}. False means it registered itself, and shutting it out is all you can do from here."},
+          "scopes": {"type": "array", "items": {"type": "string"}, "description": "What the authorization GRANTED, in the order it had them. Narrower than what the client asked for whenever something was refused."},
+          "grants": {"type": "integer", "description": "How many authorizations are behind this row. More than one is normal -- re-authorizing mints another -- and is also what a client stuck in a sign-in loop looks like."},
+          "tokens": {"type": "integer", "description": "Live token rows, access and refresh together."},
+          "has_refresh": {"type": "boolean", "description": "At least one grant can mint new access tokens with nobody present. The difference between an app that stops working on its own and one that does not."},
+          "first_seen": {"type": "string", "format": "date-time"},
+          "last_seen": {"type": "string", "format": "date-time", "description": "The most recent authorization, not the most recent use."},
+          "expires_at": {"type": "string", "format": "date-time", "description": "The LATEST expiry across this app's live tokens. The soonest would read as \"access ends then\" while a refresh token sat behind it ready to mint more."}
+        }
+      },
       "Integration": {
         "type": "object",
         "description": "One of the caller's own OAuth2 clients. There is no secret field, deliberately: a struct with one is a struct that ends up in a response the first time somebody adds an endpoint.",
@@ -1608,6 +1624,38 @@ const openAPISchema = `{
           "200": {"description": "Deleted", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "id": {"type": "string"}}}}}},
           "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "No such integration of yours", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/oauth2/grants": {
+      "get": {
+        "summary": "List the apps holding access to your account",
+        "description": "What an outside app is holding RIGHT NOW that lets it act as you, grouped by client. Distinct from /integrations, which lists the clients you registered: an app that registered itself through dynamic client registration never appears there, and owned_by_caller marks which kind a row is. Grouped by app rather than by token, because \"let this app in\" is the decision you made -- an app that has signed in three times holds three grants and is one row here. Scopes are what the authorization GRANTED, after consent and the group policy had their say, not what the client asked for. SESSION ONLY: a bearer token able to enumerate and revoke its own siblings is a stolen token that locks you out.",
+        "operationId": "listGrants",
+        "security": [{"sessionCookie": []}],
+        "responses": {
+          "200": {"description": "The apps holding live tokens for you, newest authorization first", "content": {"application/json": {"schema": {"type": "object", "properties": {"grants": {"type": "array", "items": {"$ref": "#/components/schemas/Grant"}}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "The session has no local account", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "OAuth2 is not configured on this server", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/oauth2/grants/revoke": {
+      "post": {
+        "summary": "Withdraw one app's access to your account",
+        "description": "Deactivates every token this client holds FOR YOU -- the access tokens and the refresh tokens minted with them. The refresh tokens go too, because revoking an access token alone lasts until the client refreshes, which is minutes. Scoped to your own subject inside the statement rather than checked first: a check followed by an unscoped write can be raced, and an unscoped write would withdraw the client's grants for everybody who uses it. The app is not deleted and can ask again by signing in; delete it through /integrations/{id} if it is one of yours.",
+        "operationId": "revokeGrant",
+        "security": [{"sessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["client_id"], "properties": {
+          "client_id": {"type": "string", "description": "The app to cut off, as listed by GET /oauth2/grants."}
+        }}}}},
+        "responses": {
+          "200": {"description": "Revoked. revoked counts the token rows deactivated, and is 0 where the app held nothing for you -- which is not an error.", "content": {"application/json": {"schema": {"type": "object", "properties": {"client_id": {"type": "string"}, "revoked": {"type": "integer"}}}}}},
+          "400": {"description": "Malformed body, or no client_id", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

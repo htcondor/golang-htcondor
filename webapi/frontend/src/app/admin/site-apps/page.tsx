@@ -38,6 +38,7 @@ import {
   type AdminSiteAppSetting,
 } from '@/lib/api';
 import { ConfirmButton } from '@/components/ConfirmButton';
+import { GroupsField } from '@/components/GroupsField';
 import {
   EVERYONE,
   nearestSiteAppID,
@@ -368,128 +369,6 @@ function AppConfig({ id }: { id: string }) {
       {save.isError ? (
         <p className="text-sm text-red-600" data-testid="config-save-error">
           {(save.error as Error).message}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-// GroupsField is who may see the app: a checkbox for everyone signed
-// in, or named groups as pills.
-//
-// A raw comma-separated string hid its own mistakes -- a trailing
-// comma, a doubled entry, a stray "*" that quietly published to the
-// whole access point. A pill is a group the form has already accepted,
-// and the "*" is a checkbox because it is a different decision rather
-// than another group name.
-function GroupsField({
-  everyone,
-  groups,
-  pending,
-  error,
-  onEveryone,
-  onGroups,
-  onPending,
-}: {
-  everyone: boolean;
-  groups: string[];
-  pending: string;
-  error: string | null;
-  onEveryone: (v: boolean) => void;
-  onGroups: (g: string[]) => void;
-  onPending: (v: string) => void;
-}) {
-  const [note, setNote] = useState<string | null>(null);
-
-  function commit(raw: string) {
-    const next = [...groups];
-    for (const g of parseGroupList(raw)) {
-      if (g === EVERYONE) {
-        setNote('“*” is every authenticated user — tick the box above instead.');
-        continue;
-      }
-      if (next.some((h) => h.toLowerCase() === g.toLowerCase())) {
-        // Group names are compared case-insensitively by the server,
-        // so smith_lab and Smith_Lab are one group, not two.
-        continue;
-      }
-      next.push(g);
-      setNote(null);
-    }
-    onGroups(next);
-    onPending('');
-  }
-
-  return (
-    <div className="text-sm text-gray-700">
-      <span className="block">Visible to</span>
-      <label className="mt-1 flex items-center gap-2">
-        <input
-          type="checkbox"
-          className="rounded-sm border-gray-300"
-          data-testid="upload-everyone"
-          checked={everyone}
-          onChange={(e) => onEveryone(e.target.checked)}
-        />
-        Everyone signed in to this access point
-      </label>
-      {everyone ? null : (
-        <>
-          {groups.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {groups.map((g) => (
-                <span
-                  key={g}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-800"
-                  data-testid={`group-pill-${g}`}
-                >
-                  {g}
-                  <button
-                    type="button"
-                    className="text-gray-500 hover:text-gray-900"
-                    aria-label={`Remove ${g}`}
-                    data-testid={`group-remove-${g}`}
-                    onClick={() => onGroups(groups.filter((h) => h !== g))}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : null}
-          <input
-            className={INPUT}
-            placeholder="smith_lab — press Enter to add"
-            data-testid="upload-groups"
-            value={pending}
-            onChange={(e) => {
-              const v = e.target.value;
-              // A comma is how the configuration separates them, so
-              // typing one finishes the group rather than becoming
-              // part of its name.
-              if (v.includes(',')) commit(v);
-              else onPending(v);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                commit(pending);
-              }
-            }}
-            onBlur={() => {
-              if (pending.trim() !== '') commit(pending);
-            }}
-          />
-          {note ? (
-            <p className="mt-1 text-xs text-amber-700" data-testid="upload-groups-note">
-              {note}
-            </p>
-          ) : null}
-        </>
-      )}
-      {error ? (
-        <p className="mt-1 text-sm text-red-600" data-testid="upload-groups-error">
-          {error}
         </p>
       ) : null}
     </div>
@@ -1214,6 +1093,9 @@ function UploadForm({
         </p>
       ) : null}
       <GroupsField
+        label="Visible to"
+        everyoneLabel="Everyone signed in to this access point"
+        testIDPrefix="upload"
         everyone={everyone}
         groups={groups}
         pending={pending}

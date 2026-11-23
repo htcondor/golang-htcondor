@@ -232,6 +232,15 @@ func (h *Handler) setupRoutes() {
 	mux.Handle("/api/v1/integrations", cors(http.HandlerFunc(h.handleIntegrations)))
 	mux.Handle("/api/v1/integrations/", cors(http.HandlerFunc(h.handleIntegrationItem)))
 
+	// What apps are holding RIGHT NOW on the caller's account, and the
+	// means to cut one off. Distinct from /integrations, which lists the
+	// clients a user registered: an app that registered itself through
+	// dynamic client registration never appears there, and before this
+	// the user had no way to see it at all. Session-gated inside the
+	// handlers; see handlers_grants.go.
+	mux.Handle("/api/v1/oauth2/grants", cors(http.HandlerFunc(h.handleGrants)))
+	mux.Handle("/api/v1/oauth2/grants/revoke", cors(http.HandlerFunc(h.handleGrantRevoke)))
+
 	// Outbound webhooks -- the other direction: this server posts to a
 	// service when something happens to the caller's jobs. Session-gated
 	// inside the handlers for a reason of their own: a destination is a

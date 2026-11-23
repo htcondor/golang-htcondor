@@ -8,9 +8,20 @@
  * copy is the one that falls behind when a provider is added.
  */
 
-/** Provider names, keyed by the connector or picker provider name. */
+/**
+ * Provider names, keyed by the connector or picker provider name.
+ *
+ * One entry per name in the server's built-in catalogue
+ * (webapi/connectors/builtin.go). The catalogue itself carries no friendly
+ * names on purpose: the file chooser and the connected-services list render
+ * an id without having fetched anything, so a name that only arrived with
+ * the catalogue would leave those two showing `gdrive`.
+ */
 export const providerNames: Record<string, string> = {
   gdrive: 'Google Drive',
+  box: 'Box',
+  onedrive: 'OneDrive',
+  dropbox: 'Dropbox',
 };
 
 /**
