@@ -10,7 +10,7 @@ import (
 	// mode talk to. Built by CI so webapi/httpserver's integration tests
 	// can run against real ones instead of stubs. See ../../webapi/httpserver
 	// (htcondordb_harness_integration_test.go).
-	_ "github.com/bbockelm/htcondordb/cmd/htcondordb"
+	_ "github.com/htcondor/htcondordb/cmd/htcondordb"
 
 	// nfpm: builds the release RPM. Same reason as gotestsum -- the
 	// version is recorded in this module's go.sum, verified on download,

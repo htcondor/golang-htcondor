@@ -26,7 +26,7 @@ set -euo pipefail
 #
 # If this build fails the test SKIPS rather than fails, which would hide
 # the gap it exists to close -- so fail the job here instead.
-(cd .github/tools && GOWORK=off go build -o /workspace/.gocache/htcondordb github.com/bbockelm/htcondordb/cmd/htcondordb)
+(cd .github/tools && GOWORK=off go build -o /workspace/.gocache/htcondordb github.com/htcondor/htcondordb/cmd/htcondordb)
 
 # The JupyterLab tunnel helper is a real binary the jupytertunnel
 # integration test execs. Without it that test skips, and a skip is

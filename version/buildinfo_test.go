@@ -62,7 +62,7 @@ func TestDownstreamDaemonReportsItsOwnBuild(t *testing.T) {
 	Version, Commit = "dev", "unknown" // as a downstream build leaves them
 
 	b := buildFrom(&debug.BuildInfo{
-		Main: debug.Module{Path: "github.com/bbockelm/htcondordb", Version: "v0.18.6"},
+		Main: debug.Module{Path: "github.com/htcondor/htcondordb", Version: "v0.18.6"},
 		Deps: []*debug.Module{
 			{Path: "github.com/PelicanPlatform/classad", Version: "v0.29.7"},
 			{Path: "github.com/bbockelm/cedar", Version: "v0.6.11"},
@@ -78,7 +78,7 @@ func TestDownstreamDaemonReportsItsOwnBuild(t *testing.T) {
 	if b.Version != "v0.18.6" {
 		t.Errorf("Version = %q, want the daemon's own module version", b.Version)
 	}
-	if b.Module != "github.com/bbockelm/htcondordb" {
+	if b.Module != "github.com/htcondor/htcondordb" {
 		t.Errorf("Module = %q", b.Module)
 	}
 	if b.ShortRevision() != "3954b36e31f7" {

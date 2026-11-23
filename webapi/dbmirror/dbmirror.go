@@ -34,7 +34,7 @@ import (
 )
 
 // SessionCommand is htcondordb's DBSession CEDAR command
-// (github.com/bbockelm/htcondordb/command.DBSession = 74000). It is
+// (github.com/htcondor/htcondordb/command.DBSession = 74000). It is
 // duplicated here so webapi need not depend on the htcondordb module,
 // matching how htcondordb/kafkasync duplicates it.
 const SessionCommand = 74000

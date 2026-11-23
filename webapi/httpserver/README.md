@@ -529,7 +529,7 @@ See [../metricsd/README.md](../metricsd/README.md) for complete metrics document
 `GET /api/v1/jobs` and `GET /api/v1/jobs/archive` are the two heaviest things
 this API asks of a schedd: the archive read scans the on-disk history file and a
 broad job query walks the queue, both competing with scheduling and negotiation.
-When a synchronized [htcondordb](https://github.com/bbockelm/htcondordb) mirror
+When a synchronized [htcondordb](https://github.com/htcondor/htcondordb) mirror
 is advertising to the collector and is current, those reads are served from it
 instead. The response says which backend answered:
 

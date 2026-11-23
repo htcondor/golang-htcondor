@@ -344,6 +344,6 @@ More in [API surface](server-api.md).
   security configuration guide.
 - [docs/library.md](library.md) — embedding the underlying Go
   library in your own service.
-- [htcondordb](https://github.com/bbockelm/htcondordb) — the job-queue
+- [htcondordb](https://github.com/htcondor/htcondordb) — the job-queue
   mirror several features read from, including runtime and drain
   estimates and multi-AP mode.
