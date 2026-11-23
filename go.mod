@@ -3,8 +3,8 @@ module github.com/htcondor/golang-htcondor
 go 1.26.0
 
 require (
-	github.com/PelicanPlatform/classad v0.38.3
-	github.com/PelicanPlatform/classad/collections v0.38.3
+	github.com/PelicanPlatform/classad v0.43.1
+	github.com/PelicanPlatform/classad/collections v0.43.1
 	github.com/bbockelm/cedar v0.7.15
 	github.com/bbockelm/gosssd v0.0.4
 	github.com/glebarez/go-sqlite v1.23.0

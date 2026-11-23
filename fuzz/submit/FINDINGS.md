@@ -1971,3 +1971,29 @@ and is left alone, so `queue x,y from (\n1 2\n)` is still one row of two
 columns. `QueueStatement` now records which keyword introduced the list,
 because nothing downstream could tell the two forms apart from the items
 alone.
+
+## A real in a transform body spelled the new-ClassAd way
+
+Fixed upstream, in the ClassAd library, and closed here by moving to
+`classad v0.43.1`.
+
+`retry_request_memory = 1e0 % queue` put `EVALSET RequestMemory 1.0` in the
+transform body under condor_submit and
+`EVALSET RequestMemory 1.000000000000000E+00` here.
+
+`ClassAdUnParser::UnparseReal` picks its format from the unparser's
+`oldClassAd` flag: `%1.15E` for new ClassAd, `%.16G` for old, with `".0"`
+appended when the result holds none of `.`, `E` or `e` so a real never reads
+back as an integer. The Go library had only the new-format function and
+`marshalOld` called it for everything except zero, so the old path emitted the
+new spelling.
+
+It surfaces here because the schedd re-parses a transform body out of a string
+attribute, which makes condor_submit's spelling the one that has to appear.
+
+Two spellings of it are committed, `d1e9b235215b45ca` (`0 % .1 % queue`) and
+`e811d3fa61d474e9` (`1e0 % queue`), because the first went unfixed for four
+days while the nightly passed: a 5-minute run reaches this only when it
+happens to generate a real that the two formats disagree about, and several
+values coincide at 16 significant digits. A green run was never evidence the
+bug had gone.

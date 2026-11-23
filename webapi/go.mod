@@ -109,10 +109,10 @@ require (
 )
 
 require (
-	github.com/PelicanPlatform/classad v0.38.3
-	github.com/PelicanPlatform/classad/collections v0.38.3
-	github.com/PelicanPlatform/classad/db v0.38.0
-	github.com/PelicanPlatform/classad/dbrpc v0.38.0
+	github.com/PelicanPlatform/classad v0.43.1
+	github.com/PelicanPlatform/classad/collections v0.43.1
+	github.com/PelicanPlatform/classad/db v0.43.1
+	github.com/PelicanPlatform/classad/dbrpc v0.43.1
 	github.com/bbockelm/cedar v0.7.15
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-jose/go-jose/v4 v4.1.6

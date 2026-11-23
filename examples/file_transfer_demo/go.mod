@@ -5,7 +5,7 @@ go 1.26.0
 replace github.com/htcondor/golang-htcondor => ../..
 
 require (
-	github.com/PelicanPlatform/classad v0.38.3
+	github.com/PelicanPlatform/classad v0.43.1
 	github.com/bbockelm/cedar v0.7.15
 	github.com/htcondor/golang-htcondor v0.0.0-00010101000000-000000000000
 )
