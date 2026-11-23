@@ -552,7 +552,8 @@ four-login limit in place.
 
 `BatchMode=yes` refuses keyboard-interactive outright, so a script cannot use
 the device flow at all — and nobody wants a browser prompt per connection
-either. A certificate is obtained once and then works until it expires.
+either. A certificate is obtained once and then works until it expires, or
+until its owner withdraws it.
 
 The gateway signs them with a CA key resolved exactly like the host key:
 `HTTP_API_SSH_CA_KEY_FILE`, else generated and sealed in the database. Without
@@ -584,9 +585,11 @@ the web UI prints no `ssh` command for a session.
 # The CA, so your client trusts the gateway's host key.
 curl -H "Authorization: Bearer $TOKEN" https://ap.example.edu/api/v1/ssh/ca
 
-# A certificate for a key you already have.
+# A certificate for a key you already have. lifetime_seconds is
+# optional, defaults to 12 hours, and is clamped to the 7-day cap
+# rather than refused.
 curl -X POST -H "Authorization: Bearer $TOKEN" \
-     -d "{\"public_key\": \"$(cat ~/.ssh/id_ed25519.pub)\"}" \
+     -d "{\"public_key\": \"$(cat ~/.ssh/id_ed25519.pub)\", \"lifetime_seconds\": 604800}" \
      https://ap.example.edu/api/v1/ssh/certificate
 ```
 
@@ -616,10 +619,40 @@ before certificates existed keeps connecting and notices nothing. A client that
 holds the CA line negotiates the certificate instead; OpenSSH prefers whichever
 algorithm it already knows something about for that host.
 
-Certificates last 12 hours by default and never more than 24. That is not
-conservatism for its own sake: **there is no revocation**. No CRL, no OCSP, no
-list to add a stolen key to. The lifetime is the only control, which is the
-reason not to make it generous.
+Certificates last 12 hours by default and never more than 7 days.
+
+The cap used to be a day, because the lifetime was the only control there was:
+nothing recorded which certificates existed, so expiry was the only way one ever
+stopped working. That made the feature unusable for the case it was built for —
+a job that runs unattended cannot go back to a browser every twelve hours, so
+anything automated was pushed onto a credential with no expiry at all, which is
+strictly worse.
+
+**Every issued certificate is now recorded, and its owner can withdraw it.** The
+record is held in the access point's application database (`ssh_certificates`),
+and the gateway consults it on every certificate login, so a withdrawn one stops
+working at once rather than at its expiry. Users see their own certificates — and
+the Revoke button — on the web UI's **Connectors** page; the same listing is at
+`GET /api/v1/ssh/certificates`, and withdrawal at
+`POST /api/v1/ssh/certificates/revoke` with `{"serial": "..."}`. Both are
+**session-only**: a bearer token that could enumerate and revoke the credentials
+beside it is a stolen token that locks its owner out.
+
+Two consequences worth knowing:
+
+- **The revocation check fails closed.** If the database cannot answer, the login
+  is refused rather than allowed. A check that fails open is one an attacker only
+  has to break rather than beat, and the store is a local database in the same
+  process — an error there means the server is already unwell.
+- **A certificate with no record is not refused.** Certificates issued before this
+  existed have no row, and neither does one from another deployment sharing a CA.
+  Refusing those is defensible and is not what happens, because it would have
+  locked out every certificate in circulation at upgrade time.
+
+If the record cannot be written, no certificate is issued: handing one over
+unrecorded produces a working credential that appears in no list and that Revoke
+cannot reach, with nothing telling its holder that theirs is the one which cannot
+be withdrawn.
 
 Three properties worth knowing, because they differ from how OpenSSH
 certificates usually work:

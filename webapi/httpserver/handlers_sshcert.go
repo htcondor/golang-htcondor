@@ -34,14 +34,30 @@ import (
 
 // Certificate lifetimes.
 //
-// Twelve hours is a working day: long enough not to interrupt, short
-// enough to be the only revocation this has. There is no CRL and no
-// OCSP -- a certificate cannot be withdrawn once issued, so its
-// lifetime IS the control, and that is the reason not to make it
-// generous.
+// Twelve hours is still the default: a working day, long enough not to
+// interrupt somebody who signed in this morning.
+//
+// The CAP is a week, and it used to be a day. The old limit was not a
+// guess about how long a credential should live -- it was the whole of
+// the revocation story. There was no CRL and no OCSP, nothing recorded
+// which certificates existed, so expiry was the only way one ever
+// stopped working and the cap had to be short enough to serve as one.
+//
+// That made the feature unusable for the case it was built for. A job
+// that runs unattended cannot go back to a browser every twelve hours,
+// so anything automated was pushed onto a credential with no expiry at
+// all, which is strictly worse than a long-lived certificate that can
+// be withdrawn.
+//
+// ssh_certificates (migration 0045) is the revocation story now, which
+// is what buys the longer cap: every certificate is recorded, the
+// gateway refuses a serial its owner has withdrawn, and a week-long
+// certificate on a lost laptop is cut off in the time it takes to open
+// the Connectors page. Raising this without that table would be the
+// change this comment exists to prevent.
 const (
 	sshCertDefaultLifetime = 12 * time.Hour
-	sshCertMaxLifetime     = 24 * time.Hour
+	sshCertMaxLifetime     = 7 * 24 * time.Hour
 )
 
 // sshCAResponse describes the certificate authority to a client.
@@ -85,6 +101,9 @@ type sshCertResponse struct {
 	Principal   string    `json:"principal"`
 	ValidBefore time.Time `json:"valid_before"`
 	Fingerprint string    `json:"fingerprint"`
+	// Serial identifies this certificate to the revoke endpoint. A
+	// string on the wire; see certSerial.
+	Serial certSerial `json:"serial"`
 }
 
 // handleSSHCA publishes the gateway's certificate authority.
@@ -209,7 +228,7 @@ func (s *Handler) handleSSHCertificate(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Could not read the request body")
 		return
 	}
-	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(req.PublicKey)))
+	pub, keyComment, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(req.PublicKey)))
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest,
 			"public_key must be one line of authorized_keys, as in `ssh-ed25519 AAAA...`")
@@ -254,16 +273,158 @@ func (s *Handler) handleSSHCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	validBefore := time.Unix(int64(cert.ValidBefore), 0).UTC() //nolint:gosec // set from a unix time moments ago
+	record := sshCertRecord{
+		Serial:         certSerial(serial),
+		KeyFingerprint: ssh.FingerprintSHA256(pub),
+		KeyType:        pub.Type(),
+		Comment:        strings.TrimSpace(keyComment),
+		IssuedAt:       time.Now().UTC(),
+		ValidBefore:    validBefore,
+	}
+
+	// Recorded BEFORE the certificate is returned, and a failure here
+	// fails the request.
+	//
+	// The alternative -- log it and hand the certificate over anyway --
+	// produces a working credential that appears in no list and that the
+	// Revoke button cannot reach, and nothing tells its holder that
+	// theirs is the one that cannot be withdrawn. Losing a certificate
+	// somebody has not got yet costs them a retry; the other way costs
+	// them the only control they have over it.
+	if err := s.sshCerts().record(r.Context(), record, sshCertOwner(account)); err != nil {
+		s.logger.Error(logging.DestinationHTTP, "Recording an SSH certificate failed",
+			"account", account, "serial", serial, "error", err)
+		s.writeError(w, http.StatusInternalServerError,
+			"The certificate could not be recorded, so none was issued. "+
+				"It would not have been revocable.")
+		return
+	}
+	// Best effort, and deliberately after the record: an old row left
+	// behind costs nothing, and a failed tidy must not fail an issuance
+	// that has already succeeded.
+	if err := s.sshCerts().prune(r.Context()); err != nil {
+		s.logger.Warn(logging.DestinationHTTP, "Pruning old SSH certificate records failed",
+			"error", err)
+	}
+
 	s.logger.Info(logging.DestinationHTTP, "Issued an SSH certificate",
 		"account", account, "serial", serial,
 		"lifetime_seconds", int(lifetime.Seconds()),
-		"key_fingerprint", ssh.FingerprintSHA256(pub))
+		"key_fingerprint", record.KeyFingerprint)
 
 	s.writeJSON(w, http.StatusOK, sshCertResponse{
 		Certificate: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(cert))),
 		Principal:   account,
-		ValidBefore: time.Unix(int64(cert.ValidBefore), 0).UTC(), //nolint:gosec // set from a unix time moments ago
-		Fingerprint: ssh.FingerprintSHA256(pub),
+		ValidBefore: validBefore,
+		Fingerprint: record.KeyFingerprint,
+		Serial:      certSerial(serial),
+	})
+}
+
+// sshCertOwner is the one spelling of an account that the
+// ssh_certificates table uses.
+//
+// Issuance writes ownerFromActor(<authenticated actor>), which strips a
+// realm; the listing and the revoke arrive with a session username,
+// which may or may not carry one depending on how the session was
+// established. Putting both through the same function is what keeps a
+// certificate issued as "alice@EXAMPLE.ORG" visible to the browser
+// session of "alice" -- the alternative is a list that is silently
+// empty for exactly the deployments that use realms.
+func sshCertOwner(name string) string { return ownerFromActor(name) }
+
+// sshCerts is the issuance record. Never nil: a Handler with no database
+// returns a store whose methods all answer errNoCertStore, which is the
+// state a deployment running without one is in and not a crash.
+func (s *Handler) sshCerts() *sshCertStore {
+	return &sshCertStore{db: s.db}
+}
+
+// handleSSHCertificates serves GET /api/v1/ssh/certificates: what this
+// account has been issued, and what it has withdrawn.
+//
+// Session-only, like the grants listing and for the same reason. A
+// bearer token that can enumerate and revoke the credentials beside it
+// is a stolen token that locks its owner out.
+func (s *Handler) handleSSHCertificates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.requireSSHToJob(w) {
+		return
+	}
+	session, ok := s.integrationCaller(w, r)
+	if !ok {
+		return
+	}
+	certs, err := s.sshCerts().list(r.Context(), sshCertOwner(session.Username))
+	if err != nil {
+		s.logger.Error(logging.DestinationHTTP, "Listing SSH certificates failed",
+			"account", session.Username, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Could not list certificates")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"certificates": certs})
+}
+
+// sshCertRevokeRequest names the certificate to withdraw.
+type sshCertRevokeRequest struct {
+	Serial certSerial `json:"serial"`
+}
+
+// handleSSHCertificateRevoke serves POST /api/v1/ssh/certificates/revoke.
+//
+// Withdrawing is not deleting: the row stays, marked, because the
+// gateway refuses a serial BECAUSE a row says to. A deleted row reads as
+// "never issued", which is the one answer that would let the certificate
+// back in.
+func (s *Handler) handleSSHCertificateRevoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.requireSSHToJob(w) {
+		return
+	}
+	session, ok := s.integrationCaller(w, r)
+	if !ok {
+		return
+	}
+	var req sshCertRevokeRequest
+	setBodyLimit(w, r, 1<<12)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "serial is required")
+		return
+	}
+
+	revoked, err := s.sshCerts().revoke(r.Context(), uint64(req.Serial), sshCertOwner(session.Username))
+	if err != nil {
+		s.logger.Error(logging.DestinationHTTP, "Revoking an SSH certificate failed",
+			"account", session.Username, "serial", uint64(req.Serial), "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Could not revoke the certificate")
+		return
+	}
+	if !revoked {
+		// One answer for "not yours", "no such serial" and "already
+		// revoked". Telling them apart would let anyone probe which
+		// serials exist, and the three are the same thing to the
+		// caller: it is not holding access now.
+		s.writeError(w, http.StatusNotFound,
+			"No certificate of yours with that serial is outstanding")
+		return
+	}
+
+	// Info, not Debug: somebody cutting off a credential is the event an
+	// incident gets reconstructed from, and this is the only record that
+	// it was the owner's own doing.
+	s.logger.Info(logging.DestinationHTTP, "User revoked an SSH certificate",
+		"account", session.Username, "serial", uint64(req.Serial))
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"serial":  req.Serial,
+		"revoked": true,
 	})
 }
 
@@ -310,12 +471,19 @@ const minRSABits = 3072
 // sshCertSerial returns a random serial.
 //
 // Random rather than counted: a counter needs durable state to stay
-// unique across restarts, and the serial is only ever used to
-// correlate a log line with a certificate somebody is holding.
+// unique across restarts, and a 63-bit random value collides about as
+// often as never.
+//
+// Masked to 63 bits so the value round-trips through SQLite, whose
+// INTEGER is signed. A serial above 2^63 stored in that column comes
+// back NEGATIVE, and a revocation lookup by the original unsigned value
+// would then find nothing -- a Revoke button that silently does not
+// revoke, on about half of all certificates. The bit is cheaper than
+// the bug.
 func sshCertSerial() (uint64, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return 0, err
 	}
-	return binary.BigEndian.Uint64(b[:]), nil
+	return binary.BigEndian.Uint64(b[:]) &^ (1 << 63), nil
 }

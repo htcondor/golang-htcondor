@@ -274,6 +274,12 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 			Authority: h.sshCASigner.PublicKey(),
 			Scopes:    sshGatewayScopes,
 			Bans:      bans,
+			// Without this the gateway admits a certificate its owner
+			// has withdrawn, and the Revoke button on the Connectors
+			// page marks a row without stopping anything -- which is
+			// worse than having no button, because the user believes
+			// they have cut the machine off.
+			Revocations: sshCertRevocations{store: h.sshCerts()},
 		}
 	}
 
@@ -967,4 +973,15 @@ func (h *Handler) sshGatewayBanlist() (*sshgateway.Banlist, error) {
 		Trusted:       trusted,
 		Logger:        h.logger,
 	}), nil
+}
+
+// sshCertRevocations adapts the issuance record to the gateway's
+// RevocationChecker, which is defined over a serial alone so that
+// package sshgateway does not have to know what a database is.
+type sshCertRevocations struct {
+	store *sshCertStore
+}
+
+func (r sshCertRevocations) CertificateRevoked(ctx context.Context, serial uint64) (bool, error) {
+	return r.store.revoked(ctx, serial)
 }

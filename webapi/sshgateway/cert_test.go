@@ -85,6 +85,13 @@ func (f *certFixture) auth(t *testing.T) ssh.AuthMethod {
 // certGateway serves with certificate auth alongside the device flow.
 func certGateway(t *testing.T, tr *fakeTransport, authority ssh.PublicKey) string {
 	t.Helper()
+	return certGatewayWithRevocations(t, tr, authority, nil)
+}
+
+// certGatewayWithRevocations is certGateway with a revocation checker
+// wired in, which is how the gateway runs in production.
+func certGatewayWithRevocations(t *testing.T, tr *fakeTransport, authority ssh.PublicKey, rc RevocationChecker) string {
+	t.Helper()
 	a := grantingAuthenticator(t, "device-user", Options{Prompt: "ap.example.edu"})
 	srv := &Server{
 		Transport: tr,
@@ -95,7 +102,7 @@ func certGateway(t *testing.T, tr *fakeTransport, authority ssh.PublicKey) strin
 			return jobssh.Key{Owner: account, Cluster: target.Cluster, Proc: target.Proc}, nil
 		},
 	}
-	certs := &CertAuth{Authority: authority, Scopes: []string{"openid", "condor:/WRITE"}}
+	certs := &CertAuth{Authority: authority, Scopes: []string{"openid", "condor:/WRITE"}, Revocations: rc}
 
 	cfg := &ssh.ServerConfig{
 		KeyboardInteractiveCallback: a.KeyboardInteractive(context.Background()),
