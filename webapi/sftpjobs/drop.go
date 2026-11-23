@@ -123,8 +123,11 @@ func (f *FS) dropReadmeText() string {
 	b.WriteString("include, include command, $ENV() and `queue ... from <file>` do not\n")
 	b.WriteString("work. Use the inline form: queue var from ((row\\nrow)).\n\n")
 	b.WriteString("The submission happens when your client closes the file. An interrupted\n")
-	b.WriteString("transfer submits nothing, and the same archive dropped twice is one\n")
-	b.WriteString("submission.\n\n")
+	b.WriteString("transfer submits nothing.\n\n")
+	fmt.Fprintf(&b, "The same archive dropped twice within %s is one submission rather\n",
+		humanDuration(f.journal.dedup))
+	b.WriteString("than two, which is there to absorb a retry. After that it is a new\n")
+	b.WriteString("submission, so running the same work again is yours to decide.\n\n")
 	fmt.Fprintf(&b, "Output comes back under /%s/<cluster>.<proc>/%s/ once the jobs\n",
 		outputsDir, dataDirName)
 	fmt.Fprintf(&b, "finish, beside a %s saying what each one did.\n", JobAdFileName)
@@ -300,7 +303,7 @@ func (u *archiveUpload) Close() error {
 	if failed != nil {
 		_ = u.sink.Close()
 		u.fs.putStatus(dropScope, u.name, uploadStatus{
-			State: "incomplete",
+			State: stateIncomplete,
 			Err:   fmt.Sprintf("the upload did not finish: %v", failed),
 		})
 		return nil
@@ -322,7 +325,7 @@ func (f *FS) acceptTarball(name string, upload *tarSink) error {
 
 	fail := func(err error) error {
 		f.putStatus(dropScope, name, uploadStatus{
-			State: "refused", Err: err.Error(), At: time.Now(),
+			State: stateRefused, Err: err.Error(), At: time.Now(),
 		})
 		return err
 	}
@@ -348,7 +351,7 @@ func (f *FS) acceptTarball(name string, upload *tarSink) error {
 	}
 	if cluster, ok := f.seenUpload(dropScope, digest); ok {
 		f.putStatus(dropScope, name, uploadStatus{
-			State: "duplicate", Cluster: cluster, Digest: digest, At: time.Now(),
+			State: stateDuplicate, Cluster: cluster, Digest: digest, At: time.Now(),
 			Err: fmt.Sprintf("these exact bytes were already submitted as cluster %d", cluster),
 		})
 		return nil
@@ -373,7 +376,7 @@ func (f *FS) acceptTarball(name string, upload *tarSink) error {
 
 	f.rememberUpload(dropScope, digest, cluster)
 	f.putStatus(dropScope, name, uploadStatus{
-		State: "submitted", Cluster: cluster, Digest: digest, At: time.Now(),
+		State: stateSubmitted, Cluster: cluster, Digest: digest, At: time.Now(),
 		Files: len(sub.Files),
 	})
 	f.logf("sftpjobs: %s submitted cluster %d from %s/%s", f.cfg.Account, cluster, submitDir, name)

@@ -35,6 +35,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/apassign"
 	"github.com/htcondor/golang-htcondor/webapi/interactive"
 	"github.com/htcondor/golang-htcondor/webapi/jobssh"
+	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
 	"github.com/htcondor/golang-htcondor/webapi/sshgateway"
 	"github.com/htcondor/golang-htcondor/webapi/sshkeys"
 	"golang.org/x/crypto/ssh"
@@ -324,6 +325,7 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 			"The SSH gateway's job file service is unavailable", "error", err)
 	} else {
 		h.sandboxStore = store
+		h.sftpUploads = sftpjobs.NewUploadJournal()
 	}
 
 	listener := &sshgateway.Listener{

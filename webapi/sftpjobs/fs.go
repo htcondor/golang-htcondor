@@ -24,6 +24,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -116,30 +117,50 @@ type Config struct {
 	// sandboxfs.DefaultWindow.
 	Window int
 
+	// Uploads records what happened to each dropped file and which
+	// digests were submitted recently. Shared across every connection
+	// when the caller supplies one, which is the point of it: see
+	// UploadJournal. Nil gives this view a private journal, which is
+	// right for a library caller serving one session and wrong for a
+	// server.
+	Uploads *UploadJournal
+
 	// Logf, if set, receives debug logging.
 	Logf func(format string, args ...any)
+
+	// Warnf, if set, receives the handful of events an operator needs
+	// to see: a job listing this service could not build, and an upload
+	// it refused.
+	//
+	// Separate from Logf because one level cannot serve both. Logf
+	// traces every listing and every stat, so a server that wants it at
+	// all wants it at debug -- and that is where the reason a user's
+	// upload was refused used to go too, which is the same as nowhere.
+	// Unset sends these to Logf instead, so a caller with one hook
+	// still gets them.
+	Warnf func(format string, args ...any)
 }
 
 // FS serves one account's jobs.
 //
 // One per channel, so the account is fixed and nothing a client sends
-// can reach another's. The status and dedup maps live for the channel's
-// lifetime: a client that uploads and then reads status/ in the same
-// session sees its result, and one that reconnects does not. Persisting
-// them would need storage this does not have; the submitted cluster
-// carries the template and the digest as attributes, which is where a
-// durable answer would come from.
+// can reach another's. What an upload became outlives the channel --
+// that lives in the journal, which the server shares across connections
+// -- while the ad cache does not, because an ad is cheap to fetch again
+// and a stale one would misreport a job.
 type FS struct {
 	cfg Config
+	// journal is cfg.Uploads, or a private one when the caller gave
+	// none. Never nil after New.
+	journal *UploadJournal
 
-	mu     sync.Mutex
-	status map[statusKey]uploadStatus
+	mu sync.Mutex
 	// adCache holds rendered job ads for the channel's lifetime; see
 	// jobAdText.
 	adCache map[[2]int]string
-	// submitted maps a template and a content digest to the cluster it
-	// became, so the same bytes dropped twice are one submission.
-	submitted map[statusKey]int
+	// notice is the rendered /outputs notice, held so the size a client
+	// stats matches the bytes it goes on to read; see noticeFor.
+	notice string
 }
 
 // New returns an FS for one authenticated account.
@@ -152,7 +173,11 @@ func New(cfg Config) (*FS, error) {
 	case cfg.Context == nil:
 		return nil, errors.New("sftpjobs: no context")
 	}
-	return &FS{cfg: cfg}, nil
+	journal := cfg.Uploads
+	if journal == nil {
+		journal = NewUploadJournal()
+	}
+	return &FS{cfg: cfg, journal: journal}, nil
 }
 
 // Handlers is the request-server handler set.
@@ -169,6 +194,16 @@ func (f *FS) logf(format string, args ...any) {
 	if f.cfg.Logf != nil {
 		f.cfg.Logf(format, args...)
 	}
+}
+
+// warnf reports something an operator should see. It falls back to
+// Logf, so a caller that wired only one hook still gets it.
+func (f *FS) warnf(format string, args ...any) {
+	if f.cfg.Warnf != nil {
+		f.cfg.Warnf(format, args...)
+		return
+	}
+	f.logf(format, args...)
 }
 
 // job is the store's handle for a reference, bound to this account.
@@ -212,6 +247,16 @@ func (f *FS) Fileread(req *sftp.Request) (io.ReaderAt, error) {
 			return nil, err
 		}
 		return sandboxfs.NewSequentialReaderAt(rc, f.cfg.Window), nil
+
+	case kindOutputsNotice:
+		_, err := f.readableJobs(ctx)
+		if err == nil {
+			// Gone as soon as the listing works, so a client that
+			// fetched it once and kept the name is told it is not there
+			// rather than handed a stale complaint.
+			return nil, &os.PathError{Op: "open", Path: req.Filepath, Err: syscall.ENOENT}
+		}
+		return bytes.NewReader([]byte(f.noticeFor(err))), nil
 
 	case kindRoot, kindOutputs, kindJobDir, kindJobData:
 		return nil, &os.PathError{Op: "open", Path: req.Filepath, Err: syscall.EISDIR}
@@ -257,7 +302,13 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 	case kindOutputs:
 		refs, err := f.readableJobs(ctx)
 		if err != nil {
-			return nil, err
+			// A listing holding the reason, rather than a failed
+			// readdir the client would render as "Failure"; see
+			// OutputsNoticeName.
+			text := f.noticeFor(err)
+			return listerAt{fileInfo{
+				name: OutputsNoticeName, size: int64(len(text)), mode: 0o444,
+			}}, nil
 		}
 		out := make(listerAt, 0, len(refs))
 		for _, j := range refs {
@@ -308,7 +359,7 @@ func (f *FS) list(r ref, p string) (sftp.ListerAt, error) {
 		}
 		return f.listLayout(layout, r.name), nil
 
-	case kindJobAd, kindJobTar:
+	case kindJobAd, kindJobTar, kindOutputsNotice:
 		return nil, &os.PathError{Op: "readdir", Path: p, Err: syscall.ENOTDIR}
 	}
 	if r.kind.inDrop() {
@@ -360,6 +411,16 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 	case kindOutputs:
 		return listerAt{dirInfo(outputsDir, time.Time{})}, nil
 
+	case kindOutputsNotice:
+		_, err := f.readableJobs(ctx)
+		if err == nil {
+			return nil, &os.PathError{Op: "stat", Path: p, Err: syscall.ENOENT}
+		}
+		text := f.noticeFor(err)
+		return listerAt{fileInfo{
+			name: OutputsNoticeName, size: int64(len(text)), mode: 0o444,
+		}}, nil
+
 	case kindJobDir:
 		// Answered without reading the sandbox: a directory needs no
 		// size, and a client stats a directory before listing it. With a
@@ -371,7 +432,14 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 		}
 		refs, err := f.readableJobs(ctx)
 		if err != nil {
-			return nil, err
+			// A lister that cannot answer is treated as one that is not
+			// there. Naming a job is the contract here and the listing
+			// is the convenience, and what keeps another account's job
+			// out of reach is the store's scope, not this check --
+			// which is why answering it is safe. Without this a broken
+			// job index would also stop somebody fetching output they
+			// can name, which is the half that still works.
+			return listerAt{dirInfo(jobDirName(r.cluster, r.proc), time.Time{})}, nil
 		}
 		for _, j := range refs {
 			if j.Cluster == r.cluster && j.Proc == r.proc {
@@ -434,13 +502,56 @@ func (f *FS) stat(r ref, p string) (sftp.ListerAt, error) {
 	return nil, fmt.Errorf("%q: %w", p, fs.ErrNotExist)
 }
 
+// noticeFor renders the /outputs notice, once per session.
+//
+// Held rather than rebuilt because a client stats a file before opening
+// it: if the next attempt failed differently the size it was given
+// would not match the bytes it then read.
+func (f *FS) noticeFor(err error) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.notice == "" {
+		f.notice = outputsNoticeText(err)
+	}
+	return f.notice
+}
+
+// outputsNoticeText is what somebody reads when the listing failed.
+//
+// Written for the user, not the operator: it says whose problem this is,
+// what still works, and what to pass on. The reason itself comes from
+// whoever wired up the lister, so it is quoted rather than interpreted.
+func outputsNoticeText(err error) string {
+	var b strings.Builder
+	b.WriteString("The list of your finished jobs is not available\n")
+	b.WriteString("==============================================\n\n")
+	fmt.Fprintf(&b, "  %v\n\n", err)
+	b.WriteString("That is why this directory holds nothing else. It is this access\n")
+	b.WriteString("point's problem rather than yours: nothing has happened to your jobs\n")
+	b.WriteString("or to their output.\n\n")
+	b.WriteString("A job you can name is still reachable, because fetching one job's\n")
+	b.WriteString("output does not go through this listing:\n\n")
+	fmt.Fprintf(&b, "  sftp> get -r /%s/1234.0/%s\n", outputsDir, dataDirName)
+	fmt.Fprintf(&b, "  sftp> get /%s/1234.0/%s\n\n", outputsDir, JobAdFileName)
+	b.WriteString("Cluster and proc ids come from condor_q, condor_history, or the web\n")
+	b.WriteString("interface for this access point.\n\n")
+	b.WriteString("If you did not expect this, send the indented line above to whoever\n")
+	b.WriteString("runs this access point. It is the whole diagnosis.\n")
+	return b.String()
+}
+
 func (f *FS) readableJobs(ctx context.Context) ([]JobRef, error) {
 	if f.cfg.Jobs == nil {
 		return nil, nil
 	}
 	refs, err := f.cfg.Jobs.ReadableJobs(ctx)
 	if err != nil {
-		f.logf("sftpjobs: listing jobs for %s: %v", f.cfg.Account, err)
+		// Warn, not debug: this is a user being told their job list is
+		// unavailable, and the reason exists nowhere else on the server.
+		// It was debug-level once, which meant a deployment that had
+		// never turned debug logging on had no record of the refusal at
+		// all -- and the user's own client had printed only "Failure".
+		f.warnf("sftpjobs: listing jobs for %s: %v", f.cfg.Account, err)
 		return nil, err
 	}
 	sort.Slice(refs, func(i, j int) bool {

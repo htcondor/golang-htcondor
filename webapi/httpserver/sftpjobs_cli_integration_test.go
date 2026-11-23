@@ -89,13 +89,16 @@ func TestSFTPCLIDrivesTheJobsService(t *testing.T) {
 
 	// An htcondordb mirroring this schedd, when one can be run. It is
 	// what /outputs is built from, so with no mirror the read half of
-	// the service is unavailable and this test asserts that instead.
+	// the service is unavailable -- and this test then asserts the
+	// other thing worth asserting: that a real client is TOLD so, in
+	// words, rather than being handed an empty directory or the word
+	// "Failure".
 	mirrored := false
 	if bin, ok := optionalHTCondorDB(); ok {
 		startScheddSyncMirror(t, harness, bin, t.TempDir())
 		mirrored = true
 	} else {
-		t.Log("no htcondordb binary; /outputs will be checked for its refusal, not its contents")
+		t.Log("no htcondordb binary; /outputs will be checked for its notice, not its contents")
 	}
 
 	workDir := t.TempDir()
@@ -223,6 +226,29 @@ func TestSFTPCLIDrivesTheJobsService(t *testing.T) {
 		t.Errorf("the tarball was not submitted:\n%s", tarStatus)
 	}
 
+	// A second session, which is what a client that ran one command and
+	// came back is -- and what `sftp -b` always is, since it closes the
+	// channel when the script ends. The outcome of an upload has to
+	// outlive the connection that produced it: it used to live on the
+	// per-session FS, so this listing came back empty and somebody
+	// whose file was refused had no way left to learn why.
+	againBatch := filepath.Join(workDir, "again.sftp")
+	againScript := "ls -l /templates/spooled-wrapper/status\n" +
+		"get /templates/spooled-wrapper/status/rows.csv " +
+		filepath.Join(workDir, "csv-status-2") + "\n"
+	if err := os.WriteFile(againBatch, []byte(againScript), 0o600); err != nil {
+		t.Fatalf("write batch: %v", err)
+	}
+	againOut, againErr := runSFTP(t, ctx, gwPort, keyPath, againBatch)
+	t.Logf("sftp (reconnect) exit=%v transcript:\n%s", againErr, againOut)
+	if againErr != nil {
+		t.Fatalf("a second session could not read the status directory: %v", againErr)
+	}
+	if again := readFile(t, filepath.Join(workDir, "csv-status-2")); again != csvStatus {
+		t.Errorf("the status entry changed between sessions:\nfirst:\n%s\nsecond:\n%s",
+			csvStatus, again)
+	}
+
 	// Two submissions, so two new clusters, and neither still held for
 	// input: a spool that never completed leaves HoldReasonCode 16,
 	// which looks exactly like success from the client's side.
@@ -257,14 +283,17 @@ func TestSFTPCLIDrivesTheJobsService(t *testing.T) {
 	waitAllExited(t, authCtx, schedd, tarCluster, 1, 23)
 
 	if mirrored {
-		// If this ever fails, give the server a logger with
-		// DestinationHTTP at VerbosityDebug and read it: the reason a
-		// listing was not served from the mirror is recorded THERE and
-		// nowhere else. FS.readableJobs logs it through Logf, which the
-		// gateway wires to logger.Debug, so at default verbosity it is
-		// not emitted at all -- and the client only ever prints
-		// "Failure". The last cause found this way was the mirror
-		// refusing the caller's IDTOKEN because it offered FS only.
+		// If this ever fails, read the server's log at DestinationHTTP:
+		// FS.readableJobs reports the reason a listing was not served
+		// from the mirror through Warnf, which the gateway wires to
+		// logger.Warnf, so it is there at ordinary verbosity. It was
+		// Logf -> logger.Debug once, which meant the reason existed
+		// nowhere unless debug logging happened to be on, while the
+		// client printed only "Failure"; finding the last cause --
+		// the mirror refusing the caller's IDTOKEN because it offered
+		// FS only -- took six runs and a hand-built verbose logger.
+		// The same reason now also reaches the user, in the file the
+		// no-mirror branch below reads.
 		readJobAdOverSFTP(t, ctx, gwPort, keyPath, workDir, csvCluster)
 		return
 	}
@@ -274,27 +303,42 @@ func TestSFTPCLIDrivesTheJobsService(t *testing.T) {
 	// The job directories come from the mirror, and the service answers
 	// its absence by SAYING so rather than serving an empty directory --
 	// "you have no jobs" and "this access point cannot tell you" are
-	// different answers. Asserted because an empty listing would look
-	// like success.
+	// different answers.
+	//
+	// It says it in a FILE, and this client is why. A failed readdir
+	// reaches it as `remote readdir("/outputs/"): Failure` no matter
+	// what the server sent, because OpenSSH renders the status CODE
+	// alone (do_readdir -> fx2txt) and discards the message; a pkg/sftp
+	// client does surface it, which is why no in-process test could
+	// have caught that. So the listing succeeds, carries one file, and
+	// the reason is in the file -- which this fetches and reads, the
+	// way a user would.
 	outBatch := filepath.Join(workDir, "outputs.sftp")
-	if err := os.WriteFile(outBatch, []byte("ls -l /outputs\n"), 0o600); err != nil {
+	noticePath := filepath.Join(workDir, "outputs-notice")
+	outScript := "ls -l /outputs\nget /outputs/" + sftpjobs.OutputsNoticeName +
+		" " + noticePath + "\n"
+	if err := os.WriteFile(outBatch, []byte(outScript), 0o600); err != nil {
 		t.Fatalf("write batch: %v", err)
 	}
 	outOut, outErr := runSFTP(t, ctx, gwPort, keyPath, outBatch)
 	t.Logf("sftp (outputs) exit=%v transcript:\n%s", outErr, outOut)
-	if outErr == nil {
-		t.Errorf("listing /outputs with no mirror succeeded; an empty directory here "+
-			"would read as \"you have no finished jobs\":\n%s", outOut)
+	if outErr != nil {
+		t.Fatalf("listing /outputs with no mirror failed, so the reason reached "+
+			"nobody: %v\n%s", outErr, outOut)
 	}
-	// Only that it failed, NOT what it said -- and that is a finding
-	// rather than a weak assertion. ReadableJobs returns a sentence
-	// naming the missing mirror, and this client never shows it:
-	// OpenSSH renders a readdir failure from the status CODE alone
-	// (fx2txt), so the user sees `remote readdir("/outputs/"):
-	// Failure`. A pkg/sftp client does surface the message, which is
-	// why no in-process test could have caught this.
-	if !strings.Contains(outOut, "readdir") {
-		t.Errorf("expected a readdir failure for /outputs:\n%s", outOut)
+	if !strings.Contains(outOut, sftpjobs.OutputsNoticeName) {
+		t.Errorf("the listing does not offer %s, so an empty /outputs reads as "+
+			"\"you have no finished jobs\":\n%s", sftpjobs.OutputsNoticeName, outOut)
+	}
+	notice := readFile(t, noticePath)
+	// The server's own sentence, which is the diagnosis. Asserted on the
+	// word that names the missing piece rather than the whole string,
+	// because the sentence belongs to the lister and may be reworded.
+	if !strings.Contains(notice, "htcondordb") {
+		t.Errorf("the notice does not name what is missing:\n%s", notice)
+	}
+	if !strings.Contains(notice, "/outputs/1234.0/data") {
+		t.Errorf("the notice does not say a job can still be fetched by name:\n%s", notice)
 	}
 }
 
