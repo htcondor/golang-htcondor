@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	_ "github.com/glebarez/sqlite" // SQLite driver (pure Go, no CGO)
 	"github.com/htcondor/golang-htcondor/internal/privatefile"
@@ -71,12 +73,124 @@ func OpenWithWarnings(path string, warn WarnFunc) (*sql.DB, error) {
 	if err := restrictFileMode(path, warn); err != nil {
 		return nil, fmt.Errorf("appdb: open %s: %w", path, err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", dsn(path, warn))
 	if err != nil {
 		return nil, fmt.Errorf("appdb: open %s: %w", path, err)
 	}
-	db.SetMaxOpenConns(1)
+
+	// WAL lets readers run while a write is in flight, so the pool can
+	// have more than one connection. With the previous single
+	// connection every statement in the whole server queued behind
+	// every other one: a slow write did not just delay other writes, it
+	// delayed page loads, because validating a browser session is a
+	// read on this database.
+	//
+	// SQLite still allows only one WRITER at a time. Concurrent writers
+	// wait on the busy timeout rather than failing, and every explicit
+	// transaction takes the write lock up front (_txlock=immediate in
+	// the DSN), so two transactions cannot deadlock trying to upgrade
+	// from a read -- which the busy timeout does NOT rescue.
+	db.SetMaxOpenConns(maxOpenConns)
+	// Matching the open limit: the default idle limit is 2, which would
+	// close and reopen connections under any real concurrency, and
+	// opening one runs the pragmas again.
+	db.SetMaxIdleConns(maxOpenConns)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	// WAL is not available on every filesystem -- it needs shared
+	// memory beside the database, which some network mounts refuse --
+	// and SQLite reports that by leaving the mode alone rather than by
+	// failing. Check what we actually got, because the difference is
+	// the whole point of the change and is otherwise invisible.
+	var mode string
+	if err := db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&mode); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("appdb: open %s: reading journal mode: %w", path, err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		warn("application database is not in WAL mode, so reads will queue behind writes; this is usually a filesystem that does not support it",
+			"path", path, "journal_mode", mode)
+	}
 	return db, nil
+}
+
+// maxOpenConns bounds the pool.
+//
+// Small, because they are not free -- each carries its own SQLite
+// connection state -- and because the work here is short statements, not
+// long scans. Large enough that the background loops (the delivery
+// worker, the watch evaluators, the usage flush) cannot between them
+// starve a request that a person is waiting for.
+const maxOpenConns = 8
+
+// dsn turns a database path into a driver DSN carrying the pragmas each
+// connection needs.
+//
+// The driver strips the query string itself when the path is not
+// prefixed with "file:", so this appends to the path as given rather
+// than building a URI -- no percent-encoding, and an operator's path
+// reaches SQLite exactly as they wrote it.
+//
+// journal_mode is a property of the FILE and persists once set, so this
+// re-asserts rather than establishes it after the first run. The others
+// are per connection and have to be set every time.
+func dsn(path string, warn WarnFunc) string {
+	// A path containing "?" cannot carry query parameters: the driver
+	// splits on the first one, which would be the operator's. Open it
+	// as-is rather than mangling it, and say why the mode did not
+	// change.
+	if strings.Contains(path, "?") {
+		warn("application database path contains \"?\", so WAL mode could not be requested; reads will queue behind writes",
+			"path", path)
+		return path
+	}
+	return path + "?" + strings.Join([]string{
+		// The reason for all of this: one fsync per commit instead of
+		// several, and readers that do not block on a writer.
+		"_pragma=journal_mode(WAL)",
+		// Unchanged durability: every commit still reaches the disk
+		// before it is acknowledged. This database holds session keys,
+		// OAuth2 signing keys and refresh tokens, so the faster
+		// synchronous=NORMAL -- which can lose the last transactions to
+		// a machine crash -- is an operator's decision, not a default.
+		"_pragma=synchronous(FULL)",
+		// The driver already defaults this to 5s; stated here because
+		// the pool now has several connections that can contend, and a
+		// default is a poor thing to depend on silently.
+		"_pragma=busy_timeout(10000)",
+		// Enforce the foreign keys the schema declares. SQLite
+		// ignores them entirely unless asked, so a REFERENCES clause
+		// is documentation until this is set.
+		//
+		// Exactly one relationship exists today
+		// (webhook_subscriptions.endpoint_id -> webhook_endpoints.id,
+		// ON DELETE CASCADE), so the blast radius is that one cascade
+		// and the orphan it used to be possible to insert. Nothing
+		// else in the database references anything, which is also why
+		// the handful of migrations that rebuild a table the long way
+		// round are unaffected: nothing points at the tables they
+		// rebuild.
+		"_pragma=foreign_keys(1)",
+		// Take the write lock when a transaction BEGINS rather than
+		// when it first writes.
+		//
+		// This is the default for every transaction, and the default
+		// has to be this way round. A deferred transaction that reads
+		// and then writes must upgrade, and if any other writer
+		// committed in between, SQLite fails it with
+		// SQLITE_BUSY_SNAPSHOT -- immediately, because the busy
+		// timeout does not apply to that case. Taking the lock up
+		// front cannot hit it.
+		//
+		// A transaction that only reads can opt out and run
+		// concurrently, with sql.TxOptions{ReadOnly: true}. That is an
+		// assertion the caller is making: a "read-only" transaction
+		// that writes is exactly the deferred-upgrade case above, and
+		// nothing stops it at compile time. Classify deliberately, and
+		// see TestAReadOnlyTransactionThatWritesFails for what the
+		// mistake looks like.
+		"_txlock=immediate",
+	}, "&")
 }
 
 // checkPathWritable verifies (a) the parent directory exists and is

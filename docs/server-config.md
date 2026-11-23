@@ -24,7 +24,7 @@ otherwise switch it on for deployments that never asked.
 | --- | --- |
 | `HTTP_API_LISTEN_ADDR` | Listen address; default `:8080`. Bound in addition to the shared-port endpoint under `condor_master`. `-listen` on the command line overrides it. |
 | `HTTP_API_BASE_URL` | Externally-visible URL for OAuth2 redirects + share links. |
-| `HTTP_API_DB_PATH` | Unified SQLite DB (sessions, OAuth2, IDP, templates, API keys). Default `$(LOCAL_DIR)/htcondor-api.db`. |
+| `HTTP_API_DB_PATH` | Unified SQLite DB (sessions, OAuth2, IDP, templates, API keys). Default `$(LOCAL_DIR)/htcondor-api.db`. Runs in **WAL** mode, so expect `-wal` and `-shm` files beside it; back up or copy all three together, and put it on a filesystem with working locking (a local disk) rather than NFS. See [the database](server.md#the-database). |
 | `HTTP_API_SIGNING_KEY` | Pool signing key for minting per-request tokens. Defaults to `SEC_TOKEN_POOL_SIGNING_KEY_FILE`. |
 | `HTTP_API_KEK_FILE` | Path to the master Key Encryption Key (32 raw bytes or 64-char hex; mode 0600/0400). Generate with `openssl rand -hex 32 > <path> && chmod 0600 <path>`. |
 | `HTTP_API_WEBUI_ACCESS_GROUP` | Comma-separated group(s) permitted to log in to the web interface (or a JSON array of names, for names holding a comma). Unset falls back to `HTTP_API_MCP_ACCESS_GROUP`. Reloaded on SIGHUP. See [Authorization groups](server-auth.md#authorization-groups). |

@@ -263,6 +263,59 @@ through the pool's collector, and the schedd and collector rate limits,
 which this server inherits from the library. Both are covered in the
 [configuration reference](server-config.md).
 
+## The database
+
+Everything the server keeps for itself -- browser sessions, OAuth2 clients
+and tokens, the embedded IDP's signing keys, saved submit templates, API
+keys, connector grants and webhooks -- lives in one SQLite file,
+`HTTP_API_DB_PATH` (default `$(LOCAL_DIR)/htcondor-api.db`).
+
+It runs in **WAL** mode. Two things follow for an operator:
+
+- **There are three files, not one.** SQLite keeps `htcondor-api.db-wal`
+  and `htcondor-api.db-shm` beside the database. Copy or back up all three
+  together, or restore from a quiesced server; the `.db` file alone can be
+  missing recently committed data. All three are kept mode 0600, because the
+  database holds signing keys and refresh tokens.
+- **Put it on a local disk.** WAL needs shared memory beside the database
+  and working file locking. Some network filesystems provide neither. If
+  WAL cannot be enabled the server still starts and logs a warning naming
+  the mode it got instead -- it will work, but every read will queue behind
+  every write, which shows up as unrelated pages stalling for seconds
+  whenever something writes.
+
+Writes are serialized by SQLite to one at a time; reads are not, and do not
+wait for a writer. A writer that finds the lock held waits up to ten seconds
+rather than failing.
+
+**Foreign keys are enforced.** SQLite ignores a `REFERENCES` clause unless
+asked, so this has to be switched on per connection, and now is. One
+relationship exists today -- a webhook subscription's destination, which
+cascades on delete.
+
+### Transactions, for anyone adding code
+
+Every transaction takes the write lock when it **begins**
+(`_txlock=immediate`), and that default is load-bearing:
+
+```go
+tx, err := db.BeginTx(ctx, nil)                              // write: safe
+tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})   // read: concurrent
+```
+
+A transaction that begins deferred, reads, and then writes has to **upgrade**
+to the write lock. If any other writer committed in between, SQLite refuses
+it with `SQLITE_BUSY_SNAPSHOT` -- immediately, and the busy timeout does not
+apply, so it cannot be waited out or retried into success. It is an abrupt
+failure that looks like nothing else.
+
+`ReadOnly: true` is therefore an assertion you are making, not a hint:
+nothing prevents such a transaction from writing, and if it does, this is the
+failure it gets. Mark a transaction read-only only when it is, and leave the
+default alone otherwise -- an unclassified transaction is safe, which is the
+point of that default. `TestAReadOnlyTransactionThatWritesFails` in
+`appdb` demonstrates the failure if you want to see it.
+
 ## Check it works
 
 ```bash

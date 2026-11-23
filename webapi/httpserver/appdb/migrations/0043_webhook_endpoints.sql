@@ -121,11 +121,13 @@ CREATE INDEX webhook_endpoints_owner ON webhook_endpoints(owner);
 -- What is watched, and which events. Points at an endpoint.
 CREATE TABLE webhook_subscriptions (
     id TEXT PRIMARY KEY,
-    -- The destination this feeds. The REFERENCES clause documents the
-    -- relationship; it does NOT enforce it, because SQLite checks
-    -- foreign keys only when PRAGMA foreign_keys is on and this
-    -- database never turns it on. Store.DeleteEndpoint deletes these
-    -- rows itself, and must keep doing so.
+    -- The destination this feeds. Enforced: appdb opens the database
+    -- with PRAGMA foreign_keys on, so this cascade fires and an
+    -- endpoint_id naming nothing is refused at insert.
+    --
+    -- (It did not when this migration was written, which is why
+    -- Store.DeleteEndpoint also deletes these rows by hand. That is
+    -- now belt-and-braces rather than the only thing working.)
     endpoint_id TEXT NOT NULL
         REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
 
