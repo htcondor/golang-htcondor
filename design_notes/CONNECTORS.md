@@ -1030,13 +1030,53 @@ one exception is a submit file that sets `leave_in_queue` itself, which
 `SubmitRemote` defers to; such jobs can leave immediately, and their
 results can be missed.
 
+### Nominating a destination
+
+```json
+POST /api/v1/jobs
+{ "submit_file": "...",
+  "output_sheet": { "connector": "builtin:gdrive", "file_id": "...",
+                    "tab": "results", "job_file": "result.json" } }
+```
+
+The submit request is the **only** moment at which a binding can be
+created, and it requires a browser session: a binding is a standing
+instruction to spend a connector credential later, and only the session
+holding one can leave it. A caller authenticated some other way has no
+connector to bind.
+
+**Everything that can be refused is refused before the jobs are queued.**
+After the submit the jobs exist, and a problem found then can only be
+reported as advice about a batch that is already running — so a
+destination that cannot be written, or a results file that will never
+come back, is a 400 rather than ten thousand identical warnings. Checked
+up front: the connector exists, is enabled and is permitted to the
+caller's groups; the tab exists and has a header row; `job_file` is a
+name rather than a path, because the sweep reads the sandbox's top level
+and nothing else.
+
+**Whether the file comes back has three answers, not two.** An absent
+`transfer_output_files` brings back everything new in the sandbox, so
+there is nothing to say. A list naming the file is fine. A list that
+does *not* name it is refused — that submission cannot work. A list
+built from a macro is the third: it cannot be checked here, and a
+warning is honest where a refusal would be a guess.
+
+A submit file that sets `leave_in_queue` itself gets a warning rather
+than a refusal: `SubmitRemote` defers to it, so those jobs may leave
+before a sweep sees them, but the submission is otherwise fine and the
+submitter is the one who can judge.
+
+Recording the binding happens *after* the submit, because the cluster id
+is half of what it authorizes, and a failure there is advice rather than
+an error — the jobs exist and will run whatever it says. The same goes
+for a sweep interval that is not configured: the binding is recorded and
+the response says plainly that nothing will be written.
+
 ### Still open
 
-- **Nothing creates a binding yet.** The submit request needs an
-  `output_sheet` field, and the UI a destination picker. Until then the
-  sweep is reachable only from its tests.
-- **The job has to return the file.** The result file must be in
-  `transfer_output_files` or the sweep reads a name that is not there
-  and accounts for every proc with the same reason. Binding creation
-  should refuse when the submit file does not transfer it, rather than
-  produce a batch of identical warnings.
+- **No UI yet.** The API takes `output_sheet`; the submit page needs a
+  destination picker beside the existing table source.
+- **`checkSheetDestination` is covered only by its refusals.** The
+  happy path needs the mock provider and a session, which means the
+  integration fixture rather than a unit test.

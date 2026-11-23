@@ -285,10 +285,49 @@ const openAPISchema = `{
           "submit_file": {
             "type": "string",
             "description": "HTCondor submit file content. Basic format: executable, arguments, output, error, log, and queue directive."
+          },
+          "queue_vars": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Names of the per-job variables a table of parameters supplies, in column order. Used with queue_rows; the server writes the queue statement, so submit_file must not already carry one."
+          },
+          "queue_rows": {
+            "type": "array",
+            "items": {"type": "array", "items": {"type": "string"}},
+            "description": "One row of parameter values per job, each row in the same column order as queue_vars. Send rows as rows rather than writing them into the submit file: HTCondor splits an item row on whitespace AND commas with no quoting, so a value containing either cannot be expressed in submit text, and this path encodes them correctly."
+          },
+          "output_sheet": {
+            "$ref": "#/components/schemas/SubmitOutputSheet",
+            "description": "Nominate a spreadsheet for this submission's results. Requires a browser session that has connected the named connector."
           }
         },
         "example": {
           "submit_file": "executable = /bin/echo\narguments = Hello World\noutput = hello.out\nerror = hello.err\nlog = hello.log\nqueue"
+        }
+      },
+      "SubmitOutputSheet": {
+        "type": "object",
+        "required": ["connector", "file_id", "tab", "job_file"],
+        "description": "Where a submission's results go. Each job's result file is appended to this tab as the job finishes, fitted to the tab's own header row: a column the job did not produce is left blank, and a field the tab has no column for is left out. The tab must already have a header row, and the job must transfer job_file back; both are checked before the jobs are queued. Appending is at most once per job. The access point must have HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL set, and this is not available in multi-AP mode.",
+        "properties": {
+          "connector": {
+            "type": "string",
+            "description": "Connector id whose stored credential writes the rows, as \"ns:name\".",
+            "example": "builtin:gdrive"
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The spreadsheet, as the file chooser reported it."
+          },
+          "tab": {
+            "type": "string",
+            "description": "Worksheet title within the spreadsheet."
+          },
+          "job_file": {
+            "type": "string",
+            "description": "The file in each job's own directory holding its result, as JSON (one object, an array of objects, or an array of arrays with the first row naming the columns) or CSV with a header row. A name, not a path.",
+            "example": "result.json"
+          }
         }
       },
       "JobSubmitResponse": {
