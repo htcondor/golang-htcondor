@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type AdminToken } from "@/lib/api";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { ScopeChips } from "@/components/ScopeChips";
 import {
   ScrollableTable,
   SortableHeader,
@@ -147,79 +148,6 @@ export default function AdminTokensPage() {
   );
 }
 
-// privilegedScopes act on other people's jobs rather than the holder's
-// own. Marked so an operator scanning this page can see at a glance which
-// agent is carrying one, which is the reason the page is worth reading.
-//
-// Both spellings of both powers. A grant minted before the rename
-// carries the older one, and a cross-user power left unmarked here is
-// exactly the agent an operator is scanning for.
-const privilegedScopes = new Set([
-  "anyuser:read",
-  "anyuser:write",
-  "mcp:admin",
-  "mcp:superuser",
-]);
-
-function ScopeChips({
-  token,
-  onToggleScope,
-  busy,
-}: {
-  token: AdminToken;
-  onToggleScope: (scope: string, enable: boolean) => void;
-  busy: boolean;
-}) {
-  // Every scope the authorization ended with, whether or not it is in
-  // force. Showing only the ones in force is what made switching a scope
-  // off look like deleting it, with no way back.
-  const active = new Set(token.scopes ?? []);
-  const all = token.authorized_scopes?.length ? token.authorized_scopes : (token.scopes ?? []);
-  if (all.length === 0) {
-    return <span className="text-gray-400">—</span>;
-  }
-  return (
-    <div className="flex flex-wrap gap-1">
-      {all.map((scope) => {
-        const on = active.has(scope);
-        const privileged = privilegedScopes.has(scope);
-        const tone = !on
-          ? "bg-gray-100 text-gray-400 line-through ring-1 ring-gray-300"
-          : privileged
-            ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300"
-            : "bg-blue-100 text-blue-800";
-        const label = on
-          ? `Switch ${scope} off for this grant and its paired token`
-          : `Switch ${scope} back on`;
-        return (
-          <button
-            key={scope}
-            type="button"
-            onClick={() => onToggleScope(scope, !on)}
-            disabled={busy || !token.active}
-            aria-pressed={on}
-            // The visible text is the scope, so without this the button
-            // announces itself as "mcp:write" and says nothing about what
-            // clicking it does -- to a screen reader or to a test.
-            aria-label={token.active ? label : scope}
-            title={token.active ? label : scope}
-            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${tone} ${
-              token.active ? "cursor-pointer hover:brightness-95" : "cursor-default"
-            } disabled:opacity-60`}
-          >
-            {scope}
-            {privileged && on && (
-              <span className="text-[10px] font-semibold uppercase tracking-wide">
-                other users
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 type TokenSortKey = "kind" | "client" | "subject" | "issued" | "expires";
 
 // Sorted on the underlying value, not the rendered cell: "Issued" renders
@@ -284,7 +212,14 @@ function TokenRow({
       </td>
       <td className="px-3 py-2 text-xs">{token.subject || "—"}</td>
       <td className="px-3 py-2 text-xs">
-        <ScopeChips token={token} onToggleScope={onToggleScope} busy={busy} />
+        <ScopeChips
+          scopes={token.scopes}
+          authorizedScopes={token.authorized_scopes}
+          /* A revoked grant has nothing left to narrow, and a chip that
+             looks clickable and does nothing reads as a broken page. */
+          onToggle={token.active ? onToggleScope : undefined}
+          busy={busy}
+        />
       </td>
       <td className="px-3 py-2 text-xs">
         {new Date(token.requested_at).toLocaleString()}

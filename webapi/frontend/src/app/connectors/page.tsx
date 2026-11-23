@@ -34,10 +34,11 @@ import {
   type IntegrationCreated,
   type IntegrationEndpoints,
 } from "@/lib/api";
-import { ChipList } from "@/components/ChipList";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { ScopeChips } from "@/components/ScopeChips";
 import { WebhooksSection } from "./WebhooksSection";
 import { ConnectedServicesSection } from "./ConnectedServicesSection";
+import { GrantsSection } from "./GrantsSection";
 
 // The scopes worth offering as checkboxes. The server narrows whatever is
 // asked for to what the account could consent to, so an unavailable one here
@@ -53,6 +54,11 @@ const OFFERED_SCOPES: { scope: string; label: string; hint: string }[] = [
 // time its access token expires. It is not offered as a choice because
 // declining it has no upside and one sharp edge.
 const ALWAYS_SCOPES = ["openid", "offline_access"];
+
+// One header treatment for every table on this page and the admin pages:
+// an operator moving between /connectors and /admin/tokens should not have
+// to re-read a table to find out it is the same kind of thing.
+const TH = "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500";
 
 export default function ConnectorsPage() {
   const qc = useQueryClient();
@@ -101,12 +107,25 @@ export default function ConnectorsPage() {
           </p>
         </div>
 
+        {/* What is holding access right now, above the clients this
+            person registered. Same direction -- an app acting as you here
+            -- so it belongs in this section and not under "Services you
+            connected", which is the opposite arrow. It comes first
+            because "what can get at my account?" is the question somebody
+            opens this page with, and an app that registered itself
+            appears only here. */}
+        <GrantsSection />
+
         {minted && (
           <NewClientShown
             minted={minted}
             onDismiss={() => setMinted(null)}
           />
         )}
+
+        <h3 className="pt-2 text-sm font-semibold text-gray-900">
+          Apps you registered here
+        </h3>
 
         <CreateForm
           pending={create.isPending}
@@ -483,15 +502,9 @@ function IntegrationTable({
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-3 py-2 text-left font-medium text-gray-700">
-                App
-              </th>
-              <th className="px-3 py-2 text-left font-medium text-gray-700">
-                May do as you
-              </th>
-              <th className="px-3 py-2 text-left font-medium text-gray-700">
-                Last used
-              </th>
+              <th className={TH}>App</th>
+              <th className={TH}>May ask for</th>
+              <th className={TH}>Last used</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
@@ -516,8 +529,10 @@ function IntegrationTable({
                 </td>
                 <td className="px-3 py-2">
                   {/* The scopes the client may ASK for. What a sign-in
-                      actually granted is on the OAuth2 tokens page. */}
-                  <ChipList items={it.scopes} max={4} />
+                      actually GRANTED is in "Holding access right now"
+                      above, which is the narrower set whenever the server
+                      refused something. */}
+                  <ScopeChips scopes={it.scopes} />
                 </td>
                 <td className="px-3 py-2 text-gray-700">
                   {it.last_used_at
