@@ -732,10 +732,17 @@ signs its own responses with; responses here are plain JSON and nothing signs
 them. It claimed `RS256`, which is the internal IdP's ID-token key and has
 nothing to do with this resource.
 
-`oauth2_metadata_honesty_test.go` holds these together. It does not compare
-the document against a second copy of the same constant: it reads each
-advertised list and then exercises the path, so a method that is advertised
-has to survive the flow a client would actually take.
+**The internal IdP advertises `code` alone.** It listed all seven
+response-type combinations while `idp_provider.go` composes the two explicit
+factories and no implicit or hybrid one, so the other six failed at the same
+late stage — and it advertised no `code_challenge_methods_supported` at all
+despite composing PKCE, leaving clients unable to discover it.
+
+`oauth2_metadata_honesty_test.go` and `idp_metadata_honesty_test.go` hold
+these together. They do not compare a document against a second copy of the
+same constant: each reads the advertised list and then exercises the path, so
+a value that is advertised has to survive the flow a client would actually
+take.
 
 ## MCP OAuth2 clients
 
