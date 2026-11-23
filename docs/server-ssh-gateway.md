@@ -95,6 +95,7 @@ The tree is small:
 | `outputs/12345.0/job.ad` | the job's ClassAd, as `condor_q -l` would print it |
 | `outputs/12345.0/data/` | its output sandbox, as files |
 | `outputs/12345.0/data.tar` | the same sandbox as one archive |
+| `outputs/UNAVAILABLE.txt` | present only when the listing cannot be built, and says why |
 | `templates/` | submit descriptions to drop a CSV on (see [Job templates](#job-templates)) |
 | `submit/` | drop a tarball holding a `job.sub` (see [Submitting a job of your own](#submitting-a-job-of-your-own)) |
 
@@ -140,10 +141,20 @@ exactly how long output stays retrievable.
 
 The listing needs the mirror, and says so rather than showing an empty
 directory when it cannot be built — "you have no jobs" and "this access point
-cannot tell you" are different answers. It is also served only once the schedd
-has accepted you at READ, the level of the query the mirror stands in for;
-that check is cached, so it costs one handshake per interval rather than one
-per `ls`. A job is still reachable by naming it either way.
+cannot tell you" are different answers. It says so in a file: `outputs/` then
+holds nothing but `UNAVAILABLE.txt`, which gives the reason and what still
+works. That is not decoration. A failed `readdir` reaches an OpenSSH client as
+`remote readdir("/outputs/"): Failure` and nothing else, because `sftp(1)`
+renders the status code and discards the server's message, so a file is the
+only way the explanation arrives. The same reason is logged at warning level
+for whoever runs the access point.
+
+The listing is also served only once the schedd has accepted you at READ, the
+level of the query the mirror stands in for; that check is cached, so it costs
+one handshake per interval rather than one per `ls`. A job is still reachable
+by naming it either way, including while the listing is unavailable — the
+listing is the convenience, and what keeps you to your own jobs is the scope
+of the sandbox read rather than the listing.
 
 ### What it costs
 
@@ -207,10 +218,19 @@ step.
 
 The upload is submitted when your client closes the file cleanly. An
 interrupted transfer is recorded as `incomplete` and submits nothing, and the
-same bytes dropped twice are one submission — so a retry does not double your
-jobs. Every outcome, including every refusal, is written to `status/`, because
-the one error string a close reply carries is rendered by most clients as
-"could not close file" and nothing more.
+same bytes dropped twice within an hour are one submission — so a retry does
+not double your jobs, whether or not it reconnects first. After that hour the
+same file is a new submission, because deliberately running the same work
+again is your decision rather than the server's.
+
+Every outcome, including every refusal, is written to `status/`, because the
+one error string a close reply carries is rendered by most clients as "could
+not close file" and nothing more. Those entries outlive your connection, which
+matters for exactly the case that produces them: `sftp -b` and `scp` close the
+channel when the command ends, so the answer is read by a later session. They
+are held in memory for a week, so a restart of the API server forgets them;
+the durable record of what was submitted is the cluster itself, which carries
+the template and the content digest as job attributes.
 
 Values are refused rather than altered: a value containing `$`, `))`, a comma,
 a line break, or a row that is blank or starts with `#` is rejected naming the

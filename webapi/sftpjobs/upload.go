@@ -113,7 +113,7 @@ func (u *upload) Close() error {
 		// died deserves to find out from the status directory rather
 		// than by noticing no jobs ran.
 		u.fs.putStatus(u.tid, u.name, uploadStatus{
-			State:    "incomplete",
+			State:    stateIncomplete,
 			Template: u.tid,
 			Err:      fmt.Sprintf("the upload did not finish: %v", failed),
 		})
@@ -122,13 +122,25 @@ func (u *upload) Close() error {
 	return u.fs.acceptCSV(u.tid, u.name, content)
 }
 
+// What a status entry's state can be.
+//
+// Named rather than spelled out at each site, because two of them also
+// decide whether the outcome is worth an operator's attention and a
+// mistyped comparison there would silence it.
+const (
+	stateSubmitted  = "submitted"
+	stateRefused    = "refused"
+	stateIncomplete = "incomplete"
+	stateDuplicate  = "duplicate"
+)
+
 // uploadStatus is what a status entry says.
 //
 // Shared by the two things somebody can drop. A CSV fills in Template
 // and Rows; an archive fills in Files. Text prints what it was given
 // and leaves out the rest, so neither carries a line about the other.
 type uploadStatus struct {
-	// State is "submitted", "refused", "incomplete" or "duplicate".
+	// State is one of the four state constants below.
 	State    string
 	Template string
 	Rows     int
@@ -181,7 +193,7 @@ func (f *FS) acceptCSV(tid, name string, content []byte) error {
 
 	fail := func(err error) error {
 		f.putStatus(tid, name, uploadStatus{
-			State: "refused", Template: tid, Digest: hexDigest,
+			State: stateRefused, Template: tid, Digest: hexDigest,
 			Err: err.Error(), At: time.Now(),
 		})
 		return err
@@ -200,7 +212,7 @@ func (f *FS) acceptCSV(tid, name string, content []byte) error {
 	// the same command again -- silently doubles the jobs.
 	if cluster, ok := f.seenUpload(tid, hexDigest); ok {
 		f.putStatus(tid, name, uploadStatus{
-			State: "duplicate", Template: tid, Cluster: cluster,
+			State: stateDuplicate, Template: tid, Cluster: cluster,
 			Digest: hexDigest, At: time.Now(),
 			Err: fmt.Sprintf("these exact bytes were already submitted as cluster %d", cluster),
 		})
@@ -219,7 +231,7 @@ func (f *FS) acceptCSV(tid, name string, content []byte) error {
 
 	f.rememberUpload(tid, hexDigest, cluster)
 	f.putStatus(tid, name, uploadStatus{
-		State: "submitted", Template: tid, Rows: len(sub.Rows),
+		State: stateSubmitted, Template: tid, Rows: len(sub.Rows),
 		Cluster: cluster, Digest: hexDigest, At: time.Now(),
 	})
 	f.logf("sftpjobs: %s submitted %d jobs as cluster %d from %s/%s",
@@ -227,56 +239,39 @@ func (f *FS) acceptCSV(tid, name string, content []byte) error {
 	return nil
 }
 
-// statusKey identifies one status entry.
-type statusKey struct{ template, name string }
+// The four below are this account's view of the journal, which is
+// shared with every other connection; see UploadJournal for why it is
+// not per-session.
 
 // putStatus records an outcome.
 func (f *FS) putStatus(tid, name string, st uploadStatus) {
-	if st.At.IsZero() {
-		st.At = time.Now()
+	if st.State == stateRefused || st.State == stateIncomplete {
+		// Said once, where an operator will see it. The client is told
+		// too, in the status entry, but a user who cannot read the
+		// reason -- OpenSSH prints its own words for a failed close --
+		// has nothing else to go on, and neither does whoever they ask.
+		f.warnf("sftpjobs: %s's upload %s/%s was %s: %s",
+			f.cfg.Account, tid, name, st.State, st.Err)
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.status == nil {
-		f.status = map[statusKey]uploadStatus{}
-	}
-	f.status[statusKey{tid, name}] = st
+	f.journal.put(f.cfg.Account, tid, name, st)
 }
 
 // statusFor reads one back.
 func (f *FS) statusFor(tid, name string) (uploadStatus, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	st, ok := f.status[statusKey{tid, name}]
-	return st, ok
+	return f.journal.get(f.cfg.Account, tid, name)
 }
 
 // statusNames lists the entries for one template.
 func (f *FS) statusNames(tid string) []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]string, 0, len(f.status))
-	for k := range f.status {
-		if k.template == tid {
-			out = append(out, k.name)
-		}
-	}
-	return out
+	return f.journal.names(f.cfg.Account, tid)
 }
 
-// seenUpload reports a digest already submitted in this session.
+// seenUpload reports a digest already submitted recently enough to
+// count as a repeat.
 func (f *FS) seenUpload(tid, digest string) (int, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cluster, ok := f.submitted[statusKey{tid, digest}]
-	return cluster, ok
+	return f.journal.alreadySubmitted(f.cfg.Account, tid, digest)
 }
 
 func (f *FS) rememberUpload(tid, digest string, cluster int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.submitted == nil {
-		f.submitted = map[statusKey]int{}
-	}
-	f.submitted[statusKey{tid, digest}] = cluster
+	f.journal.rememberSubmitted(f.cfg.Account, tid, digest, cluster)
 }

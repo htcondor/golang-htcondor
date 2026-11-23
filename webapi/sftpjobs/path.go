@@ -24,6 +24,7 @@
 //	/outputs/<cluster>.<proc>/job.ad    the job's ClassAd
 //	/outputs/<cluster>.<proc>/data/     its output sandbox, as files
 //	/outputs/<cluster>.<proc>/data.tar  the same sandbox as one archive
+//	/outputs/UNAVAILABLE.txt       why the listing is empty, when it is
 //	/templates/<id>/               a submit description to drop a CSV on
 //	/templates/<id>/submit/        drop it here; one job per row
 //	/templates/<id>/status/        what happened to each upload
@@ -38,6 +39,14 @@
 // and an ad (one query), so `ls -lh /outputs` and `ls -lh
 // /outputs/<job>` are both cheap and the unavoidable pass happens when
 // somebody actually asks for the output.
+//
+// UNAVAILABLE.txt is there only when the listing of /outputs could not
+// be built -- no job index configured, or one that refused this caller.
+// The listing then succeeds and holds that one file, rather than
+// failing: a failed readdir reaches the user as the word "Failure" and
+// nothing else, because sftp(1) prints the status code and discards the
+// server's message. Naming a job directly still works while it is
+// there, which is what the file says.
 //
 // data.tar is addressable but NOT listed, on purpose twice over.
 // Listing it would mean knowing its length, which needs the job's
@@ -87,6 +96,19 @@ const (
 	dataTarName   = dataDirName + ".tar"
 )
 
+// OutputsNoticeName is the one entry in /outputs when the listing could
+// not be built, and holds the reason.
+//
+// A file rather than an error, because an error is not readable. SFTP
+// answers a failed readdir with a status code and a message, and
+// OpenSSH's sftp(1) renders the code alone -- do_readdir passes it
+// through fx2txt and drops the string -- so a client is told
+// `remote readdir("/outputs/"): Failure` no matter what the server
+// said. A GUI client does the same. The reason therefore has to arrive
+// as something a client already knows how to show, and the only such
+// thing in this protocol is a file.
+const OutputsNoticeName = "UNAVAILABLE.txt"
+
 type kind int
 
 const (
@@ -97,6 +119,10 @@ const (
 	kindJobData // /outputs/<job>/data
 	kindJobFile // something inside data/
 	kindJobTar  // /outputs/<job>/data.tar
+
+	// /outputs/UNAVAILABLE.txt, which exists only while the listing
+	// cannot be built; see OutputsNoticeName.
+	kindOutputsNotice
 
 	// The templates tree. Bounded by kindTemplates and kindDrop rather
 	// than compared against directly; see inTemplates.
@@ -164,6 +190,13 @@ func parsePath(p string) (ref, error) {
 	}
 
 	missing := func() (ref, error) { return ref{}, fmt.Errorf("%q: %w", p, fs.ErrNotExist) }
+
+	if parts[1] == OutputsNoticeName {
+		if len(parts) != 2 {
+			return missing()
+		}
+		return ref{kind: kindOutputsNotice}, nil
+	}
 
 	cluster, proc, ok := parseJobID(parts[1])
 	if !ok {

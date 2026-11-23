@@ -50,6 +50,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/reservation"
 	"github.com/htcondor/golang-htcondor/webapi/runtimeest"
 	"github.com/htcondor/golang-htcondor/webapi/sandboxfs"
+	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
 	"github.com/htcondor/golang-htcondor/webapi/shareurl"
 	"github.com/htcondor/golang-htcondor/webapi/siteapps"
 	"github.com/htcondor/golang-htcondor/webapi/sshgateway"
@@ -739,7 +740,12 @@ type Handler struct {
 	sandboxCacheMB       int
 	sandboxMaxGB         int
 	sandboxStore         *sandboxfs.Store
-	sshCAKeyFile         string
+	// sftpUploads is what the +jobs file service remembers about dropped
+	// files, shared by every connection. One per server, because an SFTP
+	// session is one connection and a client that puts a file and
+	// reconnects to read status/ is two.
+	sftpUploads  *sftpjobs.UploadJournal
+	sshCAKeyFile string
 	// What a session created on demand asks for; zero fields mean
 	// the interactive package's own defaults.
 	sshGatewaySessionSpec sshGatewaySessionSize

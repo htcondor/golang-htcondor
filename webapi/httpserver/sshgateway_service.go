@@ -138,8 +138,20 @@ func (h *Handler) sshGatewaySubsystem(ctx context.Context, req sshgateway.Servic
 		// upload ceiling instead of this one.
 		SpoolBufferDir:  h.spoolBufferDir,
 		MaxArchiveBytes: h.archiveDropLimit(),
+		// The server's journal, not this connection's: what a dropped
+		// file became has to be readable by the next connection, and the
+		// same bytes dropped twice have to count as one submission even
+		// when the second drop is a retry over a new connection.
+		Uploads: h.sftpUploads,
 		Logf: func(format string, args ...any) {
 			h.logger.Debug(logging.DestinationHTTP, fmt.Sprintf(format, args...))
+		},
+		// A refused upload and a job listing that could not be built
+		// are the two things an operator has to be able to find
+		// afterwards. Debug would hide them on any deployment that had
+		// not turned debug logging on, which is every normal one.
+		Warnf: func(format string, args ...any) {
+			h.logger.Warnf(logging.DestinationHTTP, format, args...)
 		},
 	})
 	if err != nil {
