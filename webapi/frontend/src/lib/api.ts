@@ -1807,6 +1807,69 @@ export interface AdminConnectorRequest {
   enabled?: boolean;
 }
 
+/**
+ * One shipped built-in connector, as the admin page's picker needs it.
+ *
+ * Friendly names are not in here: those live in connectorNames.ts, which the
+ * file chooser and the user-facing page already read without fetching
+ * anything. This carries what only the server knows -- what ships, what a
+ * provider can do, and whether this access point already has it.
+ */
+export interface AdminConnectorCatalogEntry {
+  id: string;
+  name: string;
+  kind: string;
+  summary: string;
+  default_scopes?: string[];
+  /** The file transfer plugin that can use this credential. Empty means
+   *  direct transfer is not a choice the operator has, so the form hides it. */
+  transfer_method?: string;
+  /** A browser file chooser ships for this provider. The chooser is
+   *  configured in its own right under HTTP_API_PICKERS and is not a
+   *  property of the connector -- but whether one exists is a fact about
+   *  the provider, and the form is where an operator wonders. */
+  has_picker: boolean;
+  picker_needs_api_key?: boolean;
+  configured: boolean;
+  configured_origin?: string;
+}
+
+/** What an issuer published about itself. */
+export interface AdminConnectorDiscovery {
+  issuer?: string;
+  /** Which URL answered, so a surprising result can be gone and read. */
+  document: string;
+  authorization_url?: string;
+  token_url?: string;
+  scopes_supported?: string[];
+  /** Things the document says that will bite later. Not errors: the
+   *  provider answered, and an operator may know better than it does. */
+  warnings?: string[];
+}
+
+/**
+ * One app's hold on the caller's own account.
+ *
+ * Grouped by client rather than per token: the thing a person decided was
+ * "let this app in", not "issue this refresh token".
+ */
+export interface Grant {
+  client_id: string;
+  client_name?: string;
+  /** A client the caller registered themselves, on this page. The one that
+   *  did not is the reason this list exists -- an app that registered
+   *  itself appears nowhere else the user can see. */
+  owned_by_caller: boolean;
+  scopes?: string[];
+  grants: number;
+  tokens: number;
+  /** At least one grant can mint new access tokens with nobody present. */
+  has_refresh: boolean;
+  first_seen: string;
+  last_seen: string;
+  expires_at?: string;
+}
+
 export interface AdminSiteApp {
   id: string;
   name: string;
@@ -2883,6 +2946,23 @@ export const api = {
       }),
   },
 
+  // What apps are holding on the caller's account right now, and the means
+  // to cut one off. Distinct from integrations, which lists the clients the
+  // caller registered: an app that registered itself through dynamic
+  // registration never appears there.
+  grants: {
+    list: (): Promise<{ grants: Grant[] }> => fetchJSON(`${BASE}/oauth2/grants`),
+    // Withdraws every grant this client holds for the caller -- the access
+    // tokens and the refresh tokens with them. Leaving the refresh token
+    // would be a Disconnect button that does not disconnect.
+    revoke: (clientID: string): Promise<{ client_id: string; revoked: number }> =>
+      fetchJSON(`${BASE}/oauth2/grants/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientID }),
+      }),
+  },
+
   // Accounts this access point connects TO on the caller's behalf. The
   // connect flow itself is a browser navigation to connect_url, not a fetch:
   // it ends at the provider's own consent screen.
@@ -3134,6 +3214,19 @@ export const api = {
       fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
     testConnector: (id: string): Promise<AdminConnectorTest> =>
       fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/test`, { method: "POST" }),
+    // The shipped catalogue, so nobody types `builtin:` and a provider name
+    // by hand into a box that can only be checked after the fact.
+    connectorCatalog: (): Promise<{ builtins: AdminConnectorCatalogEntry[] }> =>
+      fetchJSON(`${BASE}/admin/connectors/catalog`),
+    // Asks an issuer for its own metadata. Runs on the server, not here:
+    // this page's CSP has no connect-src and so inherits default-src, and
+    // it is the daemon that has to be able to reach the provider anyway.
+    discoverIssuer: (issuer: string): Promise<AdminConnectorDiscovery> =>
+      fetchJSON(`${BASE}/admin/connectors/discover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issuer }),
+      }),
     connectorUsers: (id: string): Promise<AdminConnectorUser[]> =>
       fetchJSON(`${BASE}/admin/connectors/${encodeURIComponent(id)}/users`),
 
