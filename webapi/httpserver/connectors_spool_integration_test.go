@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PelicanPlatform/classad/classad"
+
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/webapi/connectors/mockgoogle"
@@ -42,6 +44,139 @@ import (
 // the other half of the decision, and getting it wrong here would make
 // this test pass for the wrong reason.
 func TestConnectorOnlyJobIsReleasedIntegration(t *testing.T) {
+	fix := setupConnectorFixture(t)
+	const fileBody = "a,b,c\n"
+	fix.google.PickFile("FILEID", "data.csv", []byte(fileBody))
+
+	submitFile := strings.Join([]string{
+		"executable = /bin/cat",
+		"transfer_executable = false",
+		"arguments = data.csv",
+		"transfer_input_files = webapi-builtin-gdrive+gdrive2://FILEID/data.csv",
+		"should_transfer_files = YES",
+		"when_to_transfer_output = ON_EXIT",
+		"output = run.out",
+		"error = run.err",
+		"log = run.log",
+		// Keeps the job in the queue once released, so the spool can be read.
+		"requirements = false",
+		"queue",
+		"",
+	}, "\n")
+
+	cluster := fix.submit(t, submitFile)
+	ads := fix.awaitRelease(t, cluster, 1)
+
+	iwd, _ := ads[0].EvaluateAttrString("Iwd")
+	assertSpooled(t, iwd, "data.csv", fileBody)
+}
+
+// Per-job connector inputs: each job gets ITS file, and only its file.
+//
+// This is the submit file the web page's "From a connected account"
+// table source builds -- one row per picked file, the reference in a
+// `connector_input` queue variable that transfer_input_files names.
+// Three separate things can go wrong with it, and only a real schedd
+// shows any of them:
+//
+//  1. The reference is inside a `queue ... in (...)` item rather than on
+//     an attribute line. If SplitSpoolInputs did not reach there, the
+//     URL would survive into the job ad, the schedd would add a
+//     transfer-plugin requirement nothing satisfies, and the jobs would
+//     sit idle for ever with nothing to explain it.
+//
+//  2. Every proc's ad lists EVERY reference, because ConnectorInputs is
+//     recorded once per submission. Without refsThisProcAwaits each
+//     proc is handed all N files: N^2 fetches against the provider for
+//     N files' worth of work. The download counts are the only surface
+//     that shows it -- the sandboxes come out right either way, because
+//     the schedd discards a file it was not waiting for.
+//
+//  3. Both procs have to leave the spooling hold, not just the first.
+func TestPerJobConnectorInputsIntegration(t *testing.T) {
+	fix := setupConnectorFixture(t)
+	const bodyA = "first\n"
+	const bodyB = "second,second\n"
+	fix.google.PickFile("FILEA", "a.csv", []byte(bodyA))
+	fix.google.PickFile("FILEB", "b.csv", []byte(bodyB))
+
+	// Byte-for-byte what the submit page sends: buildConnectorTable puts
+	// the file's name in the first template column and the reference in
+	// connector_input, and buildSubmitFile (page.tsx) emits them as an
+	// inline `queue COLS from ((...))` block, two spaces of indent and
+	// one row per line. Divergence here would make this test prove
+	// something about a submit file nobody sends.
+	submitFile := strings.Join([]string{
+		"executable = /bin/cat",
+		"transfer_executable = false",
+		"arguments = $(connector_input)",
+		"transfer_input_files = $(connector_input)",
+		"should_transfer_files = YES",
+		"when_to_transfer_output = ON_EXIT",
+		"output = run-$(ProcId).out",
+		"error = run-$(ProcId).err",
+		"log = run.log",
+		"requirements = false",
+		"queue name, connector_input from ((",
+		"  a.csv webapi-builtin-gdrive+gdrive2://FILEA/a.csv",
+		"  b.csv webapi-builtin-gdrive+gdrive2://FILEB/b.csv",
+		"))",
+		"",
+	}, "\n")
+
+	cluster := fix.submit(t, submitFile)
+	ads := fix.awaitRelease(t, cluster, 2)
+
+	// Each proc's sandbox: its own file, with its own contents, and not
+	// the other job's.
+	byProc := map[int]*classad.ClassAd{}
+	for _, ad := range ads {
+		proc, _ := ad.EvaluateAttrInt("ProcId")
+		byProc[int(proc)] = ad
+	}
+	want := map[int]struct {
+		mine, body, notMine string
+	}{
+		0: {"a.csv", bodyA, "b.csv"},
+		1: {"b.csv", bodyB, "a.csv"},
+	}
+	for proc, w := range want {
+		ad, ok := byProc[proc]
+		if !ok {
+			t.Errorf("proc %d is not in the queue", proc)
+			continue
+		}
+		iwd, _ := ad.EvaluateAttrString("Iwd")
+		assertSpooled(t, iwd, w.mine, w.body)
+		assertNotSpooled(t, iwd, w.notMine)
+	}
+
+	// The cost, not the result. Two files over two procs is one fetch
+	// each; the un-narrowed version is two fetches each, and every other
+	// assertion in this test passes in that version too.
+	for _, id := range []string{"FILEA", "FILEB"} {
+		if n := fix.google.Downloads(id); n != 1 {
+			t.Errorf("%s was fetched %d times, want 1; each proc is fetching the "+
+				"whole cluster's files", id, n)
+		}
+	}
+}
+
+// connectorFixture is a running schedd, an API server with one
+// connector configured, a stand-in Google, and a browser session that
+// has already connected an account to it.
+type connectorFixture struct {
+	ctx    context.Context
+	base   string
+	client *http.Client
+	google *mockgoogle.Server
+	schedd *htcondor.Schedd
+}
+
+// setupConnectorFixture brings all of that up and registers its
+// teardown.
+func setupConnectorFixture(t *testing.T) *connectorFixture {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -55,7 +190,7 @@ func TestConnectorOnlyJobIsReleasedIntegration(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
+	t.Cleanup(cancel)
 
 	collector := htcondor.NewCollector(harness.GetCollectorAddr())
 	location, err := collector.LocateDaemon(ctx, "Schedd", "")
@@ -99,20 +234,17 @@ func TestConnectorOnlyJobIsReleasedIntegration(t *testing.T) {
 		t.Fatal("server did not report an address")
 	}
 	base := "http://" + addr
-	defer func() {
+	t.Cleanup(func() {
 		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer scancel()
 		_ = server.Shutdown(sctx)
-	}()
+	})
 
-	// The provider stand-in, and the one file the job asks for.
 	g := mockgoogle.New(t, mockgoogle.Config{
 		ClientID:     "1234.apps.googleusercontent.com",
 		ClientSecret: "s3cret",
 		RedirectURI:  base + "/api/v1/connect/builtin:gdrive/callback",
 	})
-	const fileBody = "a,b,c\n"
-	g.PickFile("FILEID", "data.csv", []byte(fileBody))
 
 	secretFP := filepath.Join(t.TempDir(), "gdrive.secret")
 	if err := os.WriteFile(secretFP, []byte("s3cret"), 0o600); err != nil {
@@ -161,31 +293,29 @@ func TestConnectorOnlyJobIsReleasedIntegration(t *testing.T) {
 
 	connectAccount(ctx, t, client, base)
 
-	// The submit under test: every input file comes from the connector.
-	submitFile := strings.Join([]string{
-		"executable = /bin/cat",
-		"transfer_executable = false",
-		"arguments = data.csv",
-		"transfer_input_files = webapi-builtin-gdrive+gdrive2://FILEID/data.csv",
-		"should_transfer_files = YES",
-		"when_to_transfer_output = ON_EXIT",
-		// Keeps the job in the queue once released, so the spool can be read.
-		"requirements = false",
-		"queue",
-		"",
-	}, "\n")
+	return &connectorFixture{
+		ctx:    ctx,
+		base:   base,
+		client: client,
+		google: g,
+		schedd: htcondor.NewSchedd(location.Name, location.Address),
+	}
+}
 
+// submit posts a submit file and returns the cluster it created.
+func (f *connectorFixture) submit(t *testing.T, submitFile string) int {
+	t.Helper()
 	body, err := json.Marshal(JobSubmitRequest{SubmitFile: submitFile})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/jobs",
+	req, err := http.NewRequestWithContext(f.ctx, http.MethodPost, f.base+"/api/v1/jobs",
 		strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -196,47 +326,72 @@ func TestConnectorOnlyJobIsReleasedIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("submit status %d", resp.StatusCode)
 	}
-	if len(submitted.Warnings) > 0 {
-		t.Logf("submit warnings: %v", submitted.Warnings)
+	// A "stays held" warning is the server saying it could not fetch or
+	// spool a job's connector files -- the failure this whole file is
+	// about. Fail on it now rather than waiting out awaitRelease's
+	// deadline for the same news. Other warnings are advice about the
+	// submit file (no log, output to /dev/null) and are not this test's
+	// business.
+	for _, w := range submitted.Warnings {
+		if strings.Contains(w, "stays held") {
+			t.Fatalf("the server left a job held: %s", w)
+		}
+		t.Logf("submit warning: %s", w)
 	}
 	t.Logf("submitted cluster %d", submitted.ClusterID)
+	return submitted.ClusterID
+}
 
-	schedd := htcondor.NewSchedd(location.Name, location.Address)
-	constraint := fmt.Sprintf("ClusterId == %d", submitted.ClusterID)
-
-	// The assertion: the job leaves the spooling hold. Before the fix it
-	// stayed in it for ever.
+// awaitRelease waits for every proc of a cluster to leave the spooling
+// hold and returns their ads.
+//
+// The failure it is written for is a job that never leaves, so the loop
+// ends by reporting the last status seen rather than by timing out
+// silently. A hold code other than 16 is a different fault and fails
+// immediately: waiting out the deadline for it would hide what it was.
+func (f *connectorFixture) awaitRelease(t *testing.T, cluster, procs int) []*classad.ClassAd {
+	t.Helper()
+	constraint := fmt.Sprintf("ClusterId == %d", cluster)
 	var last string
-	released := false
 	for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); {
-		ads, _, err := schedd.QueryWithOptions(ctx, constraint, &htcondor.QueryOptions{
-			Projection: []string{"JobStatus", "HoldReasonCode", "HoldReason", "Iwd"},
+		ads, _, err := f.schedd.QueryWithOptions(f.ctx, constraint, &htcondor.QueryOptions{
+			Projection: []string{"ClusterId", "ProcId", "JobStatus",
+				"HoldReasonCode", "HoldReason", "Iwd"},
 		})
 		if err != nil {
 			t.Fatalf("query: %v", err)
 		}
-		if len(ads) == 0 {
-			t.Fatal("the job left the queue; it should be idle on requirements = false")
+		if len(ads) != procs {
+			t.Fatalf("the queue holds %d of this cluster's %d jobs; "+
+				"they should all be idle on requirements = false", len(ads), procs)
 		}
-		status, _ := ads[0].EvaluateAttrInt("JobStatus")
-		code, _ := ads[0].EvaluateAttrInt("HoldReasonCode")
-		reason, _ := ads[0].EvaluateAttrString("HoldReason")
-		last = fmt.Sprintf("JobStatus=%d HoldReasonCode=%d HoldReason=%q", status, code, reason)
-		if status != 5 {
-			released = true
-			iwd, _ := ads[0].EvaluateAttrString("Iwd")
-			assertSpooled(t, iwd, "data.csv", fileBody)
-			break
+		held := 0
+		var status []string
+		for _, ad := range ads {
+			proc, _ := ad.EvaluateAttrInt("ProcId")
+			st, _ := ad.EvaluateAttrInt("JobStatus")
+			code, _ := ad.EvaluateAttrInt("HoldReasonCode")
+			reason, _ := ad.EvaluateAttrString("HoldReason")
+			status = append(status, fmt.Sprintf("proc %d: JobStatus=%d HoldReasonCode=%d HoldReason=%q",
+				proc, st, code, reason))
+			if st != 5 {
+				continue
+			}
+			held++
+			if code != 16 {
+				t.Fatalf("proc %d is held for something else: HoldReasonCode=%d HoldReason=%q",
+					proc, code, reason)
+			}
 		}
-		if code != 16 {
-			t.Fatalf("the job is held for something else: %s", last)
+		last = strings.Join(status, "; ")
+		if held == 0 {
+			return ads
 		}
 		time.Sleep(time.Second)
 	}
-	if !released {
-		t.Fatalf("the job never left the spooling hold: %s "+
-			"(this is the bug: nothing fetched its connector file)", last)
-	}
+	t.Fatalf("a job never left the spooling hold: %s "+
+		"(this is the bug: nothing fetched its connector files)", last)
+	return nil
 }
 
 // connectAccount completes the OAuth flow against the stand-in provider
@@ -306,5 +461,29 @@ func assertSpooled(t *testing.T, iwd, name, want string) {
 	}
 	if string(got) != want {
 		t.Errorf("%s holds %q, want %q", name, string(got), want)
+	}
+}
+
+// assertNotSpooled checks another job's file did NOT land in this one.
+//
+// This holds even without the per-proc narrowing, and that is worth
+// knowing rather than discovering later: the awaited set is the
+// schedd's allow list, so a spooled file it was not waiting for is
+// discarded. The guard stays because it is the schedd's promise and not
+// ours -- if that allow list ever widened, sending every proc the whole
+// cluster's files would start filling sandboxes, and this is what would
+// say so. The assertion that catches the narrowing itself is the
+// download count.
+func assertNotSpooled(t *testing.T, iwd, name string) {
+	t.Helper()
+	if iwd == "" {
+		return
+	}
+	path := filepath.Join(iwd, name)
+	if _, err := os.Stat(path); err == nil {
+		t.Errorf("%s is in this job's spool, but it belongs to another job in the batch; "+
+			"every proc is being sent the whole cluster's connector files", name)
+	} else if !os.IsNotExist(err) {
+		t.Errorf("cannot tell whether %s is in the spool: %v", name, err)
 	}
 }

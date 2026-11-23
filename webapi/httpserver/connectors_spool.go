@@ -319,8 +319,14 @@ func jobIDOf(ad *classad.ClassAd) string {
 // proc's ad lists every reference the submission mentioned. That is
 // right when the files are common to the batch -- each proc transfers
 // all of them -- and badly wrong when they are per-job: a batch of N
-// files would fetch all N for each of N procs, N^2 fetches, and give
-// every sandbox N-1 files it never asked for.
+// files would fetch all N for each of N procs, N^2 fetches against the
+// provider for N files' worth of work.
+//
+// Only the fetches. The sandboxes stay correct either way, because the
+// awaited set IS the schedd's allow list and it discards a spooled file
+// it was not waiting for -- measured, not assumed, in
+// TestPerJobConnectorInputsIntegration, where disabling this narrowing
+// doubles the download counts and leaves every sandbox right.
 //
 // The proc's own awaited set is the authority on what it needs, and it
 // is the same set the schedd is holding it for.
