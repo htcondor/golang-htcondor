@@ -1073,10 +1073,40 @@ an error — the jobs exist and will run whatever it says. The same goes
 for a sweep interval that is not configured: the binding is recorded and
 the response says plainly that nothing will be written.
 
+### In the submit page
+
+A separate section from the table source, not an option inside it:
+reading parameters from a spreadsheet and writing results to one are
+independent, and a batch can do either, both or neither. Most do
+neither, so it starts collapsed and says nothing.
+
+Once a tab is chosen the page shows **its header row**, because that is
+the contract — a field lands in the column of the same name, a column
+the job does not produce is left blank, and a field with no column is
+left out. Showing the columns is the only way somebody can tell whether
+what their job emits will land anywhere. The headers are carried for
+display only: what the columns are when a job actually finishes is read
+then, so a column added after submitting starts being filled without
+resubmitting.
+
+The page checks the results file name while it is typed, but nothing
+else. Whether the jobs transfer that file back, whether the tab has a
+header, and whether the connector is still usable are the server's to
+answer, before anything is queued; a second copy of those rules in the
+page would be a second place for them to drift, and the server's answer
+is the one that decides. The file-name check is deliberately narrower
+than the server's — a name the server would accept but a shell makes
+awkward is still a bad name to choose.
+
+A spreadsheet with several tabs never has the first picked silently.
+Results would go to a tab nobody chose and the submission would look
+entirely normal.
+
 ### Still open
 
-- **No UI yet.** The API takes `output_sheet`; the submit page needs a
-  destination picker beside the existing table source.
 - **`checkSheetDestination` is covered only by its refusals.** The
   happy path needs the mock provider and a session, which means the
   integration fixture rather than a unit test.
+- **No end-to-end test of the whole round trip** — submit with an
+  output sheet, let the jobs finish, sweep, and read the rows back.
+  Every piece is covered on its own; the seam between them is not.

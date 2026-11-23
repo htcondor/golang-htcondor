@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitSheetHeader } from './sheets';
+import { checkResultFileName, splitSheetHeader } from './sheets';
 
 describe('splitSheetHeader', () => {
   it('reads the first row as the header and the rest as jobs', () => {
@@ -109,5 +109,53 @@ describe('splitSheetHeader', () => {
     expect(() => splitSheetHeader([['', ''], ['a', 'b']])).toThrow(
       /first row of that tab is empty/,
     );
+  });
+});
+
+// The results file name, checked while the person is typing. The
+// server's refusal is the one that decides; this one exists so they
+// find out now rather than when the whole submission comes back a 400.
+describe('checkResultFileName', () => {
+  it('accepts the names a job would actually write', () => {
+    for (const name of [
+      'results.json',
+      'out.csv',
+      'run-1_summary.json',
+      'RESULTS.JSON',
+      'results',
+    ]) {
+      expect(checkResultFileName(name), name).toBeNull();
+    }
+  });
+
+  it('accepts a name with surrounding whitespace, which is a typo not an error', () => {
+    expect(checkResultFileName('  results.json  ')).toBeNull();
+  });
+
+  it('asks for a name when there is none', () => {
+    expect(checkResultFileName('')).toMatch(/Name the file/);
+    expect(checkResultFileName('   ')).toMatch(/Name the file/);
+  });
+
+  // The sweep reads the top level of the job's sandbox and nothing
+  // else, so a path names a file it will never find.
+  it('refuses a path', () => {
+    expect(checkResultFileName('out/results.json')).toMatch(/not a path/);
+    expect(checkResultFileName('out\\results.json')).toMatch(/not a path/);
+    expect(checkResultFileName('/results.json')).toMatch(/not a path/);
+  });
+
+  it('refuses the directory entries that are not files', () => {
+    expect(checkResultFileName('.')).toMatch(/not a file name/);
+    expect(checkResultFileName('..')).toMatch(/not a file name/);
+  });
+
+  // Not because the server could not cope, but because a name with a
+  // space or a quote in it is a bad name to pick for a file a job
+  // writes from a shell.
+  it('refuses characters that make trouble downstream', () => {
+    expect(checkResultFileName('my results.json')).toMatch(/letters, digits/);
+    expect(checkResultFileName('results$(x).json')).toMatch(/letters, digits/);
+    expect(checkResultFileName('"results.json"')).toMatch(/letters, digits/);
   });
 });

@@ -2641,16 +2641,36 @@ export const api = {
     // character out of the submit file anyone here can read or
     // download. When queue is given, submitFile must carry no queue
     // statement -- the server appends one.
+    // outputSheet nominates where the batch's results go: each job's
+    // result file is appended to that tab as the job finishes. The
+    // server checks the destination before queueing anything, so a bad
+    // one is a 400 rather than a batch of jobs with nowhere to report.
     submit: (
       submitFile: string,
       schedd?: string,
       queue?: { vars: string[]; rows: string[][] },
+      outputSheet?: {
+        connector: string;
+        fileId: string;
+        tab: string;
+        jobFile: string;
+      },
     ): Promise<SubmitResponse> =>
       fetchJSON(`${BASE}/jobs${schedd ? `?schedd=${encodeURIComponent(schedd)}` : ''}`, {
         method: "POST",
         body: JSON.stringify({
           submit_file: submitFile,
           ...(queue ? { queue_vars: queue.vars, queue_rows: queue.rows } : {}),
+          ...(outputSheet
+            ? {
+                output_sheet: {
+                  connector: outputSheet.connector,
+                  file_id: outputSheet.fileId,
+                  tab: outputSheet.tab,
+                  job_file: outputSheet.jobFile,
+                },
+              }
+            : {}),
         }),
       }),
 
