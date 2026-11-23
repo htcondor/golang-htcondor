@@ -80,15 +80,26 @@ RUN for attempt in 1 2 3 4 5; do \
 RUN dnf install -y 'condor >= 25.7.2' && \
     dnf clean all
 
-# openssh-server, for the ssh-to-job integration tests.
+# openssh-server, for the ssh-to-job integration tests, and openssh-clients,
+# for the tests that drive ssh(1) and sftp(1) themselves.
 #
-# Without it those tests skip, and a skip is indistinguishable from a pass in
+# Without them those tests skip, and a skip is indistinguishable from a pass in
 # the job summary: the webapi integration run reported "1712 tests, 2 skipped"
 # and the two were the only tests covering reaching into a running job. The
 # starter runs this sshd on the execute node, and HTCondor's own
 # condor_ssh_to_job_sshd_config_template comes from the condor package above.
-RUN dnf install -y openssh-server && \
-    dnf clean all
+#
+# openssh-clients is named even though git pulls it in as a weak dependency
+# today, because that is exactly the kind of thing a base-image change removes
+# quietly: the +jobs tests fork the real sftp(1), and they would go back to
+# skipping with nothing in the summary to say so. The assertion is here rather
+# than left to the tests for the same reason -- a missing client fails this
+# build, where the tests would merely stop covering anything.
+RUN dnf install -y openssh-server openssh-clients && \
+    dnf clean all && \
+    { command -v ssh && command -v sftp && test -x /usr/sbin/sshd; } || \
+    { echo "openssh is incomplete: the ssh-to-job and +jobs SFTP tests would skip, not fail"; \
+      exit 1; }
 
 # Create workspace directory
 WORKDIR /workspace
