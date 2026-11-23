@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/security"
 )
 
 // Alive is the HTCondor ALIVE command integer (SCHED_VERS+41). Unlike the other

@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/stream"
 )
 
 // ACTIVATE_CLAIM reply codes. These are the generic daemon-core reply integers

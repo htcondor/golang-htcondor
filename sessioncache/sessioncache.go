@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // SessionRecord is the persistable form of a CEDAR session: everything needed to

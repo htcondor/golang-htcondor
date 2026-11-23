@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 func makeEntry(t *testing.T, id string) *security.SessionEntry {

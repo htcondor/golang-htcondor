@@ -3,7 +3,7 @@ package htcondor
 import (
 	"strings"
 
-	"github.com/bbockelm/cedar/addresses"
+	"github.com/htcondor/cedar/addresses"
 )
 
 // Reaching a daemon on a private network we share with it.

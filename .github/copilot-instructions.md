@@ -37,7 +37,7 @@ golang-htcondor is a Go implementation of HTCondor client functionality, designe
 - **mcp/**: MCP server implementation
 
 ### Protocol Implementation
-- Uses Cedar protocol for HTCondor communication (github.com/bbockelm/cedar)
+- Uses Cedar protocol for HTCondor communication (github.com/htcondor/cedar)
 - QMGMT (Queue Management) protocol for job submission
 - File transfer protocol for remote job submission with spooling
 
@@ -45,7 +45,7 @@ golang-htcondor is a Go implementation of HTCondor client functionality, designe
 
 ### Core Dependencies
 - **Go 1.21+** (tested on 1.24, 1.25)
-- **github.com/bbockelm/cedar** (v0.0.10+): Cedar protocol bindings for HTCondor communication
+- **github.com/htcondor/cedar** (v0.0.10+): Cedar protocol bindings for HTCondor communication
 - **github.com/PelicanPlatform/classad** (v0.0.4+): ClassAd language implementation for job attributes
 
 ### Development Dependencies
@@ -284,7 +284,7 @@ Install with: `make pre-commit-install` or `pip install pre-commit && pre-commit
 - [Submit Description File](https://htcondor.readthedocs.io/en/latest/users-manual/submitting-a-job.html)
 
 ### External Dependencies
-- [Cedar Protocol](https://github.com/bbockelm/cedar)
+- [Cedar Protocol](https://github.com/htcondor/cedar)
 - [ClassAd Implementation](https://github.com/PelicanPlatform/classad)
 
 ## CI/CD

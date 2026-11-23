@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 	"github.com/htcondor/golang-htcondor/config"
 )
 

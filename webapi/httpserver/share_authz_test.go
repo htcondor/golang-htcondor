@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 	"github.com/htcondor/golang-htcondor/webapi/internal/fakeschedd"
 	"github.com/htcondor/golang-htcondor/webapi/shareurl"
 )

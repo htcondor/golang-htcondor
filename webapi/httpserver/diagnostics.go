@@ -5,8 +5,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/security"
 )
 
 // connErrorClass categorizes a connection failure for diagnostic logging.

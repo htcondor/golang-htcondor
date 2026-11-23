@@ -3,7 +3,7 @@ package htcondor
 import (
 	"strings"
 
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 // ParseAdvertiseCommand parses an UPDATE command string to CommandType

@@ -3,7 +3,7 @@ package htcondor
 import (
 	"testing"
 
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 func TestStartdHistoryEndpoint(t *testing.T) {

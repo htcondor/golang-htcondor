@@ -48,7 +48,7 @@ go test ./...
 ## Dependencies
 
 The project requires:
-- `github.com/bbockelm/cedar` - Cedar protocol bindings
+- `github.com/htcondor/cedar` - Cedar protocol bindings
 - `github.com/PelicanPlatform/classad` - ClassAd language implementation
 
 These dependencies are currently under development. The code uses placeholder types until the dependencies are fully available.

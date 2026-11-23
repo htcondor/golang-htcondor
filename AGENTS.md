@@ -11,7 +11,7 @@ Notes for automated agents working in this repo. Keep it short; add only non-obv
 
 The sub-modules `replace github.com/htcondor/golang-htcondor => ../`, so they build against the **local** root. That means:
 
-> **After changing any dependency (e.g. bumping `github.com/bbockelm/cedar`), a root-only edit is not enough.** Every module that replaces the root must be re-tidied to the same version, or the `webapi` jupyter-helper build and the CI **Tidy check** fail.
+> **After changing any dependency (e.g. bumping `github.com/htcondor/cedar`), a root-only edit is not enough.** Every module that replaces the root must be re-tidied to the same version, or the `webapi` jupyter-helper build and the CI **Tidy check** fail.
 
 Do **not** hand-loop `go mod tidy`. Use the Makefile:
 

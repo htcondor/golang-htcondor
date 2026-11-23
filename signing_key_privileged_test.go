@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 	"github.com/htcondor/golang-htcondor/droppriv"
 )
 

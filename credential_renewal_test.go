@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/security"
 )
 
 // newRenewalPool is a token pool with a daemon token in the system token

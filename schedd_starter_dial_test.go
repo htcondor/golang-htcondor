@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/bbockelm/cedar/client"
+	"github.com/htcondor/cedar/client"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // Both ways of reaching into a running job must build the same security

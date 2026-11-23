@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bbockelm/cedar/addresses"
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/addresses"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/security"
 )
 
 // CCBReverseRouter hands out inbound paths for CCB connection reversal: a

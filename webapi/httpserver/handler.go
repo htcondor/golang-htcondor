@@ -22,7 +22,7 @@ import (
 
 	"github.com/PelicanPlatform/classad/classad"
 	"github.com/PelicanPlatform/classad/collections/crypt"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 	"golang.org/x/crypto/ssh"
 
 	htcondor "github.com/htcondor/golang-htcondor"

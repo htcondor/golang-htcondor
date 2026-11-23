@@ -33,6 +33,7 @@ require (
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
+	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -109,17 +110,17 @@ require (
 )
 
 require (
-	github.com/PelicanPlatform/classad v0.43.1
-	github.com/PelicanPlatform/classad/collections v0.43.1
-	github.com/PelicanPlatform/classad/db v0.43.1
-	github.com/PelicanPlatform/classad/dbrpc v0.43.1
-	github.com/bbockelm/cedar v0.7.15
+	github.com/PelicanPlatform/classad v0.44.1
+	github.com/PelicanPlatform/classad/collections v0.44.1
+	github.com/PelicanPlatform/classad/db v0.44.1
+	github.com/PelicanPlatform/classad/dbrpc v0.44.1
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/yamux v0.1.2
+	github.com/htcondor/cedar v0.7.17
 	github.com/htcondor/golang-htcondor v0.0.0-00010101000000-000000000000
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/ory/fosite v0.49.0

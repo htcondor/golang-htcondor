@@ -21,7 +21,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 	htcondor "github.com/htcondor/golang-htcondor"
 )
 

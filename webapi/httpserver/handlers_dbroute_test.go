@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/dbrpc"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	htcondor "github.com/htcondor/golang-htcondor"

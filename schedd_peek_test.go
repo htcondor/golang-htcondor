@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/message"
 )
 
 // TestPeekJobOutputRejectsEmptyRequest pins the early-return on a

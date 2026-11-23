@@ -13,7 +13,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/message"
 	"github.com/htcondor/golang-htcondor/qmgmt"
 )
 

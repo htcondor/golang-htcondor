@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
 	"github.com/gorilla/websocket"
+	"github.com/htcondor/cedar/security"
 
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/jobssh"

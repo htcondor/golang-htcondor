@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 	"github.com/ory/fosite"
 
 	htcondor "github.com/htcondor/golang-htcondor"

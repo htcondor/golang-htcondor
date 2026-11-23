@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/security"
-	cedarserver "github.com/bbockelm/cedar/server"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/security"
+	cedarserver "github.com/htcondor/cedar/server"
 	"github.com/htcondor/golang-htcondor/authz"
 	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/logging"
@@ -337,7 +337,7 @@ func TestAuthzLogDenial(t *testing.T) {
 	if a.LogDenial(log, nil, "127.0.0.1:1", errors.New("cedar/server: command 60004 (DC_RECONFIG) refused: session (authenticated=false encrypted=false) does not meet the command's security level")) {
 		t.Error("security-level refusal reported as an authorization denial")
 	}
-	if !a.LogDenial(log, nil, "127.0.0.1:1", fmt.Errorf("cedar/server: command 81103 () refused: identity %q is not authorized for this command under current policy", cedarserver.UnauthenticatedFQU)) {
+	if !a.LogDenial(log, nil, "127.0.0.1:1", fmt.Errorf("cedar/server: command 81103 () refused: identity %q does not satisfy any of the command's authorization levels [READ]", cedarserver.UnauthenticatedFQU)) {
 		t.Fatal("policy refusal not logged")
 	}
 	if !a.LogDenial(log, nil, "127.0.0.1:1", errors.New("cedar/server: command 60004 (DC_RECONFIG) refused: authorization levels [ADMINISTRATOR] are outside the session's authorization limits [READ WRITE]")) {

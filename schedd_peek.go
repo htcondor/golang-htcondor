@@ -40,7 +40,7 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/message"
 )
 
 // peekDebug toggles wire-level diagnostic logging via PEEK_DEBUG=1.

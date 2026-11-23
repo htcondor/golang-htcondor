@@ -18,7 +18,7 @@ import (
 // parse sinful strings before attempting to dial. The cedar library should handle this
 // parsing internally. Once cedar is fixed, this function can be removed and we can pass
 // the raw sinful strings directly to NewSchedd() and NewCollector().
-// See: https://github.com/bbockelm/cedar/issues/TBD
+// See: https://github.com/htcondor/cedar/issues/TBD
 func parseSinfulString(sinful string) string {
 	sinful = strings.TrimPrefix(sinful, "<")
 	if idx := strings.Index(sinful, "?"); idx > 0 {

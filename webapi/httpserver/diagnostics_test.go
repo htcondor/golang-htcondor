@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // fakeNetTimeout implements the timeout-error interface so tests can exercise
