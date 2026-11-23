@@ -135,7 +135,7 @@ func (s *Handler) prepareOutputBinding(
 		JobFile:   jobFile,
 		// What the submitting session is itself scoped by, so the sweep
 		// names this cluster's jobs the same way the queue does for
-		// this account. See migration 0045.
+		// this account. See migration 0046.
 		UserScoped: ownerscope.UserScoped(ctx),
 	}, warnings, nil
 }
