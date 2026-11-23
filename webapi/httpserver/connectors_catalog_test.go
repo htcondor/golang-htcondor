@@ -344,7 +344,7 @@ func TestDiscoverAssumesHTTPSForABareHostname(t *testing.T) {
 // to make this daemon talk to something else. Nothing legitimate needs it.
 func TestDiscoverWontFollowARedirectToAnotherHost(t *testing.T) {
 	f := newAdminFixture(t, "smith_lab")
-	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"issuer":"x","authorization_endpoint":"https://x/auth"}`)
 	}))

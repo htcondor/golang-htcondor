@@ -81,7 +81,10 @@ type AdminConnectorCatalogEntry struct {
 }
 
 // adminConnectorCatalog serves GET /api/v1/admin/connectors/catalog.
-func (s *Handler) adminConnectorCatalog(w http.ResponseWriter, r *http.Request) {
+//
+// The request is unused: the catalogue is what this build ships plus what
+// this server has configured, neither of which varies by caller.
+func (s *Handler) adminConnectorCatalog(w http.ResponseWriter, _ *http.Request) {
 	origins := map[string]string{}
 	for _, d := range s.connectorDefinitions() {
 		origins[d.ID.String()] = d.Origin
@@ -219,7 +222,7 @@ func normalizeIssuer(raw string) (*url.URL, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%q is not a URL: %v", raw, err)
+		return nil, fmt.Errorf("%q is not a URL: %w", raw, err)
 	}
 	if u.Host == "" {
 		return nil, fmt.Errorf("%q names no host", raw)
@@ -338,7 +341,7 @@ func fetchIssuerMetadata(ctx context.Context, client *http.Client, u string) (*i
 	}
 	var doc issuerMetadata
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("the response is not a metadata document: %v", err)
+		return nil, fmt.Errorf("the response is not a metadata document: %w", err)
 	}
 	// An HTML error page decodes as nothing useful rather than failing,
 	// so require the one field that makes this a usable answer. Without
