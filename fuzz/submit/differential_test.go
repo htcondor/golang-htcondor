@@ -386,6 +386,15 @@ var seeds = []seedCase{
 	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx1 y1\nx2 y)2\n)\n"},
 	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx1 y1\nx2 y2)\n)\n"},
 	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx1 y1\n  )\n"},
+	// The ASCII unit separator, which HTCondor autodetects as the SOLE
+	// field separator for a row that contains one -- whitespace and
+	// comma splitting are switched off for that row. It is how
+	// condor_submit itself puts multi-column itemdata on the wire, and
+	// it is the only way a cell can hold a space or a comma.
+	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx y\x1fz, w\n)\n"},
+	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\na\x1fb\nc\x1fd\n)\n"},
+	// A row WITHOUT it in the same list still splits the old way.
+	{input: "executable = /bin/sleep\narguments = $(a) $(b)\nqueue a, b from (\nx y\x1fz\np q\n)\n"},
 	// An empty bracketed list.
 	{input: "executable = /bin/sleep\narguments = $(x)\nqueue x from (\n)\n"},
 
