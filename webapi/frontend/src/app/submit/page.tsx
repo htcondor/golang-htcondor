@@ -66,7 +66,9 @@ import {
   type ResourceFieldMask,
 } from '@/lib/submitFile';
 import {
+  checkResultFileName,
   splitSheetHeader,
+  type OutputSheet,
   type SheetFile,
   type SheetSelection,
 } from '@/lib/sheets';
@@ -431,6 +433,12 @@ export default function SubmitPage() {
   // rather than from the template's declared columns.
   const [sheetState, setSheetState] = useState<SheetSelection | null>(null);
 
+  // outputSheet is where this batch's results go, if anywhere. The
+  // other direction from sheetState: that one reads a spreadsheet to
+  // make the jobs, this one has the jobs write back into one. Null is
+  // the ordinary case, and the submit request simply omits it.
+  const [outputSheet, setOutputSheet] = useState<OutputSheet | null>(null);
+
   // sheetTable is the queue that spreadsheet would make. Separating
   // the header from the body is the only interpretation step, and it
   // can fail the same ways the table ever could, so the error travels
@@ -711,6 +719,14 @@ export default function SubmitPage() {
         body,
         multiAP ? submitTarget : undefined,
         queue,
+        outputSheet
+          ? {
+              connector: outputSheet.connector,
+              fileId: outputSheet.fileId,
+              tab: outputSheet.tab,
+              jobFile: outputSheet.jobFile,
+            }
+          : undefined,
       );
 
       // Common files: template default attachments + the user's
@@ -1579,6 +1595,12 @@ export default function SubmitPage() {
           disabled={submit.isPending}
         />
       </ChatHighlight>
+
+      <ResultsSection
+        sheet={outputSheet}
+        setSheet={setOutputSheet}
+        disabled={submit.isPending}
+      />
 
       <ChatHighlight active={recentlyChanged.has('resources')}>
         <ResourcesSection
@@ -3515,7 +3537,7 @@ function SheetSource({
             onChange={(e) => e.target.value && loadTab(file, e.target.value)}
             className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm"
           >
-            <option value="">Choose a tab\u2026</option>
+            <option value="">Choose a tab&hellip;</option>
             {file.tabs.map((t) => (
               <option key={t.id} value={t.title}>
                 {t.title}
@@ -4016,6 +4038,274 @@ function parseCSV(input: string): string[][] {
 // ----------------------------------------------------------------------
 // Inputs section: file uploads.
 // ----------------------------------------------------------------------
+
+// ResultsSection nominates a spreadsheet for the batch's results.
+//
+// The reverse of the sheet table source, and deliberately a separate
+// section rather than an option inside it: reading parameters from a
+// spreadsheet and writing results to one are independent choices, and a
+// batch can do either, both, or neither. Most do neither, so it starts
+// collapsed and says nothing.
+//
+// What this collects is only a destination. Whether the jobs actually
+// transfer the named file back, whether the tab has a header row, and
+// whether the connector is still usable are all the server's to check,
+// before anything is queued -- a second copy of those rules here would
+// be a second place for them to drift, and the server's answer is the
+// one that decides.
+function ResultsSection({
+  sheet,
+  setSheet,
+  disabled,
+}: {
+  sheet: OutputSheet | null;
+  setSheet: (s: OutputSheet | null) => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(sheet !== null);
+
+  if (!open) {
+    return (
+      <section className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={disabled}
+          className="text-sm text-brand-700 hover:underline disabled:opacity-50"
+        >
+          + Collect these jobs&rsquo; results in a spreadsheet
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <SectionCard
+      title="Results"
+      subtitle="Each job's results file is added to a spreadsheet as the job finishes"
+    >
+      <OutputSheetPicker
+        sheet={sheet}
+        setSheet={setSheet}
+        disabled={disabled}
+        onDismiss={() => {
+          setSheet(null);
+          setOpen(false);
+        }}
+      />
+    </SectionCard>
+  );
+}
+
+// OutputSheetPicker chooses the spreadsheet, the tab and the file.
+//
+// The tab's header row is shown once chosen, because it is the contract:
+// a job's field lands in the column of the same name, a column the job
+// does not produce is left blank, and a field with no column is left
+// out. Showing the columns is the only way the person can tell whether
+// what their job emits will land anywhere.
+function OutputSheetPicker({
+  sheet,
+  setSheet,
+  disabled,
+  onDismiss,
+}: {
+  sheet: OutputSheet | null;
+  setSheet: (s: OutputSheet | null) => void;
+  disabled: boolean;
+  onDismiss: () => void;
+}) {
+  const [pickers, setPickers] = useState<Picker[] | null>(null);
+  const [busy, setBusy] = useState<null | 'opening' | 'choosing' | 'loading'>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [file, setFile] = useState<SheetFile | null>(null);
+  const [jobFile, setJobFile] = useState(sheet?.jobFile ?? 'results.json');
+
+  useEffect(() => {
+    let live = true;
+    fetchPickers()
+      .then((ps) => live && setPickers(ps))
+      .catch(() => live && setPickers([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const picker = pickers?.find((p) => p.provider === 'gdrive') ?? pickers?.[0] ?? null;
+  const nameProblem = checkResultFileName(jobFile);
+
+  // The tab is chosen separately from the file, and a chosen tab plus a
+  // usable file name is what makes a destination. Rebuilt on every
+  // change so the parent never holds a half-made one.
+  function settle(f: SheetFile | null, tab: string, headers: string[], name: string) {
+    if (!picker || !f || tab === '' || checkResultFileName(name) !== null) {
+      setSheet(null);
+      return;
+    }
+    setSheet({
+      connector: picker.connector,
+      fileId: f.fileId,
+      name: f.name,
+      tab,
+      jobFile: name.trim(),
+      headers,
+    });
+  }
+
+  async function pick() {
+    if (!picker) return;
+    setProblem(null);
+    setBusy('opening');
+    try {
+      const chosen = await chooseFiles(picker, { onOpened: () => setBusy('choosing') });
+      if (chosen.kind !== 'picked' || chosen.files.length === 0) return;
+      // One spreadsheet: results go to one place, and a second file
+      // would be a second destination rather than more room.
+      setBusy('loading');
+      const got = await api.connect.sheetTabs(picker.connector, chosen.files[0].id);
+      const next: SheetFile = { fileId: got.fileId, name: got.name, tabs: got.tabs };
+      setFile(next);
+      setSheet(null);
+      // One tab needs no question. Several must not have the first
+      // picked silently: results would go to a tab nobody chose, and
+      // the submission would look entirely normal.
+      if (next.tabs.length === 1) await chooseTab(next, next.tabs[0].title);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function chooseTab(f: SheetFile, title: string) {
+    if (!picker) return;
+    setProblem(null);
+    setBusy('loading');
+    try {
+      // Only the header row. The rows already in the tab are somebody
+      // else's results and are none of this page's business.
+      const got = await api.connect.sheetValues(picker.connector, f.fileId, title);
+      const headers = (got.rows[0] ?? []).filter((c) => c.trim() !== '');
+      if (headers.length === 0) {
+        setSheet(null);
+        setProblem(
+          `The tab "${title}" has no header row, so there is nowhere to put a result. ` +
+            'Put the column names in its first row and choose it again.',
+        );
+        return;
+      }
+      settle(f, title, headers, jobFile);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+      setSheet(null);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={pick}
+          disabled={!picker || disabled || busy !== null}
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+        >
+          {busy === 'opening'
+            ? 'Opening\u2026'
+            : busy === 'choosing'
+              ? 'Choosing\u2026'
+              : busy === 'loading'
+                ? 'Reading\u2026'
+                : sheet || file
+                  ? 'Choose a different spreadsheet'
+                  : 'Choose a spreadsheet'}
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={disabled}
+          className="text-sm text-gray-500 hover:underline disabled:opacity-50"
+        >
+          Don&rsquo;t collect results
+        </button>
+        {pickers !== null && !picker && (
+          <span className="text-sm text-gray-500">
+            No connected account on this access point can supply a spreadsheet.
+          </span>
+        )}
+      </div>
+
+      {file && file.tabs.length > 1 && (
+        <label className="block text-sm">
+          <span className="mr-2 text-gray-600">Tab in &quot;{file.name}&quot;:</span>
+          <select
+            value={sheet?.tab ?? ''}
+            onChange={(e) => e.target.value && chooseTab(file, e.target.value)}
+            disabled={disabled}
+            className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm"
+          >
+            <option value="">Choose a tab&hellip;</option>
+            {file.tabs.map((t) => (
+              <option key={t.id} value={t.title}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      <label className="block text-sm">
+        <span className="mr-2 text-gray-600">Each job writes its results to:</span>
+        <input
+          type="text"
+          value={jobFile}
+          onChange={(e) => {
+            setJobFile(e.target.value);
+            settle(file, sheet?.tab ?? '', sheet?.headers ?? [], e.target.value);
+          }}
+          disabled={disabled}
+          spellCheck={false}
+          className="rounded-md border border-gray-300 px-2 py-1 font-mono text-sm"
+        />
+        <span className="ml-2 text-xs text-gray-500">JSON or CSV</span>
+      </label>
+      {nameProblem && <p className="text-sm text-amber-700">{nameProblem}</p>}
+
+      {problem && (
+        <p role="alert" className="text-sm text-red-700">
+          {problem}
+        </p>
+      )}
+
+      {sheet && (
+        <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+          <p className="text-gray-700">
+            Results go to <strong>{sheet.tab}</strong> in{' '}
+            <strong>{sheet.name}</strong>.
+          </p>
+          <p className="mt-1 text-xs text-gray-600">
+            Its columns are{' '}
+            {sheet.headers.map((h, i) => (
+              <span key={h}>
+                {i > 0 && ', '}
+                <code className="rounded-sm bg-white px-1">{h}</code>
+              </span>
+            ))}
+            . A field with one of those names lands in that column; a column
+            your job does not produce is left blank, and a field with no
+            column is left out.
+          </p>
+          <p className="mt-1 text-xs text-gray-600">
+            Make sure <code className="rounded-sm bg-white px-1">{sheet.jobFile}</code>{' '}
+            is among the files these jobs transfer back.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function InputsSection({
   files,

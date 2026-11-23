@@ -120,3 +120,54 @@ export function splitSheetHeader(
   }
   return { columns, rows: body, skipped };
 }
+
+/**
+ * Where a submission's results go.
+ *
+ * The reverse direction: the job table reads a spreadsheet, this one
+ * writes to it. Each job's declared result file is appended to this tab
+ * as the job finishes, fitted to the tab's own header row.
+ *
+ * `headers` is carried for display only — what the columns actually are
+ * at the time a job finishes is read then, from the sheet, so a column
+ * added after submitting starts being filled without resubmitting. A
+ * copy taken now would go stale and is not what anything decides on.
+ */
+export interface OutputSheet {
+  /** Connector id, as "ns:name". */
+  connector: string;
+  fileId: string;
+  name: string;
+  tab: string;
+  /** The file each job writes its result to, JSON or CSV. */
+  jobFile: string;
+  /** The tab's header row as it was when chosen, for showing. */
+  headers: string[];
+}
+
+/** A file name a job can write and the server will look for. */
+const RESULT_FILE = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Check a results file name before it is sent.
+ *
+ * The server refuses a path too, and its refusal is the one that
+ * matters; this exists so the person finds out while typing rather
+ * than when the whole submission is rejected. It is deliberately the
+ * narrower rule: a name the server would accept but a shell makes
+ * awkward is still a bad name to choose here.
+ *
+ * Returns null when the name is usable.
+ */
+export function checkResultFileName(name: string): string | null {
+  const n = name.trim();
+  if (n === '') return 'Name the file each job writes its results to.';
+  if (n === '.' || n === '..') return `"${n}" is not a file name.`;
+  if (/[/\\]/.test(n)) {
+    return 'This is the name of a file in the job’s own directory, not a path.';
+  }
+  if (!RESULT_FILE.test(n)) {
+    return 'Use letters, digits, dots, dashes and underscores.';
+  }
+  return null;
+}
