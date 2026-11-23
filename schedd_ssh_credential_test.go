@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // The caller's credential must not become this daemon's credential.

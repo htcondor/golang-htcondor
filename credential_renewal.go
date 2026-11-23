@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // SecurityConfigRenewer re-creates a caller's credential: a SecurityConfig

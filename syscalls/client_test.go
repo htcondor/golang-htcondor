@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/stream"
 )
 
 // loopbackStreams returns a connected pair of CEDAR streams over a real

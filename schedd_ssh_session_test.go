@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // TestStarterSessionAdvertisesAES is a regression test for the condor_ssh_to_job

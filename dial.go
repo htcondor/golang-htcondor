@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/security"
 )
 
 // DialOptions configures DialSinful, principally for reaching daemons behind a

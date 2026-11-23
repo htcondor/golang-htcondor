@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/security"
 	"github.com/htcondor/golang-htcondor/config"
 )
 

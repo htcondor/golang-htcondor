@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/security"
 )
 
 // This file is the administrative half of talking to a startd: changing

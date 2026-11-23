@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	cedarsharedport "github.com/bbockelm/cedar/server/sharedport"
+	cedarsharedport "github.com/htcondor/cedar/server/sharedport"
 )
 
 // Config configures the router.

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/message"
 )
 
 // The placementd's typed query and edit commands (API version 2). They read

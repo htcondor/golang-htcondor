@@ -5,8 +5,8 @@ go 1.26.0
 replace github.com/htcondor/golang-htcondor => ../..
 
 require (
-	github.com/PelicanPlatform/classad v0.43.1
-	github.com/bbockelm/cedar v0.7.15
+	github.com/PelicanPlatform/classad v0.44.1
+	github.com/htcondor/cedar v0.7.17
 	github.com/htcondor/golang-htcondor v0.0.0-00010101000000-000000000000
 )
 
@@ -17,6 +17,7 @@ require (
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
+	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 // withFakeSend replaces the per-collector send for the duration of a

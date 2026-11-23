@@ -92,7 +92,7 @@ func (b Build) Stamped() bool {
 const (
 	pathGolangHTCondor = "github.com/htcondor/golang-htcondor"
 	pathClassAd        = "github.com/PelicanPlatform/classad"
-	pathCedar          = "github.com/bbockelm/cedar"
+	pathCedar          = "github.com/htcondor/cedar"
 )
 
 var (

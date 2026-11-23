@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/security"
-	cedarserver "github.com/bbockelm/cedar/server"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/security"
+	cedarserver "github.com/htcondor/cedar/server"
 )
 
 // aliveFields holds what the fake schedd's ALIVE handler decoded off the wire.

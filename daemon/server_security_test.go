@@ -3,7 +3,7 @@ package daemon
 import (
 	"testing"
 
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 // TestServerSecurityConfigSharedPortID: behind a shared port the server

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/bbockelm/cedar/addresses"
+	"github.com/htcondor/cedar/addresses"
 	"github.com/htcondor/golang-htcondor/config"
 )
 

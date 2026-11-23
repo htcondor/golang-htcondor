@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 func TestGlobalDefaultConfig(t *testing.T) {

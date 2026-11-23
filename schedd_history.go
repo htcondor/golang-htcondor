@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/commands"
 )
 
 // historyEndpoint is the schedd as a history peer: QUERY_SCHEDD_HISTORY, rate-limited by the

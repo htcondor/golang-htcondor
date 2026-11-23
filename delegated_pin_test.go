@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // A caller's credential must reach CEDAR pinned: the token it was

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/ccb"
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/ccb"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/security"
 )
 
 // quietTestLogger keeps the dialer's mode-change lines out of test output.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // CredentialOrigin records who a context is acting for.

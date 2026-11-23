@@ -3,7 +3,7 @@ package htcondor
 import (
 	"testing"
 
-	"github.com/bbockelm/cedar/security"
+	"github.com/htcondor/cedar/security"
 )
 
 // checkTrust asserts the SSL trust anchors of sc.

@@ -19,8 +19,8 @@ import (
 	"strings"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/stream"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/stream"
 )
 
 // claimSinful returns the startd command address embedded at the head of a claim

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbockelm/cedar/addresses"
+	"github.com/htcondor/cedar/addresses"
 )
 
 // The two cases C++ implements in Daemon::Set_addr, which this follows

@@ -4,7 +4,7 @@ This document describes the implementation of security configuration mapping fro
 
 ## Implementation Summary
 
-The `GetSecurityConfig` function in `security.go` reads HTCondor's `SEC_*` configuration parameters and produces a `SecurityConfig` struct compatible with the cedar protocol library (`github.com/bbockelm/cedar/security`).
+The `GetSecurityConfig` function in `security.go` reads HTCondor's `SEC_*` configuration parameters and produces a `SecurityConfig` struct compatible with the cedar protocol library (`github.com/htcondor/cedar/security`).
 
 ### Key Features
 
@@ -200,7 +200,7 @@ package main
 
 import (
     "log"
-    "github.com/bbockelm/cedar/commands"
+    "github.com/htcondor/cedar/commands"
     "github.com/htcondor/golang-htcondor"
     "github.com/htcondor/golang-htcondor/config"
 )
@@ -227,5 +227,5 @@ func main() {
 ## References
 
 - HTCondor Security Documentation: https://htcondor.readthedocs.io/en/main/admin-manual/security.html
-- Cedar Security Package: github.com/bbockelm/cedar/security
+- Cedar Security Package: github.com/htcondor/cedar/security
 - HTCondor Configuration Parameters: https://htcondor.readthedocs.io/en/main/admin-manual/configuration-macros.html

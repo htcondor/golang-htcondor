@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bbockelm/cedar/security"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/htcondor/cedar/security"
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/config"
 )

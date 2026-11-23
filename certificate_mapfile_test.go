@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/security"
-	cedarserver "github.com/bbockelm/cedar/server"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/security"
+	cedarserver "github.com/htcondor/cedar/server"
 )
 
 // issuerMapLine is a SCITOKENS line mapping every subject of

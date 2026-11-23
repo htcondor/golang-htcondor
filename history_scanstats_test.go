@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"github.com/PelicanPlatform/classad/classad"
-	"github.com/bbockelm/cedar/commands"
-	"github.com/bbockelm/cedar/message"
-	"github.com/bbockelm/cedar/security"
-	cedarserver "github.com/bbockelm/cedar/server"
+	"github.com/htcondor/cedar/commands"
+	"github.com/htcondor/cedar/message"
+	"github.com/htcondor/cedar/security"
+	cedarserver "github.com/htcondor/cedar/server"
 )
 
 // fakeHistoryDaemon answers QUERY_SCHEDD_HISTORY the way condor_history does

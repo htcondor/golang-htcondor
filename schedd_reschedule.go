@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bbockelm/cedar/client"
-	"github.com/bbockelm/cedar/commands"
+	"github.com/htcondor/cedar/client"
+	"github.com/htcondor/cedar/commands"
 )
 
 // DefaultRescheduleInterval is the minimum wall-clock gap between

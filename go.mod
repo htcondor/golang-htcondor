@@ -3,12 +3,12 @@ module github.com/htcondor/golang-htcondor
 go 1.26.0
 
 require (
-	github.com/PelicanPlatform/classad v0.43.1
-	github.com/PelicanPlatform/classad/collections v0.43.1
-	github.com/bbockelm/cedar v0.7.15
+	github.com/PelicanPlatform/classad v0.44.1
+	github.com/PelicanPlatform/classad/collections v0.44.1
 	github.com/bbockelm/gosssd v0.0.4
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/htcondor/cedar v0.7.17
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.59.0
@@ -27,6 +27,7 @@ require (
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
+	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect

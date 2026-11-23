@@ -14,7 +14,7 @@ package qmgmt
 import (
 	"context"
 
-	"github.com/bbockelm/cedar/message"
+	"github.com/htcondor/cedar/message"
 )
 
 // DaemonCore command integers that put a socket into QMGMT mode. After the
