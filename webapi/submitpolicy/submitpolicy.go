@@ -278,7 +278,8 @@ func ensureTrailingNewline(s string) string {
 	return s + "\n"
 }
 
-// InsertBeforeQueue splices block in ahead of EVERY queue statement.
+// InsertBeforeQueue splices block in ahead of EVERY queue statement --
+// the statements, not the item rows under them.
 // Ahead of the first is where an assignment affects that queue and every
 // one after it; repeating it ahead of each later one keeps a command the
 // file reassigns between two queue statements (which condor_submit
@@ -291,16 +292,45 @@ func ensureTrailingNewline(s string) string {
 func InsertBeforeQueue(submitFile, block string) string {
 	lines := strings.Split(submitFile, "\n")
 	found := false
-	for i, line := range lines {
-		if isQueueLine(line) {
-			lines[i] = block + line
-			found = true
+	for i := 0; i < len(lines); i++ {
+		if !isQueueLine(lines[i]) {
+			continue
+		}
+		open := itemListStaysOpen(lines[i])
+		lines[i] = block + lines[i]
+		found = true
+		if !open {
+			continue
+		}
+		// The rest of a bracketed item list is ROWS, not commands, and
+		// a row is allowed to say anything -- including the word
+		// "queue", which is an ordinary sample or partition name. This
+		// used to splice the block ahead of such a row, putting it
+		// inside the list, where it is read as another row or ends the
+		// list outright depending on what the block holds. Skip to the
+		// closing line, which HTCondor finds the same way: the first
+		// line whose first non-blank character is ")".
+		for i++; i < len(lines); i++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), ")") {
+				break
+			}
 		}
 	}
 	if !found {
 		return ensureTrailingNewline(submitFile) + block
 	}
 	return strings.Join(lines, "\n")
+}
+
+// itemListStaysOpen reports whether a queue statement's item list
+// continues onto the following lines.
+//
+// Counting rather than parsing, because the question is only which
+// lines after this one are rows. An unclosed "(" means the list spans
+// lines; `in (a, b)` closes on its own line; `queue 2` has no list at
+// all; and a file name holding a parenthesis balances itself.
+func itemListStaysOpen(line string) bool {
+	return strings.Count(line, "(") > strings.Count(line, ")")
 }
 
 // isQueueLine reports whether a line is a queue statement. Matches the
