@@ -275,3 +275,26 @@ func TestGrantsRefuseAnUnauthenticatedCaller(t *testing.T) {
 		})
 	}
 }
+
+// The routes are documented, and the schema with them. /integrations and
+// /webhooks are in the spec, so the third thing on the same page being
+// absent is a gap somebody integrating against this would hit.
+func TestGrantsAreDocumented(t *testing.T) {
+	var doc struct {
+		Paths      map[string]json.RawMessage `json:"paths"`
+		Components struct {
+			Schemas map[string]json.RawMessage `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+		t.Fatalf("openapi does not parse: %v", err)
+	}
+	for _, path := range []string{"/oauth2/grants", "/oauth2/grants/revoke"} {
+		if _, ok := doc.Paths[path]; !ok {
+			t.Errorf("%s missing from the OpenAPI paths", path)
+		}
+	}
+	if _, ok := doc.Components.Schemas["Grant"]; !ok {
+		t.Error("the Grant schema is missing, so the listing's shape is undocumented")
+	}
+}
