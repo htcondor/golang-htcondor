@@ -163,7 +163,7 @@ func TestSweepLeavesUnfinishedJobsAlone(t *testing.T) {
 	f := newSweepFixture(t)
 	f.sheet("sample")
 	b := f.bind(t)
-	f.state = clusterState{Completed: nil, Present: true}
+	f.state = clusterState{Completed: nil, Unfinished: 1, Present: true}
 	f.files[0] = `{"sample":"a"}`
 
 	if err := f.w.sweepBinding(t.Context(), b); err != nil {
@@ -260,6 +260,52 @@ func TestSweepRetiresAFinishedSubmission(t *testing.T) {
 	}
 	if _, err := f.store.OutputBindingFor(t.Context(), "alice", "", 12); !errors.Is(err, connectors.ErrNoBinding) {
 		t.Errorf("the binding outlived the submission: %v", err)
+	}
+}
+
+// A submission whose jobs are all finished AND all accounted for is
+// retired even though the cluster is still in the queue.
+//
+// Spooled jobs stay queued for ten days after they complete, so waiting
+// for the cluster to leave would mean re-reading a finished
+// submission's whole proc list every pass for ten days to learn
+// nothing. For a batch of a hundred thousand that is the difference
+// between one read and three thousand.
+func TestSweepRetiresOnceEverythingIsAccountedFor(t *testing.T) {
+	f := newSweepFixture(t)
+	f.sheet("sample")
+	b := f.bind(t)
+	f.state = clusterState{Completed: []int{0}, Unfinished: 0, Present: true}
+	f.files[0] = `{"sample":"a"}`
+
+	if err := f.w.sweepBinding(t.Context(), b); err != nil {
+		t.Fatalf("sweepBinding: %v", err)
+	}
+	if _, err := f.store.OutputBindingFor(t.Context(), "alice", "", 12); !errors.Is(err, connectors.ErrNoBinding) {
+		t.Errorf("a finished submission's binding stayed open: %v", err)
+	}
+}
+
+// A removed job is not waited for. It will never produce a result, and
+// counting it as still to come would hold the binding open for the
+// cluster's whole stay in the queue.
+func TestSweepDoesNotWaitForRemovedJobs(t *testing.T) {
+	f := newSweepFixture(t)
+	f.sheet("sample")
+	b := f.bind(t)
+	// Proc 0 finished; proc 1 was removed, so the queue reports neither
+	// a completion nor anything still to come.
+	f.state = clusterState{Completed: []int{0}, Unfinished: 0, Present: true}
+	f.files[0] = `{"sample":"a"}`
+
+	if err := f.w.sweepBinding(t.Context(), b); err != nil {
+		t.Fatalf("sweepBinding: %v", err)
+	}
+	if n := len(f.g.SheetRows("SHEET", "results")); n != 2 {
+		t.Errorf("the tab has %d rows, want the header and one result", n)
+	}
+	if _, err := f.store.OutputBindingFor(t.Context(), "alice", "", 12); !errors.Is(err, connectors.ErrNoBinding) {
+		t.Errorf("the binding waited for a removed job: %v", err)
 	}
 }
 

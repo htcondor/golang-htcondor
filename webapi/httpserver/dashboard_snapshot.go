@@ -289,6 +289,7 @@ func (a *activityCollector) observe(ad *classad.ClassAd) {
 }
 
 const (
+	jobStatusRemoved   = 3
 	jobStatusCompleted = 4
 	jobStatusHeld      = 5
 )

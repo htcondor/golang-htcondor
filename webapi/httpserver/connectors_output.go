@@ -36,11 +36,19 @@ const outputResultMaxBytes = 4 << 20
 type clusterState struct {
 	// Completed is the procs that have finished, in any order.
 	Completed []int
+	// Unfinished is how many of the cluster's jobs could still produce a
+	// result: anything neither completed nor removed. Zero means the
+	// submission is over, whether because every job finished or because
+	// the cluster has left the queue entirely.
+	Unfinished int
 	// Present reports whether the cluster is still in the queue at all.
-	// A cluster that has left it will never produce another result, so
-	// its binding is done whatever is still unaccounted for.
+	// Kept apart from Unfinished because they answer different
+	// questions and only one of them is about whether to look again.
 	Present bool
 }
+
+// done reports whether this submission can produce nothing further.
+func (c clusterState) done() bool { return c.Unfinished == 0 }
 
 // outputSweeper appends what finished jobs produced.
 type outputSweeper struct {
@@ -112,11 +120,15 @@ func (w *outputSweeper) sweepBinding(ctx context.Context, b connectors.OutputBin
 	sort.Ints(pending)
 
 	if len(pending) == 0 {
-		// Nothing outstanding. A cluster that has left the queue will
-		// never produce another result, so the binding is finished --
-		// and retiring it is what stops a reused cluster id from
-		// inheriting this destination.
-		if !state.Present {
+		// Nothing outstanding, so the binding is finished if nothing
+		// more can arrive -- every job accounted for, or the cluster
+		// gone from the queue. Retiring it is what stops a reused
+		// cluster id from inheriting this destination, and it is also
+		// what stops the sweep from asking about a finished submission
+		// for the rest of its ten days in the queue: a cluster of a
+		// hundred thousand completed jobs would otherwise be re-read
+		// every pass to learn nothing.
+		if state.done() {
 			return w.store.RetireOutputBinding(ctx, b.Subject, b.Schedd, b.Cluster)
 		}
 		return nil
@@ -185,7 +197,7 @@ func (w *outputSweeper) sweepBinding(ctx context.Context, b connectors.OutputBin
 		}
 	}
 
-	if !state.Present {
+	if state.done() {
 		return w.store.RetireOutputBinding(ctx, b.Subject, b.Schedd, b.Cluster)
 	}
 	return nil

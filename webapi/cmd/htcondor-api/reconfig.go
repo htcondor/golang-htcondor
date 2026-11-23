@@ -356,6 +356,11 @@ var reconfigParams = []reconfigParam{
 	// reads does not (see HTTP_API_MCP_SKILLS_DIR above).
 	{name: "HTTP_API_MCP_SKILLS_RELOAD_INTERVAL"},
 
+	// The connector output sweep's ticker is likewise started once. Which
+	// connectors exist, and their policy, do reload; how often finished
+	// jobs' results are appended does not.
+	{name: "HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL"},
+
 	// Authorization groups. Worth making dynamic later -- they are consulted
 	// per request -- but some are also folded into policy objects at
 	// startup, so they need their setters before they can move up.
