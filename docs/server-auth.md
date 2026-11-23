@@ -223,6 +223,32 @@ database before it is believed, and that lookup *does* reach a directory.
 So an incomplete index can fail to find somebody, but cannot promote
 anybody.
 
+**When nobody can log in, read the startup log first.** The index reports
+what it found, and the failure modes each have their own line:
+
+| Line | Means |
+| --- | --- |
+| `Indexed accounts by GECOS for identity mapping` `accounts=N` | The index in force. Compare `N` against the directory you expect. |
+| `The account database enumerated to nothing` | Nothing at all was listed; if accounts live in a directory, SSSD needs `enumerate = true`. |
+| `The account index is incomplete: a directory could not be read` | The directory was tried and failed. Retried on the TTL. |
+| `The account index covers no directory accounts, but nsswitch.conf lists sss for passwd` | Nothing *failed*, and no directory was reached either -- so the index holds only the local accounts and every directory identity is refused. |
+
+The last one is the one with no other symptom. A container whose SSSD
+never started enumerates its own image's `/etc/passwd`, succeeds, and
+builds a plausible-looking index of a dozen accounts that maps nobody:
+the count is not zero, nothing was degraded, and the only other evidence
+is users who cannot sign in. It is reported only where
+`nsswitch.conf` names `sss` on the `passwd` line -- a host that genuinely
+has no directory is not warned about -- and not when
+`HTTP_API_IDENTITY_MAP_PASSWD_FILE` names the database, where no
+directory is consulted by design.
+
+Where a mapping does fail, the refusal says which failure it was. With
+placement onboarding enabled the person is given a
+[placement-only session](server-placement.md) instead of a refusal page,
+and the cause is then only in the log, on the
+`Created a placement-only session` line's `reason` field.
+
 **Group membership.** `HTTP_API_GROUP_SOURCE` decides where groups come
 from, independently of the mapping above. It takes a comma-separated list;
 whitespace around each entry is ignored.

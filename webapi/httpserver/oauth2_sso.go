@@ -524,7 +524,7 @@ func (s *Handler) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 			"error", accessErr)
 
 		if placementOnly {
-			s.startPlacementOnlySession(w, li, userInfo.Subject)
+			s.startPlacementOnlySession(w, li, userInfo.Subject, accessErr)
 			return
 		}
 		// A browser gets a page. This used to return the API's JSON error
@@ -756,7 +756,11 @@ func (s *Handler) renderAccessDeniedPage(w http.ResponseWriter, required *groupS
 // The session keeps the provider's subject and groups, so the sign-in's
 // mapping can be re-run for it once the person is onboarded
 // (placement_session_upgrade.go).
-func (s *Handler) startPlacementOnlySession(w http.ResponseWriter, li loginIdentity, oidcSubject string) {
+// reason is why this sign-in gets a placement-only session rather than a
+// full one: the mapping error, or the group policy that refused it. It is
+// logged because the two are indistinguishable from the outside -- both
+// land the person on /placement -- and they are not the same problem.
+func (s *Handler) startPlacementOnlySession(w http.ResponseWriter, li loginIdentity, oidcSubject string, reason error) {
 	sessionID, sessionData, err := s.sessionStore.CreateSession(SessionData{
 		Groups:            li.groups,
 		PlacementIdentity: li.placementID,
@@ -772,8 +776,9 @@ func (s *Handler) startPlacementOnlySession(w http.ResponseWriter, li loginIdent
 		return
 	}
 	s.setSessionCookie(w, sessionID, sessionData.ExpiresAt)
-	s.logger.Info(logging.DestinationHTTP, "Created a placement-only session for an identity with no local account",
-		"oidc_subject", oidcSubject, "identity", li.placementID, "session_key", sessionLogID(sessionID))
+	s.logger.Info(logging.DestinationHTTP, "Created a placement-only session, which reaches only placement",
+		"oidc_subject", oidcSubject, "identity", li.placementID,
+		"reason", describeUnmapped(reason), "session_key", sessionLogID(sessionID))
 
 	redirectURL := "/placement"
 	originalURL := li.originalURL
@@ -782,6 +787,18 @@ func (s *Handler) startPlacementOnlySession(w http.ResponseWriter, li loginIdent
 		redirectURL = originalURL
 	}
 	s.finishBrowserLogin(w, redirectURL)
+}
+
+// describeUnmapped renders a placement-only session's cause for the log.
+//
+// A nil error reads as "<nil>" through the logger, which looks like a bug
+// in the logging rather than a caller that had nothing to say. Both paths
+// do have a reason, so this should not be seen.
+func describeUnmapped(err error) string {
+	if err == nil {
+		return "unstated"
+	}
+	return err.Error()
 }
 
 // errNoPlacementAccount is a login the placementd maps to no account, where
@@ -810,6 +827,16 @@ type loginMapping struct {
 	// placementOnly: no account, but a browser sign-in with a placement
 	// identity may have a placement-only session.
 	placementOnly bool
+	// unmapped is WHY there is no account, on the placementOnly path.
+	//
+	// It is the same error that becomes `refused` when a placement-only
+	// session is not available, and it used to be dropped on this path --
+	// so a deployment with a placementd reported every mapping failure as
+	// the single line "an identity with no local account". That hides the
+	// difference between a GECOS that matched nothing, an ambiguous one,
+	// and a group lookup whose every source was unavailable, which are
+	// three different operator problems with three different fixes.
+	unmapped error
 	// refused, when set, is why the sign-in maps to no account and may
 	// not have a placement-only session either.
 	refused error
@@ -840,7 +867,7 @@ func (s *Handler) mapLoginIdentity(ctx context.Context, li loginIdentity, hint s
 	if m.placement == nil && po.mapIdentity && !s.localIdentity.mapsAccount() {
 		// placementd is the only mapping, and it maps nobody here.
 		if mayPlacementOnly() {
-			m.placementOnly = true
+			m.placementOnly, m.unmapped = true, errNoPlacementAccount
 		} else {
 			m.refused = errNoPlacementAccount
 		}
@@ -867,7 +894,7 @@ func (s *Handler) mapLoginIdentity(ctx context.Context, li loginIdentity, hint s
 			// not degraded: see localIdentity's comment on why there is
 			// no fallback to the token's own claims.
 			if mayPlacementOnly() {
-				m.placementOnly = true
+				m.placementOnly, m.unmapped = true, err
 			} else {
 				m.refused = err
 			}
@@ -985,7 +1012,7 @@ func (s *Handler) resolveLoginIdentity(w http.ResponseWriter, r *http.Request, l
 	m := s.mapLoginIdentity(ctx, li, hint)
 	switch {
 	case m.placementOnly:
-		s.startPlacementOnlySession(w, li, li.subject)
+		s.startPlacementOnlySession(w, li, li.subject, m.unmapped)
 		return m, true
 	case m.refused != nil:
 		s.logger.Warn(logging.DestinationHTTP, "Refusing a login that maps to no account",

@@ -321,3 +321,69 @@ func TestWithoutADirectoryRebuildsAreUnaffected(t *testing.T) {
 		t.Errorf("index holds %d accounts; a no-directory host cannot rebuild", got)
 	}
 }
+
+// CoversDirectory is what lets a caller tell "this host has no directory"
+// from "this host has one and we got nothing out of it". The two produce
+// an identical index and an identical nil Degraded(), which is how a
+// container whose SSSD never started served an 18-account index for
+// twelve days without a single warning.
+func TestCoversDirectoryReportsProvenance(t *testing.T) {
+	accounts := []Account{{Username: "bbockelm", Gecos: "bockelman"}}
+	verifier := &fakeVerifier{gecos: map[string]string{"bbockelm": "bockelman"}}
+
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{{"directory answered", true}, {"no directory", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := New(&provenanceEnum{accounts: accounts, fromDirectory: tc.want}, verifier)
+			if r.CoversDirectory() {
+				t.Fatal("CoversDirectory() = true before any build")
+			}
+			if err := r.Refresh(context.Background()); err != nil {
+				t.Fatalf("Refresh: %v", err)
+			}
+			if got := r.CoversDirectory(); got != tc.want {
+				t.Errorf("CoversDirectory() = %v, want %v", got, tc.want)
+			}
+			if r.Degraded() != nil {
+				t.Errorf("Degraded() = %v, want nil; neither case is a failed read", r.Degraded())
+			}
+		})
+	}
+}
+
+// Provenance has to survive a restart, or the first build after one would
+// decide the host has no directory and warn about a healthy deployment.
+func TestCoversDirectorySurvivesASnapshotRoundTrip(t *testing.T) {
+	accounts := []Account{{Username: "bbockelm", Gecos: "bockelman"}}
+	verifier := &fakeVerifier{gecos: map[string]string{"bbockelm": "bockelman"}}
+
+	donor := New(&provenanceEnum{accounts: accounts, fromDirectory: true}, verifier)
+	if err := donor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	snap, ok := donor.Snapshot()
+	if !ok {
+		t.Fatal("no snapshot")
+	}
+
+	restored := New(&provenanceEnum{accounts: accounts, fromDirectory: false}, verifier)
+	restored.Restore(snap)
+	if !restored.CoversDirectory() {
+		t.Error("a restored directory-backed index reports CoversDirectory() = false")
+	}
+}
+
+// An enumerator with no provenance method is assumed to speak for
+// whatever it covers, so it must not be reported as directoryless.
+func TestCoversDirectoryAssumesAPlainEnumeratorIsAuthoritative(t *testing.T) {
+	r := New(&fakeEnum{accounts: []Account{{Username: "root", Gecos: "root"}}},
+		&fakeVerifier{gecos: map[string]string{"root": "root"}})
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !r.CoversDirectory() {
+		t.Error("a plain Enumerator was treated as covering no directory")
+	}
+}

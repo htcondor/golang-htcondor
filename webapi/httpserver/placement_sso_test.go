@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/htcondor/golang-htcondor/idmap"
+	"github.com/htcondor/golang-htcondor/logging"
 )
 
 // placementSSOServer is a server whose SSO goes to a fake provider and
@@ -118,5 +120,63 @@ func TestUnmappedLoginRefusedWithoutAPlacementd(t *testing.T) {
 	rec := srv.ssoCallback(t, "/")
 	if rec.Code != http.StatusForbidden || sessionCookieFrom(rec) != nil {
 		t.Errorf("%d cookie=%v", rec.Code, sessionCookieFrom(rec))
+	}
+}
+
+// bufferedHTTPLog replaces the handler's logger with one whose http
+// destination is at Info -- the level the placement-only line is logged
+// at -- and returns the buffer it writes to.
+func bufferedHTTPLog(t *testing.T, srv *onboardingServer) *logging.Buffer {
+	t.Helper()
+	buf := logging.NewBuffer(64, slog.LevelDebug)
+	logger, err := logging.New(&logging.Config{
+		OutputPath:   "stderr",
+		DefaultLevel: logging.VerbosityInfo,
+		DestinationLevels: map[logging.Destination]logging.Verbosity{
+			logging.DestinationHTTP: logging.VerbosityInfo,
+		},
+	})
+	if err != nil {
+		t.Fatalf("logging.New: %v", err)
+	}
+	logging.AttachBuffer(logger, buf)
+	srv.Handler.logger = logger
+	return buf
+}
+
+// The placement-only line used to say only "an identity with no local
+// account", dropping the error that said WHICH failure it was. A GECOS
+// that matched nothing, an ambiguous one, and a group lookup whose every
+// source was unavailable all arrive here and need different fixes, and
+// the only person who can tell them apart is reading this line.
+func TestPlacementOnlySessionLogsWhyTheLoginWasNotMapped(t *testing.T) {
+	srv := placementSSOServer(t, map[string]any{
+		"sub": "http://cilogon.org/serverA/users/99", "eppn": "zoe@uni.example", "name": "Zoe Q",
+	})
+	buf := bufferedHTTPLog(t, srv)
+
+	if rec := srv.ssoCallback(t, "/"); sessionCookieFrom(rec) == nil {
+		t.Fatalf("no placement-only session was created: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var entry logging.BufferEntry
+	for _, e := range buf.Entries(64) {
+		if strings.Contains(e.Message, "Created a placement-only session") {
+			entry = e
+		}
+	}
+	if entry.Message == "" {
+		t.Fatal("the placement-only session was not logged at all")
+	}
+	reason := entry.Fields["reason"]
+	if reason == "" {
+		t.Fatal("the placement-only line carries no reason field")
+	}
+	if reason == "unstated" {
+		t.Error(`reason = "unstated": the mapping error reached this line as nil and was dropped`)
+	}
+	// The identity is what an operator greps for; keep it beside the reason.
+	if got := entry.Fields["identity"]; got != "zoe@uni.example" {
+		t.Errorf("identity = %q, want the placement identity", got)
 	}
 }
