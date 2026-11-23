@@ -102,8 +102,8 @@ func TestPerJobConnectorInputsIntegration(t *testing.T) {
 
 	// Byte-for-byte what the submit page sends: buildConnectorTable puts
 	// the file's name in the first template column and the reference in
-	// connector_input, and buildSubmitFile (page.tsx) emits them as an
-	// inline `queue COLS from ((...))` block, two spaces of indent and
+	// connector_input, and buildSubmitFile (page.tsx) emits them as a
+	// bracketed `queue COLS from (...)` block, two spaces of indent and
 	// one row per line. Divergence here would make this test prove
 	// something about a submit file nobody sends.
 	submitFile := strings.Join([]string{
@@ -117,10 +117,10 @@ func TestPerJobConnectorInputsIntegration(t *testing.T) {
 		"error = run-$(ProcId).err",
 		"log = run.log",
 		"requirements = false",
-		"queue name, connector_input from ((",
+		"queue name, connector_input from (",
 		"  a.csv webapi-builtin-gdrive+gdrive2://FILEA/a.csv",
 		"  b.csv webapi-builtin-gdrive+gdrive2://FILEB/b.csv",
-		"))",
+		")",
 		"",
 	}, "\n")
 
