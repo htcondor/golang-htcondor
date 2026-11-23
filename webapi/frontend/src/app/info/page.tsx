@@ -116,28 +116,15 @@ export default function InfoPage() {
         )}
       </Section>
 
-      {/* SSH setup moved to /connectors.
+      {/* SSH setup is on /connectors, and there is deliberately no
+          pointer to it here.
 
-          It is the same kind of thing as the rest of that page -- a
-          credential something outside holds to act as you here -- and
-          it was the only thing on /info that DID something rather than
-          reporting something. The pointer stays because this is where
-          people learned to look for it. */}
-      {session?.authenticated && (
-        <Section title="SSH access">
-          <p className="text-sm text-gray-600">
-            Trusting the gateway, issuing a certificate for one of your own
-            machines, and withdrawing one, are on the{" "}
-            <a
-              href="/connectors"
-              className="text-brand-700 underline hover:text-brand-900"
-            >
-              Connectors
-            </a>{" "}
-            page.
-          </p>
-        </Section>
-      )}
+          A pointer would have to be printed without knowing whether this
+          deployment has a certificate authority at all, and an access
+          point with no gateway must not carry text telling people where
+          to go and get a certificate. /connectors is in the sidebar and
+          hides the section when there is no CA, which is the honest
+          version of the same signpost. */}
 
       {/* Admin-only: HTCondor config readout. Hidden entirely for
           non-admins (the endpoint also gates server-side, so a

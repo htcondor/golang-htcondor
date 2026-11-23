@@ -62,19 +62,19 @@ test("a real certificate authority signs a real key", async ({ page, request }) 
   });
 
   await loginAsAdmin(page, password);
-  await page.goto("/info");
+  await page.goto("/connectors");
 
   // The panel exists at all, which is the half the stubbed test could
   // not reach: with no gateway /api/v1/ssh/ca answers 503 and the panel
   // correctly hides itself, so this appearing proves a CA was minted.
-  await expect(page.getByText("SSH access")).toBeVisible();
+  await expect(page.getByText("Your own machines over SSH")).toBeVisible();
 
   // What a user is given to trust, from the real CA.
   const body = page.locator("body");
   await expect(body).toContainText("@cert-authority");
   await expect(body).toContainText("SHA256:");
 
-  await page.locator("textarea").fill(pub);
+  await page.getByTestId("ssh-public-key").fill(pub);
   await page.getByRole("button", { name: /issue certificate/i }).click();
 
   await expect(body).toContainText("id_ed25519-cert.pub");
@@ -97,4 +97,56 @@ test("a real certificate authority signs a real key", async ({ page, request }) 
   if (certOut) {
     writeFileSync(certOut, `${issued.certificate}\n`, { mode: 0o600 });
   }
+
+  // The certificate is RECORDED, which is what makes a long-lived one
+  // safe to hand out. A certificate that worked but appeared in no list
+  // would be one the Revoke button cannot reach, with nothing telling
+  // its holder that theirs is the one which cannot be withdrawn.
+  // Located by the comment off the key that was actually signed, which
+  // is what the table labels the row with. Derived rather than
+  // hardcoded, because E2E_PUBKEY_FILE may have supplied a key whose
+  // comment is somebody else's -- or absent, which the page renders as
+  // "No comment".
+  const comment = pub.split(/\s+/)[2] ?? "No comment";
+  const row = page.locator("tr", { hasText: comment }).first();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(row).toContainText("Active");
+});
+
+// Withdrawing one, against a real CA and a real record.
+//
+// The whole reason certificates are recorded: before this, expiry was
+// the only way one ever stopped working, which is why the cap was a day
+// and why nothing unattended could use the feature at all.
+test("an issued certificate can be withdrawn", async ({ page, request }) => {
+  const ca = await request.get("/api/v1/ssh/ca");
+  test.skip(
+    ca.status() === 503,
+    "this server has no SSH certificate authority; set HTTP_API_SSH_GATEWAY_ADDRESS and HTTP_API_KEK_FILE",
+  );
+
+  await loginAsAdmin(page, password);
+  await page.goto("/connectors");
+  await expect(page.getByText("Your own machines over SSH")).toBeVisible();
+
+  // A key of its own, so this does not race the spec above over which
+  // row is whose.
+  const pub =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEraR6NBbL5MeTWlBQ5wSEtSTfmRNHPTCCi3dEOJSjZE revokeme@playwright";
+  await page.getByTestId("ssh-public-key").fill(pub);
+  await page.getByRole("button", { name: /issue certificate/i }).click();
+
+  const row = page.locator("tr", { hasText: "revokeme@playwright" }).first();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(row).toContainText("Active");
+
+  // ConfirmButton asks first; the first click is the ask.
+  await row.getByText("Revoke").click();
+  await row.getByText("Confirm").click();
+
+  // Revoked, and the button is gone with it -- there is nothing left to
+  // withdraw, and offering one would invite a second press that does
+  // nothing.
+  await expect(row).toContainText("Revoked", { timeout: 10_000 });
+  await expect(row.getByText("Revoke")).toHaveCount(0);
 });

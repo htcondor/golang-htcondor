@@ -3,7 +3,12 @@ import { expect, test } from "@playwright/test";
 import { adminPassword, loginAsAdmin } from "./fixtures/login";
 import { serverLog } from "./fixtures/serverlog";
 
-// The SSH certificate panel on /info.
+// The SSH certificate panel, which lives on /connectors.
+//
+// It moved there from /info, and the move is the point: an SSH
+// certificate is a credential something outside holds to act as you
+// here, which is what the rest of that page is about. /info is a
+// readout, and this was the only thing on it that DID something.
 //
 // Both branches are driven with a stubbed /ssh/ca, because which one a
 // real server takes depends on whether it can mint a CA -- demo mode
@@ -37,12 +42,22 @@ test("no certificate authority means no panel at all", async ({ page }) => {
   );
 
   await loginAsAdmin(page, password);
-  await page.goto("/info");
+  await page.goto("/connectors");
 
-  await expect(page.getByText("Info", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("SSH access")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Connectors" }).first(),
+  ).toBeVisible();
+  await expect(page.getByText("Your own machines over SSH")).toHaveCount(0);
+  await expect(page.getByTestId("ssh-public-key")).toHaveCount(0);
   // And no error leaked onto the page in its place.
   await expect(page.locator("body")).not.toContainText("certificate authority");
+
+  // Nor is there a signpost to it on /info, which cannot know whether
+  // this deployment has a CA and so must not tell anybody to go and get
+  // a certificate.
+  await page.goto("/info");
+  await expect(page.getByText("Info", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("SSH access")).toHaveCount(0);
 });
 
 test("a certificate can be issued for a pasted public key", async ({
@@ -70,20 +85,32 @@ test("a certificate can be issued for a pasted public key", async ({
         principal: "bbockelm",
         valid_before: new Date(Date.now() + 12 * 3600_000).toISOString(),
         fingerprint: "SHA256:c3rt1f1c4t3",
+        serial: "9007199254740993",
       }),
     });
   });
 
-  await loginAsAdmin(page, password);
-  await page.goto("/info");
+  // The table below the form. Stubbed empty so this test is about the
+  // issuing half; revoking is driven against a real CA in
+  // sshcertreal.full.spec.ts, where there is something real to withdraw.
+  await page.route("**/api/v1/ssh/certificates", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ certificates: [] }),
+    }),
+  );
 
-  await expect(page.getByText("SSH access")).toBeVisible();
+  await loginAsAdmin(page, password);
+  await page.goto("/connectors");
+
+  await expect(page.getByText("Your own machines over SSH")).toBeVisible();
   // Step 1 gives the user something to trust.
   await expect(page.locator("body")).toContainText(CA.known_hosts_line);
   await expect(page.locator("body")).toContainText(CA.fingerprint);
 
   const pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMYPUBLICKEY me@laptop";
-  await page.locator("textarea").fill(pub);
+  await page.getByTestId("ssh-public-key").fill(pub);
   await page.getByRole("button", { name: /issue certificate/i }).click();
 
   // The certificate comes back and is offered as a file, because a line
