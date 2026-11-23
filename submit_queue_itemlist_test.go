@@ -68,3 +68,41 @@ func TestItemListIsExpandedBeforeItIsSplit(t *testing.T) {
 		})
 	}
 }
+
+// TestCyclicItemListIsRefused pins that an item list this parser cannot expand
+// fails the submission rather than queueing a job with the macro still in it.
+//
+// `FOO = $(BAR)` and `BAR = $(FOO)` refer to each other, so expanding either
+// never terminates; the expander gives up on a step budget and reports a
+// cycle. Keeping the item as written let the submission through, and because
+// every later expansion of that item hit the same cycle, the job ad carried
+// the literal text `$(item)` as its arguments. Only the factory path reported
+// it, from the digest.
+func TestCyclicItemListIsRefused(t *testing.T) {
+	const cycle = "executable = /bin/true\nFOO = $(BAR)\nBAR = $(FOO)\narguments = [$(item)]\n"
+	for _, c := range []struct{ name, src string }{
+		{"plain submit", cycle + "queue in($(FOO) b)\n"},
+		{"with a factory", cycle + "max_materialize = 2\nqueue in($(FOO) b)\n"},
+		{"the cycle alone in the list", cycle + "queue in($(FOO))\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := ParseSubmitFile(strings.NewReader(c.src))
+			if err == nil {
+				t.Fatalf("a submit file whose item list does not expand was accepted")
+			}
+			if !strings.Contains(err.Error(), "does not terminate") {
+				t.Errorf("error does not name the cycle: %v", err)
+			}
+		})
+	}
+
+	// A cycle the item list never reads is not this statement's problem.
+	sf, err := ParseSubmitFile(strings.NewReader(cycle + "queue in(a b)\n"))
+	if err != nil {
+		t.Fatalf("an unreferenced cycle failed the submission: %v", err)
+	}
+	if got := argsOf(t, cycle+"queue in(a b)\n"); strings.Join(got, "|") != `"[a]"|"[b]"` {
+		t.Errorf("unreferenced cycle changed the items: %v", got)
+	}
+	_ = sf
+}

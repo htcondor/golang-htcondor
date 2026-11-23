@@ -374,7 +374,10 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 		// statement itself is left as parsed.
 		expandedStmt := *queueStmt
 		if !queueStmt.ItemsFrom {
-			expandedStmt.Items = expandQueueItems(cfg, queueStmt.Items)
+			expandedStmt.Items, err = expandQueueItems(cfg, queueStmt.Items)
+			if err != nil {
+				return nil, fmt.Errorf("failed to expand the queue item list: %w", err)
+			}
 		}
 		iterator, err := createIteratorFromQueue(&expandedStmt, queueFileAccess{
 			allowAny:   opts.AllowLocalAccess,

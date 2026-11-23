@@ -402,19 +402,26 @@ func (a queueFileAccess) permit(path string) error {
 // no item there and an empty one here, so `queue in(0 $())` queued one job
 // under condor_submit and two here.
 //
-// An item whose expansion fails is kept as written, which is what the rest of
-// the parser does with a value it cannot expand.
-func expandQueueItems(cfg *config.Config, items []string) []string {
+// An item whose expansion fails -- a reference cycle is the way that happens
+// -- fails the submission. Keeping the item as written instead let the
+// submission through with the macro still in it: `queue in($(FOO) b)` with
+// FOO and BAR referring to each other queued a job whose arguments were the
+// literal `$(item)`, because every later expansion of that item ran into the
+// same cycle and gave up too. A file that cannot be expanded has no jobs in
+// it, so say so here rather than submit a job nobody asked for.
+//
+// Only the submission that asks for a factory used to report this, from the
+// digest; the plain path queued the broken jobs.
+func expandQueueItems(cfg *config.Config, items []string) ([]string, error) {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
 		expanded, _, err := cfg.SelectiveExpand(item, func(string) bool { return false })
 		if err != nil {
-			out = append(out, item)
-			continue
+			return nil, fmt.Errorf("queue item %q: %w", item, err)
 		}
 		out = append(out, config.SplitQueueItems(expanded)...)
 	}
-	return out
+	return out, nil
 }
 
 func createIteratorFromQueue(qs *config.QueueStatement, access queueFileAccess) (SubmitIterator, error) {
