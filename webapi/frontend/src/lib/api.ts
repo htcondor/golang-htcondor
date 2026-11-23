@@ -1103,6 +1103,31 @@ export interface SSHCertificate {
   principal: string;
   valid_before: string;
   fingerprint: string;
+  // What identifies this certificate to the revoke endpoint. A STRING,
+  // and deliberately never parsed into a number here: serials are 63-bit
+  // values and JavaScript carries 53, so Number(serial) silently rounds
+  // and the rounded value revokes nothing.
+  serial: string;
+}
+
+// SSHCertificateRecord is one issued certificate as the server
+// remembers it. Mirrors sshCertRecord in sshcertstore.go.
+//
+// There is nothing secret in one: a serial, a fingerprint, and the
+// comment off the public key the user pasted. The certificate itself is
+// public data that sits in ~/.ssh.
+export interface SSHCertificateRecord {
+  serial: string;
+  key_fingerprint: string;
+  key_type: string;
+  // The trailing comment from the authorized_keys line, usually
+  // "you@laptop". The most human label the row has, and often absent.
+  comment?: string;
+  issued_at: string;
+  valid_before: string;
+  // Set once the owner withdrew it. The row stays either way: the
+  // gateway refuses a serial BECAUSE a row says so.
+  revoked_at?: string;
 }
 
 // JobBatchName prefix used by interactive terminal jobs. Mirrored from
@@ -2341,6 +2366,22 @@ export const api = {
           public_key: publicKey,
           ...(lifetimeSeconds ? { lifetime_seconds: lifetimeSeconds } : {}),
         }),
+      }),
+
+    // What this account has been issued, newest first, including
+    // certificates that have expired or been withdrawn.
+    certificates: (): Promise<SSHCertificateRecord[]> =>
+      fetchJSON<{ certificates?: SSHCertificateRecord[] }>(
+        `${BASE}/ssh/certificates`,
+      ).then((r) => r.certificates ?? []),
+
+    // Withdraw one. The serial stays a string the whole way: it came
+    // from the server as one and goes back unparsed.
+    revokeCertificate: (serial: string): Promise<{ revoked: boolean }> =>
+      fetchJSON(`${BASE}/ssh/certificates/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serial }),
       }),
   },
 

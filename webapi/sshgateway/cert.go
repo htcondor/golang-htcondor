@@ -16,6 +16,7 @@ package sshgateway
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -24,12 +25,19 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// revocationCheckTimeout bounds the revocation lookup.
+//
+// Generous for a local database query and short enough that a wedged
+// one refuses logins rather than accumulating half-open handshakes.
+const revocationCheckTimeout = 5 * time.Second
+
 // CertAuth accepts SSH certificates this deployment's CA signed.
 //
 // It exists for what keyboard-interactive structurally cannot do:
 // BatchMode clients, which refuse the method outright, and not asking a
 // human to approve every single connection. A certificate is obtained
-// once through the browser and then works until it expires.
+// once through the browser and then works until it expires -- or until
+// its owner withdraws it, which is what Revocations below is for.
 //
 // What it does NOT do is accept bare public keys. A key on its own
 // carries no identity and no expiry, so accepting one would mean this
@@ -47,6 +55,30 @@ type CertAuth struct {
 	// have been offered on purpose. Optional; a nil *Banlist is safe
 	// to call.
 	Bans *Banlist
+
+	// Revocations answers "has this serial been withdrawn?".
+	//
+	// Optional, and a deployment without it is exactly what this
+	// gateway was before: certificates stop working when they expire
+	// and not before. With it, a user can cut one off from the
+	// Connectors page, which is what makes a week-long certificate a
+	// reasonable thing to issue.
+	//
+	// It is consulted AFTER the signature and the validity window, so
+	// a forged or expired certificate never reaches the database.
+	Revocations RevocationChecker
+}
+
+// RevocationChecker reports whether an issued certificate has been
+// withdrawn by its owner.
+//
+// Errors are FATAL to the login, not ignored. A revocation check that
+// fails open is a revocation check that an attacker only has to break
+// rather than beat -- and the store behind this one is a local database
+// in the same process, so an error here means the server is already
+// unwell rather than that a network is slow.
+type RevocationChecker interface {
+	CertificateRevoked(ctx context.Context, serial uint64) (bool, error)
 }
 
 // ErrNotACertificate is returned for a bare public key.
@@ -130,6 +162,29 @@ func (c *CertAuth) Callback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Perm
 		// package does not own.
 		c.charge(conn, WeightAbandoned, "certificate did not verify")
 		return nil, fmt.Errorf("sshgateway: %w", err)
+	}
+
+	// Withdrawn? Last, because it is the only check that touches a
+	// database and the three before it are free.
+	//
+	// Not charged against the banlist either way. A revoked certificate
+	// is overwhelmingly a machine that has not been told yet -- the cron
+	// job whose certificate its owner cut off this morning -- and
+	// locking that address out adds nothing: the certificate is already
+	// refused, every time, by the line below.
+	if c.Revocations != nil {
+		// x/crypto gives PublicKeyCallback no context of its own, so
+		// this bounds a query that must not be able to hold a
+		// handshake open.
+		ctx, cancel := context.WithTimeout(context.Background(), revocationCheckTimeout)
+		defer cancel()
+		revoked, err := c.Revocations.CertificateRevoked(ctx, cert.Serial)
+		if err != nil {
+			return nil, fmt.Errorf("sshgateway: could not check whether this certificate was revoked: %w", err)
+		}
+		if revoked {
+			return nil, errors.New("sshgateway: this certificate has been revoked")
+		}
 	}
 
 	// Deliberately not logged here. x/crypto calls PublicKeyCallback on

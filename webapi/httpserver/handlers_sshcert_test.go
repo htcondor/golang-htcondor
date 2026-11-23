@@ -54,6 +54,12 @@ func sshCertHandler(t *testing.T, withCA bool) *Handler {
 		signingKeyPath:           keyPath,
 		trustDomain:              "test.htcondor.org",
 		uidDomain:                "test.htcondor.org",
+		// Issuance writes an ssh_certificates row and fails the
+		// request if it cannot, so the certificate it hands back is
+		// always one the Revoke button reaches. A handler with no
+		// database therefore issues nothing -- which is the real
+		// behaviour, and the reason this helper has a database.
+		db: newTestDB(t, filepath.Join(dir, "app.db")),
 	}
 	if withCA {
 		_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -142,13 +148,19 @@ func TestCertificateRequiresAuthentication(t *testing.T) {
 	}
 }
 
-// Asked for a week, given the cap. A client wanting a long-lived
+// Asked for a month, given the cap. A client wanting a long-lived
 // certificate wants a certificate, not an error -- but it does not get
 // to choose how long this deployment trusts it.
+//
+// The request asks for well MORE than the cap on purpose. Asking for
+// exactly sshCertMaxLifetime and asserting the answer is no larger
+// passes whether or not any clamp exists, which is what this test
+// looked like once the cap moved from a day to a week and the request
+// it sent -- 604800 seconds -- became the cap itself.
 func TestCertificateLifetimeIsCapped(t *testing.T) {
 	h := sshCertHandler(t, true)
 	rec := postCert(t, h, "alice",
-		`{"public_key":"`+userPublicKey(t)+`","lifetime_seconds":604800}`)
+		`{"public_key":"`+userPublicKey(t)+`","lifetime_seconds":2592000}`) // 30 days
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -156,8 +168,16 @@ func TestCertificateLifetimeIsCapped(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got := time.Until(resp.ValidBefore); got > sshCertMaxLifetime+time.Minute {
+	got := time.Until(resp.ValidBefore)
+	if got > sshCertMaxLifetime+time.Minute {
 		t.Errorf("certificate is valid for %v, past the %v cap", got, sshCertMaxLifetime)
+	}
+	// And clamped TO the cap rather than to something shorter: a
+	// deployment that quietly handed out an hour would also satisfy the
+	// bound above.
+	if got < sshCertMaxLifetime-time.Minute {
+		t.Errorf("certificate is valid for %v, short of the %v cap it should have been clamped to",
+			got, sshCertMaxLifetime)
 	}
 }
 

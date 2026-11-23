@@ -950,6 +950,88 @@ const openAPISchema = `{
           "expires_at": {"type": "string", "format": "date-time", "description": "The LATEST expiry across this app's live tokens. The soonest would read as \"access ends then\" while a refresh token sat behind it ready to mint more."}
         }
       },
+      "SSHCAInfo": {
+        "type": "object",
+        "description": "The SSH gateway's certificate authority: what to trust, and where to connect. Public by nature -- it is the key that VERIFIES signatures, not one that makes them -- but still behind authentication, because the only reason to want it is to use this gateway.",
+        "properties": {
+          "public_key": {"type": "string", "description": "The CA's key in authorized_keys form."},
+          "known_hosts_line": {"type": "string", "description": "Append to ~/.ssh/known_hosts and the gateway's host key verifies without pinning it by hand: it presents a host certificate signed by this same CA. Each configured gateway name appears twice, as name and [name]:*, because OpenSSH looks a host up as [name]:port for any port but 22 -- and this gateway defaults to 2222."},
+          "fingerprint": {"type": "string", "description": "SHA256:... as ssh-keygen -l prints it, for comparing against what an operator published."},
+          "gateway_host": {"type": "string", "description": "Where to ssh. Present only where the operator set HTTP_API_SSH_GATEWAY_HOST. Omitted rather than guessed when unset: the listen address is not the answer, since a container on :2222 sits behind a service publishing 22 somewhere else."},
+          "gateway_port": {"type": "integer", "description": "The port to ssh to, when it is not 22."}
+        }
+      },
+      "SSHCertificate": {
+        "type": "object",
+        "description": "A newly issued certificate. The private half of the key never reaches this server: only the public half is sent, and a certificate is public data.",
+        "properties": {
+          "certificate": {"type": "string", "description": "Save beside the private key as <key>-cert.pub; ssh finds it there on its own."},
+          "principal": {"type": "string", "description": "The account the certificate names, which is the one this server resolved for the caller. The request has no say in it."},
+          "valid_before": {"type": "string", "format": "date-time"},
+          "fingerprint": {"type": "string", "description": "SHA256:... of the public key this was issued over."},
+          "serial": {"type": "string", "description": "What identifies this certificate to the revoke endpoint. A STRING, not a number: serials are 63-bit values and JSON numbers are read into a 53-bit float by most JavaScript, which rounds the value into one that revokes nothing."}
+        }
+      },
+      "SSHCertificateRecord": {
+        "type": "object",
+        "description": "One certificate this access point has issued to the caller, as it remembers it. Nothing in it is secret.",
+        "properties": {
+          "serial": {"type": "string", "description": "Pass to /ssh/certificates/revoke. A string for the reason SSHCertificate.serial gives."},
+          "key_fingerprint": {"type": "string", "description": "SHA256:... of the public key, which is what ssh-keygen -lf ~/.ssh/id_ed25519.pub prints on your own machine -- so you can tell which of your keys a row is about."},
+          "key_type": {"type": "string", "example": "ssh-ed25519"},
+          "comment": {"type": "string", "description": "The trailing comment from the authorized_keys line that was signed, usually \"you@laptop\". Often absent."},
+          "issued_at": {"type": "string", "format": "date-time"},
+          "valid_before": {"type": "string", "format": "date-time", "description": "A certificate past this is refused on its own dates, whether or not it was revoked."},
+          "revoked_at": {"type": "string", "format": "date-time", "description": "When the owner withdrew it. Absent means they have not. The row is KEPT when revoked rather than deleted: the gateway refuses a serial because a row says so, and no row reads as \"never issued\"."}
+        }
+      },
+      "SSHConsentView": {
+        "type": "object",
+        "description": "What the approval screen is told about a pending SSH login. Deliberately says nothing about who started the flow, because nothing is known: the device-authorize endpoint authenticates no client.",
+        "properties": {
+          "user_code": {"type": "string"},
+          "username": {"type": "string", "description": "Who the browser is signed in as -- the account the session would be created as. Shown so somebody signed in as the wrong person sees it before approving rather than after."},
+          "client_id": {"type": "string"},
+          "scopes": {"type": "array", "items": {"type": "string"}},
+          "session": {"type": "string", "description": "The workspace the SSH client asked to reach."},
+          "session_exists": {"type": "boolean", "description": "Whether the approving user already has a session by that name. When they do there is nothing to configure and the screen offers the login alone."},
+          "can_create": {"type": "boolean", "description": "False where this server runs no interactive manager, which makes the resource form pointless to show."},
+          "job_id": {"type": "string"},
+          "schedd": {"type": "string", "description": "In multi-AP mode: the access point the existing session is on, or the one a new session would be created on."},
+          "status": {"type": "string"},
+          "hold_reason": {"type": "string"},
+          "hold_reason_code": {"type": "integer"},
+          "defaults": {"allOf": [{"$ref": "#/components/schemas/InteractiveTerminalRequest"}], "description": "What this deployment would submit if nobody chose, so a form opens showing what it is about to do rather than something the server will silently replace."},
+          "approval_token": {"type": "string", "description": "Must come back on the approve request."}
+        }
+      },
+      "SSHConsentResult": {
+        "type": "object",
+        "description": "What the screen shows after the decision.",
+        "properties": {
+          "approved": {"type": "boolean"},
+          "session": {"type": "string"},
+          "job_id": {"type": "string"},
+          "schedd": {"type": "string", "description": "The access point the workspace is on, in multi-AP mode."},
+          "created": {"type": "boolean", "description": "Distinguishes \"your workspace was submitted\" from \"the one you already had is being used\", which is the difference between waiting for the queue and not."}
+        }
+      },
+      "InteractiveTerminalRequest": {
+        "type": "object",
+        "description": "The resources an interactive workspace is submitted with. Every field is optional; what is left out this deployment fills in.",
+        "properties": {
+          "cpus": {"type": "integer"},
+          "memory_mb": {"type": "integer"},
+          "disk_mb": {"type": "integer"},
+          "gpus": {"type": "integer"},
+          "gpus_minimum_capability": {"type": "string", "description": "CUDA compute capability, e.g. \"8.0\"."},
+          "gpus_minimum_memory": {"type": "integer", "description": "Per-GPU memory in MB."},
+          "gpus_minimum_runtime": {"type": "string"},
+          "cuda_version": {"type": "string"},
+          "require_gpus": {"type": "string", "description": "A ClassAd expression, for a requirement the fields above cannot express."},
+          "submit_lines": {"type": "string", "description": "Extra submit-file lines, subject to whatever this deployment allows."}
+        }
+      },
       "Integration": {
         "type": "object",
         "description": "One of the caller's own OAuth2 clients. There is no secret field, deliberately: a struct with one is a struct that ends up in a response the first time somebody adds an endpoint.",
@@ -1656,6 +1738,116 @@ const openAPISchema = `{
           "400": {"description": "Malformed body, or no client_id", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/ssh/ca": {
+      "get": {
+        "summary": "The SSH gateway's certificate authority",
+        "description": "What to trust, and where to connect, so an SSH client needs no configuration of its own.\n\n503 here is this deployment saying it has no certificate authority -- a statement about the installation, not a failure. A client should treat it as \"this access point issues no certificates\" and stop, rather than reporting an error: the device flow still works, so what is lost is convenience, not access.",
+        "operationId": "getSSHCA",
+        "security": [{"bearerAuth": []}, {"sessionCookie": []}],
+        "responses": {
+          "200": {"description": "The CA to trust and, where configured, the gateway to connect to", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSHCAInfo"}}}},
+          "401": {"description": "Not authenticated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "This access point issues no SSH certificates, or does not allow connecting into a running job (HTTP_API_SSH_TO_JOB)", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/ssh/certificate": {
+      "post": {
+        "summary": "Have a public key signed into a certificate",
+        "description": "Signs the PUBLIC half of a key you already hold. Save the certificate field as <key>-cert.pub beside the private key and ssh finds it on its own.\n\nThe certificate names the account this server resolved for the caller, and the request cannot choose it -- there is deliberately no principal field. Two further departures from how OpenSSH certificates are usually used: the gateway does NOT check the username against the principal, because on this gateway the username names the job to reach, and bare public keys are never accepted, only certificates.\n\nA caller holding a SCOPED credential must already hold condor:/WRITE, which is what a certificate grants; issuing over a narrower scope would be an escalation. A browser session carries no scopes at all and is allowed, because that route has no scope model.\n\nEvery certificate is recorded before it is returned (see /ssh/certificates). If the record cannot be written, NO certificate is issued and this answers 500: handing one over unrecorded produces a working credential that nothing can revoke, with nothing telling its holder that theirs is the one which cannot be withdrawn.",
+        "operationId": "issueSSHCertificate",
+        "security": [{"bearerAuth": []}, {"sessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["public_key"], "properties": {
+          "public_key": {"type": "string", "description": "One authorized_keys line, as in ssh-ed25519 AAAA... you@laptop. ed25519, ECDSA, or RSA of at least 3072 bits: a certificate is public and long-lived, so a weak key under one is a third-party-forgeable credential for the account rather than merely the holder's own problem.", "example": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... you@laptop"},
+          "lifetime_seconds": {"type": "integer", "description": "How long to sign it for. Defaults to 12 hours and is CLAMPED to the 7-day maximum rather than refused, because a client asking for a month wants a certificate, not an error. Longer lifetimes exist for unattended work: a job cannot go back to a browser every twelve hours. They are safe to issue because a certificate can be withdrawn -- see /ssh/certificates/revoke.", "example": 604800}
+        }}}}},
+        "responses": {
+          "200": {"description": "The signed certificate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSHCertificate"}}}},
+          "400": {"description": "public_key is missing, is not one authorized_keys line, is a certificate rather than the key it was issued for, or is of a type or size not accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not authenticated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "The account could not be established, or this credential is not authorized for condor:/WRITE", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The certificate could not be signed, or could not be recorded -- in which case none was issued, because it would not have been revocable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "This access point issues no SSH certificates, or does not allow connecting into a running job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/ssh/certificates": {
+      "get": {
+        "summary": "List the SSH certificates issued to you",
+        "description": "Every certificate issued to your account, newest first, including ones that have expired or been withdrawn. An expired row is not noise: the usual reason to open this list is to work out what a lost machine was holding.\n\nRows are dropped 90 days after issuance. Past that they answer nothing anybody needs -- an expired certificate is refused on its own dates whether or not a row exists.\n\nSESSION ONLY, like /oauth2/grants and for the same reason: a bearer token able to enumerate and revoke the credentials beside it is a stolen token that locks its owner out.",
+        "operationId": "listSSHCertificates",
+        "security": [{"sessionCookie": []}],
+        "responses": {
+          "200": {"description": "The certificates issued to you", "content": {"application/json": {"schema": {"type": "object", "properties": {"certificates": {"type": "array", "items": {"$ref": "#/components/schemas/SSHCertificateRecord"}}}}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "The session has no local account", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The certificates could not be listed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "This access point does not allow connecting into a running job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/ssh/certificates/revoke": {
+      "post": {
+        "summary": "Withdraw one of your SSH certificates",
+        "description": "Refuses this certificate from now on. The gateway consults the record on every certificate login, so it stops working at once rather than at its expiry -- which is what makes a week-long certificate reasonable to issue in the first place.\n\nNot a delete: the row stays, marked. The gateway refuses a serial BECAUSE a row says so, and a deleted row reads as \"never issued\", which is the one answer that would let the certificate back in.\n\nScoped to your own account inside the statement rather than checked first. A serial travels in the clear inside every certificate, so an unscoped write would let anyone holding one cut off its owner.\n\n404 is the single answer to \"no such serial\", \"not yours\" and \"already revoked\". Telling them apart would let a caller probe which serials exist, and to the caller they mean the same thing: it is not holding access now.\n\nSESSION ONLY, for the reason GET /ssh/certificates gives.",
+        "operationId": "revokeSSHCertificate",
+        "security": [{"sessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["serial"], "properties": {
+          "serial": {"type": "string", "description": "The certificate to withdraw, as listed by GET /ssh/certificates. Send it as the STRING the server gave you: a 63-bit serial put through a JavaScript number comes back rounded, and the rounded value matches nothing. A JSON number is accepted for hand-written clients, with that caveat.", "example": "9007199254740993"}
+        }}}}},
+        "responses": {
+          "200": {"description": "Withdrawn", "content": {"application/json": {"schema": {"type": "object", "properties": {"serial": {"type": "string"}, "revoked": {"type": "boolean"}}}}}},
+          "400": {"description": "Malformed body, or no serial", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No outstanding certificate of yours has that serial. One answer for unknown, not yours, and already revoked", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The certificate could not be revoked", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "This access point does not allow connecting into a running job", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/ssh/device": {
+      "get": {
+        "summary": "What a pending SSH login is asking for",
+        "description": "Backs the approval screen at /ssh/approve, which an ssh login is sent to when it cannot present a certificate. Not an integration surface: the user_code comes from a waiting SSH session, and there is nothing here for an API client to drive.\n\nOne answer -- 404 -- for every code that does not resolve to a pending login of this kind, so a caller cannot tell a wrong code from an expired one from somebody else's.",
+        "operationId": "getSSHConsent",
+        "security": [{"sessionCookie": []}],
+        "parameters": [{"name": "user_code", "in": "query", "required": true, "schema": {"type": "string"}, "description": "The code the waiting SSH client printed."}],
+        "responses": {
+          "200": {"description": "What is being asked for, and the approval token to send back", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSHConsentView"}}}},
+          "400": {"description": "No user_code", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No pending SSH login has that code", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/ssh/device/approve": {
+      "post": {
+        "summary": "Approve or refuse a pending SSH login",
+        "description": "Completes the decision the screen at /ssh/approve presents, and optionally submits the workspace being asked for as part of approving.\n\nThe approval_token from GET /ssh/device must come back with it: the decision is taken by a browser session, and a token bound to the code is what keeps a different page from submitting one.\n\ncreate is a silent no-op where the session already exists, rather than an error -- the thing asked for is already there.",
+        "operationId": "decideSSHConsent",
+        "security": [{"sessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["user_code", "action", "approval_token"], "properties": {
+          "user_code": {"type": "string"},
+          "action": {"type": "string", "enum": ["approve", "deny"], "description": "Matching the server-rendered form's own field rather than inventing a second vocabulary."},
+          "approval_token": {"type": "string", "description": "As given by GET /ssh/device."},
+          "create": {"allOf": [{"$ref": "#/components/schemas/InteractiveTerminalRequest"}], "description": "Submit the workspace as part of approving. Ignored where the session already exists."}
+        }}}}},
+        "responses": {
+          "200": {"description": "The decision, and what the SSH client will reach", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SSHConsentResult"}}}},
+          "400": {"description": "Malformed body, a missing field, or an action that is neither approve nor deny", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Not signed in", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "The approval token does not match this code", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No pending SSH login has that code", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "405": {"description": "Method not allowed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "The workspace could not be submitted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

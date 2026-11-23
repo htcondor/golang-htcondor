@@ -216,6 +216,12 @@ func (h *Handler) setupRoutes() {
 	// that looks like an old build.
 	mux.Handle("/api/v1/ssh/ca", cors(http.HandlerFunc(h.handleSSHCA)))
 	mux.Handle("/api/v1/ssh/certificate", cors(http.HandlerFunc(h.handleSSHCertificate)))
+	// The issuance record and the withdrawal. Separate paths from
+	// /ssh/certificate because that one MINTS and these two do not: a
+	// caller holding a credential scoped to listing must not reach the
+	// issuer by sending a different method to the same path.
+	mux.Handle("/api/v1/ssh/certificates", cors(http.HandlerFunc(h.handleSSHCertificates)))
+	mux.Handle("/api/v1/ssh/certificates/revoke", cors(http.HandlerFunc(h.handleSSHCertificateRevoke)))
 	// The SSH approval screen's own endpoints, deliberately NOT behind
 	// cors(). The rest of /api/v1 may be read by a separately-hosted
 	// SPA; these two hand out and consume a CSRF token, and echoing
