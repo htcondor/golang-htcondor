@@ -3463,7 +3463,12 @@ func (h *Handler) Start(ctx context.Context, ln net.Listener, protocol string) e
 	// submissions nominated. A no-op unless an operator set an
 	// interval; see startConnectorOutputSweeper for why it is off by
 	// default and refused in multi-AP mode.
+	//
+	// Two paths on purpose. The ticker is the one that is always right;
+	// the nudge is the one that is usually fast, and it only runs where
+	// a mirror makes a change stream available.
 	h.startConnectorOutputSweeper(h.ctx)
+	h.startConnectorOutputNudge(h.ctx)
 
 	// Start periodic ping goroutine if enabled
 	if h.pingInterval > 0 {

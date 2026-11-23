@@ -15,6 +15,8 @@ import (
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/connectors"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb"
+	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
+	"github.com/htcondor/golang-htcondor/webapi/ownerscope"
 )
 
 // What the sweep is allowed to ask for and allowed to do, as opposed to
@@ -321,5 +323,213 @@ func TestConnectorGroupCheckNeeded(t *testing.T) {
 	// happen for that to be what occurs.
 	if !connectorGroupCheckNeeded(connectors.Definition{ID: id}) {
 		t.Error("a connector with no groups skipped the check, so it would be usable by anyone")
+	}
+}
+
+// Whether a change-stream event about an owner's jobs reaches a binding.
+//
+// This is the test for the failure that hides: the stream carries only
+// the job ad's Owner (the local part), bindings are keyed by the
+// session's subject (which may be qualified), and a placementd binding
+// is scoped by User, which the event does not carry at all. A strict
+// comparison never fires for any of those -- and because the periodic
+// sweep covers them, it looks exactly like the feature working, just
+// always at sweep latency. Nothing else in the suite would notice.
+func TestBindingMatchesOwner(t *testing.T) {
+	local := connectors.OutputBinding{Subject: "alice"}
+	qualified := connectors.OutputBinding{Subject: "alice@example.org"}
+	placement := connectors.OutputBinding{Subject: "alice@idp.example", UserScoped: true}
+
+	for _, tc := range []struct {
+		name    string
+		b       connectors.OutputBinding
+		evOwner string
+		want    bool
+	}{
+		{"local subject, local owner", local, "alice", true},
+		{"qualified subject, local owner", qualified, "alice", true},
+		{"placementd subject, local owner", placement, "alice", true},
+		{"qualified subject, qualified owner", qualified, "alice@example.org", true},
+		// Case is not identity on a Unix account, but a schedd and a
+		// session can disagree about it, and a missed nudge is the more
+		// expensive mistake here.
+		{"case differs", qualified, "ALICE", true},
+
+		{"somebody else", qualified, "bob", false},
+		{"a prefix is not a match", qualified, "alic", false},
+		{"a longer name is not a match", local, "alice2", false},
+		// An event with no owner cannot be routed anywhere. The nudger
+		// drops these before asking, but the match must not claim them.
+		{"no owner", qualified, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bindingMatchesOwner(tc.b, tc.evOwner); got != tc.want {
+				t.Errorf("bindingMatchesOwner(%q, %q) = %v, want %v",
+					tc.b.Subject, tc.evOwner, got, tc.want)
+			}
+		})
+	}
+}
+
+// The owner derivation the nudge match uses is the same one the queue
+// constraint uses. Two derivations would be two things that can
+// disagree, and the way a disagreement shows is a nudge that never
+// fires while the sweep quietly covers for it.
+func TestBindingOwnerAttrMatchesTheConstraint(t *testing.T) {
+	for _, b := range []connectors.OutputBinding{
+		{Subject: "alice", Cluster: 1},
+		{Subject: "alice@example.org", Cluster: 1},
+		{Subject: "alice@idp.example", Cluster: 1, UserScoped: true},
+	} {
+		attr, owner := bindingOwnerAttr(b)
+		got, err := outputClusterConstraint(b)
+		if err != nil {
+			t.Fatalf("outputClusterConstraint(%+v): %v", b, err)
+		}
+		want := attr + " == " + ownerscope.StringLit(owner)
+		if !strings.Contains(got, want) {
+			t.Errorf("constraint for %+v is %q, which does not carry %q", b, got, want)
+		}
+		// And the derivation it reports is one the match accepts, or the
+		// nudge could never fire for a binding the constraint can read.
+		if !bindingMatchesOwner(b, owner) {
+			t.Errorf("%+v is scoped to %q but the nudge match rejects that owner", b, owner)
+		}
+	}
+}
+
+// The nudge's entry point sweeps only the bindings belonging to the
+// owner whose job moved, and finds them through the generous match
+// rather than through a string equality the subject may not satisfy.
+//
+// The schedd is unreachable here, so sweeping fails per binding; what is
+// under test is WHICH bindings it reaches, which the count reports and
+// which a failing schedd does not change.
+func TestSweepOwnerOutputSelectsByOwner(t *testing.T) {
+	db := openTestAppDB(t)
+	h := &Handler{logger: testLogger(t), db: db}
+	h.connectorStored = connectors.NewStore(db, nil)
+
+	put := func(subject string, cluster int, userScoped bool) {
+		t.Helper()
+		err := h.connectorStored.PutOutputBinding(t.Context(), connectors.OutputBinding{
+			Subject:    subject,
+			Cluster:    cluster,
+			Connector:  connectors.MustParse("builtin:gdrive"),
+			FileID:     "SHEET",
+			Tab:        "results",
+			JobFile:    "result.json",
+			UserScoped: userScoped,
+		})
+		if err != nil {
+			t.Fatalf("PutOutputBinding(%s/%d): %v", subject, cluster, err)
+		}
+	}
+	// Three of alice's, spelled the three ways a subject can be, and one
+	// of bob's that must never be swept for alice.
+	put("alice", 1, false)
+	put("alice@example.org", 2, false)
+	put("alice@idp.example", 3, true)
+	put("bob", 4, false)
+
+	for _, tc := range []struct {
+		owner string
+		want  int
+	}{
+		{"alice", 3},
+		{"bob", 1},
+		{"carol", 0},
+		// An event with no owner reaches nothing: the nudger drops these
+		// before asking, and this is the second line of that defence.
+		{"", 0},
+	} {
+		t.Run("owner="+tc.owner, func(t *testing.T) {
+			got, err := h.sweepOwnerOutput(t.Context(), tc.owner)
+			if err != nil {
+				t.Fatalf("sweepOwnerOutput(%q): %v", tc.owner, err)
+			}
+			if got != tc.want {
+				t.Errorf("swept %d bindings for %q, want %d", got, tc.owner, tc.want)
+			}
+		})
+	}
+}
+
+// With no store there is nothing to sweep and nothing to fail about: the
+// nudger must not be handed an error for a server that simply has this
+// feature switched off.
+func TestSweepOwnerOutputWithoutAStore(t *testing.T) {
+	h := &Handler{logger: testLogger(t)}
+	got, err := h.sweepOwnerOutput(t.Context(), "alice")
+	if err != nil || got != 0 {
+		t.Errorf("= (%d, %v), want (0, nil)", got, err)
+	}
+}
+
+// The nudge does not start where it cannot work, and says nothing about
+// a feature nobody turned on.
+func TestOutputNudgeStartConditions(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		set      func(*Handler)
+		wantSaid bool
+	}{
+		{
+			name: "off by default",
+			set:  func(*Handler) {},
+		},
+		{
+			// No mirror, no change stream. The periodic sweep is then
+			// the whole mechanism -- the same degradation job watches
+			// and webhooks take.
+			name: "enabled but no feed",
+			set: func(h *Handler) {
+				h.connectorOutputSweepInterval = time.Minute
+				h.connectorStored = connectors.NewStore(h.db, nil)
+			},
+		},
+		{
+			name: "enabled with a feed",
+			set: func(h *Handler) {
+				h.connectorOutputSweepInterval = time.Minute
+				h.jobWatchFeed = jobwatch.NewFeed(nil)
+				h.connectorStored = connectors.NewStore(h.db, nil)
+			},
+			wantSaid: true,
+		},
+		{
+			// scheddFor fails closed in multi-AP mode, so neither path
+			// runs there.
+			name: "multi-AP",
+			set: func(h *Handler) {
+				h.connectorOutputSweepInterval = time.Minute
+				h.jobWatchFeed = jobwatch.NewFeed(nil)
+				h.multi = &multiAPMode{}
+				h.connectorStored = connectors.NewStore(h.db, nil)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, logged := sweepStartHandler(t)
+			h.db = openTestAppDB(t)
+			tc.set(h)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			h.startConnectorOutputNudge(ctx)
+			cancel()
+
+			done := make(chan struct{})
+			go func() { h.wg.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the nudge goroutine did not stop when its context was cancelled")
+			}
+
+			said := strings.Contains(logged(), "as jobs finish")
+			if said != tc.wantSaid {
+				t.Errorf("started=%v, want %v; log: %s", said, tc.wantSaid, logged())
+			}
+		})
 	}
 }

@@ -935,7 +935,9 @@ HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL = 5m   # unset means off
 
 **Off unless an operator names a cadence.** Every other interval here has
 a default; this one does not, because what it starts writes to a user's
-Google account while they are not present. A malformed value leaves it
+Google account while they are not present. The interval is also what
+turns the whole feature on, the change-stream nudge included -- see
+"Belt and braces" below. A malformed value leaves it
 off rather than picking a cadence, and a bare number is malformed on
 purpose — `5` could be seconds or minutes, and guessing wrong means
 sweeping sixty times too often. Read at startup; the ticker does not
@@ -1027,6 +1029,64 @@ otherwise be written over. `RAW`, not `USER_ENTERED`: `USER_ENTERED`
 reads `=cmd` as a formula and `1/2` as a date, so a job's output would
 silently become something else.
 
+### Belt and braces: a ticker and a nudge
+
+Two paths, and only one of them is allowed to be right.
+
+The **ticker** is the braces. It sweeps every open binding on
+`HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL`, needs nothing but the queue,
+and is the whole mechanism on a pool with no htcondordb mirror. It is
+also the only thing that recovers from a restart, a dropped event or a
+binding created while the change stream was down.
+
+The **nudge** is the belt — faster, and never consulted for an answer. It
+subscribes to `jobwatch.Feed`, the same mirror change stream the job
+watches, the dashboard ticker and the outbound webhooks already ride, and
+asks the sweep to look at one owner's bindings as soon as the stream says
+one of their jobs finished. Without it, every result waits up to a full
+interval; with it, results land within the mirror's propagation time.
+
+It reuses `jobwatch.Nudger` rather than growing a second watcher, so it
+inherits the behaviour that machinery already had to get right: burst
+coalescing (`Delay`, 500ms, so ten thousand jobs finishing is one sweep),
+a per-owner floor (`MinGap`, 5s) for continuous activity, a bounded
+subscription that drops rather than blocking the feed, and the discipline
+that a nudge is a trigger and never evidence. It is the fourth consumer
+of that feed.
+
+**Only completions.** `Nudger.Kinds` was added for this: the filter runs
+*before* coalescing, so a submission of ten thousand jobs — ten thousand
+"submitted" events, not one with a result to append — never wakes the
+sweep at all. Delay and MinGap would have bounded the waking, not removed
+it. Removals are deliberately left out: a removed job can let a binding
+retire early, which is worth something but not worth waking for, and the
+ticker does it within one interval.
+
+**No daemon credential on its context**, unlike the watch and webhook
+nudgers. This path mints a token per binding for that binding's own owner
+(`actAsOwner`); putting a daemon credential on the context would hand it
+the queue-superuser identity the whole design exists to avoid.
+
+#### The owner match is generous on purpose
+
+The stream carries only the job ad's `Owner` — the local part. A binding
+is keyed by the session's *subject*, which may be qualified
+(`alice@example.org`), and a placementd binding is scoped by `User`,
+which the event does not carry at all. A strict string comparison would
+mean the nudge never fires for any of those.
+
+That failure is invisible: the ticker covers those bindings, so the
+feature looks like it works, just always at sweep latency. Nothing else
+in the suite would notice, which is why `bindingMatchesOwner` has a test
+of its own and why `bindingOwnerAttr` is shared with the queue constraint
+rather than derived twice.
+
+So the match tries the subject, its local part, and the local part of a
+`User`-scoped subject. Being generous is safe **because** a nudge is only
+a trigger: the sweep re-derives everything from the binding and queries
+the queue owner-scoped, so a false positive costs one query that finds
+nothing and a false negative costs a user waiting a whole interval for
+results that were ready. Those are not the same price.
 ### Why there is no goroutine per job
 
 One sweeper, one pass over the open bindings. The unit of work is the

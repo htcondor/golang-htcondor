@@ -13,6 +13,7 @@ import (
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
 	"github.com/htcondor/golang-htcondor/webapi/ownerscope"
 )
 
@@ -166,18 +167,69 @@ func (h *Handler) clusterStateFor(
 // as any untrusted one -- a second path that splices is a second path
 // that can be got wrong later.
 func outputClusterConstraint(b connectors.OutputBinding) (string, error) {
-	attr, owner := "Owner", b.Subject
-	if b.UserScoped {
-		attr = "User"
-	} else if i := strings.LastIndex(owner, "@"); i >= 0 {
-		// The schedd stores Owner as the local part.
-		owner = owner[:i]
-	}
+	attr, owner := bindingOwnerAttr(b)
 	c, err := ownerscope.Constrain(attr, owner, fmt.Sprintf("ClusterId == %d", b.Cluster))
 	if err != nil {
 		return "", fmt.Errorf("naming cluster %d's jobs: %w", b.Cluster, err)
 	}
 	return c, nil
+}
+
+// bindingOwnerAttr is the attribute and value naming a binding's owner in
+// the queue: User and the whole account for a placementd one, Owner and
+// the local part for everybody else.
+//
+// One function because two callers need the same answer -- the constraint
+// above, and the nudge's owner match. A second derivation of "who is
+// this binding's owner" is a second thing that can disagree with the
+// first, and the way it would show is the nudge silently never firing
+// while the periodic sweep quietly covers for it.
+func bindingOwnerAttr(b connectors.OutputBinding) (attr, owner string) {
+	if b.UserScoped {
+		return "User", b.Subject
+	}
+	owner = b.Subject
+	if i := strings.LastIndex(owner, "@"); i >= 0 {
+		// The schedd stores Owner as the local part.
+		owner = owner[:i]
+	}
+	return "Owner", owner
+}
+
+// bindingMatchesOwner reports whether a change-stream event about
+// evOwner's jobs is worth sweeping this binding for.
+//
+// Matched generously, on purpose. The stream carries only the job ad's
+// Owner -- the local part -- while a binding is keyed by the session's
+// subject, which may be qualified, and a placementd binding is scoped by
+// User, which the event does not carry at all. A strict comparison would
+// mean the nudge never fires for any of those, and because the periodic
+// sweep covers them it would look like the feature working, just always
+// at sweep latency.
+//
+// Being generous is safe BECAUSE a nudge is only a trigger. It asks the
+// sweep to look now; the sweep then re-derives everything from the
+// binding and queries the queue owner-scoped. So a false positive costs
+// one query that finds nothing, and a false negative costs a user
+// waiting a whole interval for results that were ready. Those are not
+// the same price, and this errs toward the cheap one.
+func bindingMatchesOwner(b connectors.OutputBinding, evOwner string) bool {
+	if evOwner == "" {
+		return false
+	}
+	if strings.EqualFold(b.Subject, evOwner) {
+		return true
+	}
+	_, local := bindingOwnerAttr(b)
+	if strings.EqualFold(local, evOwner) {
+		return true
+	}
+	// A placementd binding is scoped by User, so its own local part is
+	// the last thing left to compare against.
+	if i := strings.LastIndex(b.Subject, "@"); i >= 0 {
+		return strings.EqualFold(b.Subject[:i], evOwner)
+	}
+	return false
 }
 
 // outputResultFile reads one job's declared result file out of its
@@ -291,6 +343,99 @@ func connectorStillPermitted(
 			def.ID)
 	}
 	return true, ""
+}
+
+// sweepOwnerOutput sweeps the open bindings belonging to one owner, for
+// the change stream to call when their jobs move.
+//
+// Signature matches jobwatch.Nudger's check: the count is how many
+// bindings were swept, which the nudger logs and otherwise ignores.
+//
+// One failure does not stop the others, as in Sweep, and for the same
+// reason: a provider refusing one account says nothing about the next.
+// Unlike Sweep this returns an error when the LISTING fails, because
+// the nudger is entitled to know its trigger did nothing at all.
+func (h *Handler) sweepOwnerOutput(ctx context.Context, owner string) (int, error) {
+	w := h.newOutputSweeper()
+	if w.store == nil {
+		return 0, nil
+	}
+	bindings, err := w.store.OpenOutputBindings(ctx, 0)
+	if err != nil {
+		return 0, err
+	}
+	// Filtered here rather than in SQL. The column holds the session's
+	// subject and the event carries the schedd's Owner, which are not
+	// always the same string -- see bindingMatchesOwner -- so the match
+	// is a decision rather than a WHERE clause, and it has to be the
+	// same decision the queue constraint makes. The open set is bounded
+	// (OpenOutputBindings caps it), so reading it per nudge is cheaper
+	// than a second definition of the match.
+	swept := 0
+	for _, b := range bindings {
+		if err := ctx.Err(); err != nil {
+			return swept, err
+		}
+		if !bindingMatchesOwner(b, owner) {
+			continue
+		}
+		swept++
+		if err := w.sweepBinding(ctx, b); err != nil {
+			w.warn("could not add a submission's results to its spreadsheet",
+				"cluster", b.Cluster, "subject", b.Subject,
+				"spreadsheet", b.FileID, "tab", b.Tab, "error", err)
+		}
+	}
+	return swept, nil
+}
+
+// startConnectorOutputNudge sweeps an owner's bindings as soon as the
+// change stream says one of their jobs finished, instead of waiting for
+// the next tick.
+//
+// Belt and braces, and the braces are the periodic sweep: this is
+// strictly an accelerator and never evidence. All it does is ask the
+// sweep to look now; the answer still comes from querying the queue and
+// reading the sandbox, so a missed, dropped or spurious event costs
+// latency rather than correctness. That is also what lets the owner
+// match be generous.
+//
+// It needs the htcondordb mirror. Without one there is no change stream
+// and the periodic sweep is the whole mechanism -- the same degradation
+// job watches and webhooks take, and the reason the interval is what
+// turns the feature on rather than this.
+//
+// Only completions. A submission of ten thousand jobs is ten thousand
+// events and not one of them has a result to append; filtering before
+// the nudger's own coalescing is what keeps this asleep through them.
+// Removals are left out too: a removed job can let a binding retire
+// early, which is worth something but not worth waking for, and the
+// periodic sweep does it within one interval.
+//
+// No daemon credential on the context, unlike the webhook and watch
+// nudgers. This path mints a token for each binding's own owner
+// (actAsOwner); putting a daemon credential on the context would be
+// handing it the queue-superuser identity the whole design avoids.
+func (h *Handler) startConnectorOutputNudge(ctx context.Context) {
+	if h.connectorOutputSweepInterval <= 0 || h.multi != nil {
+		return
+	}
+	if h.jobWatchFeed == nil || h.connectorStore() == nil {
+		return
+	}
+	nudger := jobwatch.NewNudger(h.jobWatchFeed, h.sweepOwnerOutput,
+		func(format string, args ...any) {
+			h.logger.Debug(logging.DestinationHTTP, fmt.Sprintf(format, args...))
+		})
+	nudger.Kinds = []jobwatch.ActivityKind{jobwatch.ActivityCompleted}
+
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.logger.Info(logging.DestinationHTTP,
+			"Connector output results will also be added as jobs finish, not only on the sweep")
+		nudger.Run(ctx)
+	}()
 }
 
 // startConnectorOutputSweeper runs the sweep on a timer.

@@ -2,6 +2,7 @@ package jobwatch
 
 import (
 	"context"
+	"slices"
 	"time"
 )
 
@@ -48,6 +49,16 @@ type Nudger struct {
 	// stream does. Delay coalesces a burst; this is what holds when the
 	// activity is continuous rather than bursty.
 	MinGap time.Duration
+	// Kinds narrows which transitions nudge at all. Nil is every kind,
+	// which is what a watch evaluator wants: any transition may satisfy
+	// somebody's watch.
+	//
+	// A consumer that only acts on one transition should say so, because
+	// the filtering happens before coalescing. A submission of ten
+	// thousand jobs is ten thousand "submitted" events; a consumer that
+	// only cares about completions should be asleep through all of them
+	// rather than waking to find nothing to do.
+	Kinds []ActivityKind
 
 	now func() time.Time
 }
@@ -112,13 +123,21 @@ func (n *Nudger) Run(ctx context.Context) {
 			}
 			// An event with no owner cannot be routed to anyone's
 			// watches. The periodic sweep still covers the job.
-			if ev.Owner != "" {
+			if ev.Owner != "" && n.wants(ev.Kind) {
 				pending[ev.Owner] = struct{}{}
 			}
 		case <-tick.C:
 			n.drain(ctx, pending, last)
 		}
 	}
+}
+
+// wants reports whether this kind of transition nudges.
+func (n *Nudger) wants(k ActivityKind) bool {
+	if len(n.Kinds) == 0 {
+		return true
+	}
+	return slices.Contains(n.Kinds, k)
 }
 
 // drain sweeps every owner whose turn has come, leaving the rest pending
