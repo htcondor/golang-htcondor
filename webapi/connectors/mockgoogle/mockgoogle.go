@@ -231,6 +231,21 @@ func (s *Server) PickSheet(id, name string, tabs ...MockTab) {
 	s.listable[id] = name
 }
 
+// SheetRows is what a tab holds now, appends included, for a test that
+// asserts what a job wrote rather than only that the call succeeded.
+func (s *Server) SheetRows(id, tab string) [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.sheets[id] {
+		if t.Title == tab {
+			out := make([][]string, len(t.Rows))
+			copy(out, t.Rows)
+			return out
+		}
+	}
+	return nil
+}
+
 // Revoke invalidates a refresh token, as the user withdrawing the
 // application's access does. A later refresh then fails invalid_grant.
 func (s *Server) Revoke(refreshToken string) {
@@ -737,6 +752,52 @@ func (s *Server) handleSpreadsheet(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sheets": props})
+		return
+	}
+
+	// values.append: the rows go on the end of the tab, which is what
+	// makes two finishing jobs not have to agree about which row is
+	// next.
+	if rng, isAppend := strings.CutSuffix(after, ":append"); isAppend {
+		if r.Method != http.MethodPost {
+			writeDriveError(w, http.StatusMethodNotAllowed, "badRequest",
+				"append takes POST")
+			return
+		}
+		title, _, perr := parseA1(rng)
+		if perr != nil {
+			writeDriveError(w, http.StatusBadRequest, "badRequest", perr.Error())
+			return
+		}
+		var payload struct {
+			Values [][]string `json:"values"`
+		}
+		if derr := json.NewDecoder(r.Body).Decode(&payload); derr != nil {
+			writeDriveError(w, http.StatusBadRequest, "badRequest", derr.Error())
+			return
+		}
+		s.mu.Lock()
+		appended := false
+		for i := range s.sheets[id] {
+			if s.sheets[id][i].Title != title {
+				continue
+			}
+			s.sheets[id][i].Rows = append(s.sheets[id][i].Rows, payload.Values...)
+			appended = true
+			break
+		}
+		s.mu.Unlock()
+		if !appended {
+			writeDriveError(w, http.StatusBadRequest, "badRequest",
+				"Unable to parse range: "+rng)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"spreadsheetId": id,
+			"updates": map[string]any{
+				"updatedRows": len(payload.Values),
+			},
+		})
 		return
 	}
 

@@ -243,3 +243,63 @@ func TestSheetsRefusesANonPositiveLimit(t *testing.T) {
 		t.Error("Values accepted maxRows = 0")
 	}
 }
+
+// Appending goes on the END of the tab, leaving what was there alone.
+//
+// One server-side call is the whole reason a result goes in this way:
+// two jobs finishing at the same moment do not have to agree about
+// which row is next.
+func TestSheetsAppendsToTheEnd(t *testing.T) {
+	f := newSheetsFixture(t)
+	f.g.PickSheet("SHEET", "results.gsheet", mockgoogle.MockTab{
+		Title: "runs",
+		Rows: [][]string{
+			{"sample", "score"},
+			{"a", "1"},
+		},
+	})
+
+	err := f.s.AppendRows(t.Context(), f.token, "SHEET", "runs",
+		[][]string{{"b", "2"}, {"c", "3"}})
+	if err != nil {
+		t.Fatalf("AppendRows: %v", err)
+	}
+
+	got := f.g.SheetRows("SHEET", "runs")
+	want := [][]string{
+		{"sample", "score"},
+		{"a", "1"},
+		{"b", "2"},
+		{"c", "3"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("the tab has %d rows, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if strings.Join(got[i], ",") != strings.Join(want[i], ",") {
+			t.Errorf("row %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// Appending nothing is not a request. A job that produced no records
+// should leave the spreadsheet untouched rather than reach Google.
+func TestSheetsAppendOfNothingIsNoRequest(t *testing.T) {
+	f := newSheetsFixture(t)
+	f.g.PickSheet("SHEET", "results.gsheet", mockgoogle.MockTab{Title: "runs"})
+	f.g.FailNext(http.StatusInternalServerError)
+
+	if err := f.s.AppendRows(t.Context(), f.token, "SHEET", "runs", nil); err != nil {
+		t.Errorf("appending no rows made a request: %v", err)
+	}
+}
+
+// A spreadsheet the user never picked cannot be written to either.
+func TestSheetsAppendToUnpickedIsNotGranted(t *testing.T) {
+	f := newSheetsFixture(t)
+	err := f.s.AppendRows(t.Context(), f.token, "NEVER-PICKED", "runs",
+		[][]string{{"a"}})
+	if !errors.Is(err, ErrNotGranted) {
+		t.Errorf("error = %v, want ErrNotGranted", err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -218,4 +219,60 @@ func cellString(cell any) string {
 func a1Range(tab string, rows int) string {
 	quoted := "'" + strings.ReplaceAll(tab, "'", "''") + "'"
 	return quoted + "!1:" + strconv.Itoa(rows)
+}
+
+// Appending rows to a spreadsheet, for a job's declared output.
+//
+// values.append is one server-side call: Google finds the end of the
+// table and inserts there, so two jobs finishing at the same moment do
+// not have to agree about which row is next. That is the whole reason
+// the result goes in this way rather than as a read-then-write of a
+// range, which would need a lock nobody can hold across a job.
+
+// AppendRows adds rows to the end of a tab's table.
+//
+// INSERT_ROWS rather than OVERWRITE: a sheet with anything below the
+// table -- a total, a note, a second block -- would otherwise have it
+// written over. Inserting is the choice that cannot destroy what it
+// did not put there.
+//
+// RAW rather than USER_ENTERED: a result cell is data, not something
+// the person is typing. USER_ENTERED would read "=cmd" as a formula
+// and "1/2" as a date, which is a job's output silently becoming
+// something else.
+func (s *Sheets) AppendRows(
+	ctx context.Context,
+	token, fileID, tab string,
+	rows [][]string,
+) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"range":          a1Range(tab, 1),
+		"majorDimension": "ROWS",
+		"values":         rows,
+	})
+	if err != nil {
+		return fmt.Errorf("encoding %d rows for %s: %w", len(rows), fileID, err)
+	}
+
+	q := url.Values{
+		"valueInputOption": {"RAW"},
+		"insertDataOption": {"INSERT_ROWS"},
+		// The reply would otherwise carry the whole updated range back,
+		// which is of no use here and is the largest part of it.
+		"includeValuesInResponse": {"false"},
+	}
+	path := "/spreadsheets/" + url.PathEscape(fileID) +
+		"/values/" + url.PathEscape(a1Range(tab, 1)) + ":append?" + q.Encode()
+
+	resp, err := s.transport().send(ctx, http.MethodPost, token, path,
+		"application/json", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
