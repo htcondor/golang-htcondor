@@ -162,6 +162,19 @@ func isAuthenticationError(err error) bool {
 // JobSubmitRequest represents a job submission request
 type JobSubmitRequest struct {
 	SubmitFile string `json:"submit_file"` // Submit file content
+	// QueueVars and QueueRows carry a table of per-job parameters as
+	// data, for a caller that has one. When QueueRows is non-empty the
+	// server appends the `queue VARS from (...)` block itself and
+	// SubmitFile must not already carry a queue statement.
+	//
+	// Separate from the submit text because HTCondor's item-row split
+	// is not something a caller should have to reproduce: fields are
+	// separated by whitespace AND commas, nothing quotes, and the only
+	// way a value can hold either is the ASCII unit separator. Sending
+	// rows as rows keeps that detail on this side of the API, which is
+	// also the only way it stays out of anything a person reads.
+	QueueVars []string   `json:"queue_vars,omitempty"`
+	QueueRows [][]string `json:"queue_rows,omitempty"`
 }
 
 // JobSubmitResponse represents a job submission response
@@ -545,6 +558,25 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A caller with a table of per-job parameters sends it as rows and
+	// this builds the queue statement, so the caller never has to
+	// reproduce HTCondor's item-row split. See queue_rows.go.
+	submitFile := req.SubmitFile
+	if len(req.QueueRows) > 0 || len(req.QueueVars) > 0 {
+		if queueStatementRE.MatchString(submitFile) {
+			s.writeError(w, http.StatusBadRequest,
+				"submit_file already has a queue statement, so queue_rows would add a second one; "+
+					"send the submit file without it")
+			return
+		}
+		composed, cerr := composeQueueRows(submitFile, req.QueueVars, req.QueueRows)
+		if cerr != nil {
+			s.writeError(w, http.StatusBadRequest, cerr.Error())
+			return
+		}
+		submitFile = composed
+	}
+
 	// The Idempotency-Key header, carried on the context down to the one
 	// submit door. The key is checked and claimed there, not here, so
 	// every surface gets the same check; this only has to notice a
@@ -570,9 +602,9 @@ func (s *Handler) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	// that submit file since it existed. Turning an accepted request
 	// into a 400 would break working clients to prevent a hold they may
 	// not even get.
-	warnings := submitlint.Inspect(req.SubmitFile).Advisory()
+	warnings := submitlint.Inspect(submitFile).Advisory()
 
-	clusterID, procAds, err := s.submitJob(ctx, req.SubmitFile)
+	clusterID, procAds, err := s.submitJob(ctx, submitFile)
 	if err != nil {
 		s.writeSubmitFailure(ctx, w, err)
 		return

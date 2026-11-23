@@ -66,6 +66,11 @@ import {
   type ResourceFieldMask,
 } from '@/lib/submitFile';
 import {
+  splitSheetHeader,
+  type SheetFile,
+  type SheetSelection,
+} from '@/lib/sheets';
+import {
   chooseFiles,
   fetchPickers,
   fileReference,
@@ -84,7 +89,7 @@ type TemplateMode = 'library' | 'custom';
 //   drive  — one row per file picked from a connector. Like upload,
 //            except the bytes never reach this browser: the row
 //            carries a reference the access point fetches at submit.
-type TableSource = 'manual' | 'count' | 'upload' | 'drive';
+type TableSource = 'manual' | 'count' | 'upload' | 'drive' | 'sheet';
 
 const MAX_TABLE_COUNT = 10000;
 
@@ -419,6 +424,32 @@ export default function SubmitPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driveFiles, columnNames]);
 
+  // sheetState is the spreadsheet a connected account supplied the
+  // table from: which file and tab, and the cells as fetched. The
+  // header row becomes the columns and the rest become the jobs, so
+  // the whole table -- names included -- comes from the spreadsheet
+  // rather than from the template's declared columns.
+  const [sheetState, setSheetState] = useState<SheetSelection | null>(null);
+
+  // sheetTable is the queue that spreadsheet would make. Separating
+  // the header from the body is the only interpretation step, and it
+  // can fail the same ways the table ever could, so the error travels
+  // with it rather than being thrown during render.
+  const sheetTable = useMemo(() => {
+    if (!sheetState || sheetState.rows.length === 0) {
+      return { columns: [] as string[], rows: [] as string[][], error: null as string | null };
+    }
+    try {
+      return { ...splitSheetHeader(sheetState.rows), error: null as string | null };
+    } catch (e) {
+      return {
+        columns: [] as string[],
+        rows: [] as string[][],
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }, [sheetState]);
+
   // --- Inputs section state -----------------------------------------
   const [files, setFiles] = useState<DroppedFile[]>([]);
   // Files chosen out of a third-party account. Not uploads: these go
@@ -641,8 +672,15 @@ export default function SubmitPage() {
       // tarball — the manual `rows` state is preserved across mode
       // toggles and would be stale. `count` mode bypasses the table
       // entirely and submits N copies of the same body.
+      // The body carries no queue statement; the per-job table travels
+      // beside it and the server writes the statement. That is what
+      // lets a cell hold a space or a comma -- see api.jobs.submit --
+      // and it is why nothing here has to know how HTCondor splits a
+      // row.
       let body: string;
+      let queue: { vars: string[]; rows: string[][] } | undefined;
       if (tableSource === 'count') {
+        // N copies of one job: a flat `queue N`, no table at all.
         body = buildSubmitFileWithCount(effectiveContents, count);
       } else if (tableSource === 'drive') {
         // The reference rides in a queue column, so each job transfers
@@ -650,20 +688,30 @@ export default function SubmitPage() {
         // spooled copy will have. transfer_input_files has to name the
         // column, or nothing transfers at all.
         if (driveTable.error) throw new Error(driveTable.error);
-        body = buildSubmitFile(
-          ensureTransferInput(effectiveContents, CONNECTOR_INPUT_MACRO),
-          driveTable.columns,
-          driveTable.rows,
-        );
+        body = ensureTransferInput(effectiveContents, CONNECTOR_INPUT_MACRO);
+        queue = { vars: driveTable.columns, rows: driveTable.rows };
       } else {
-        const effectiveRows = tableSource === 'upload' ? uploadRows : rows;
-        body = buildSubmitFile(
-          effectiveContents,
-          active.columns.map((c) => c.name),
-          effectiveRows,
-        );
+        // Use uploadRows when the table is sourced from a directory /
+        // tarball, and sheetRows for a connected spreadsheet -- the
+        // manual `rows` state is preserved across mode toggles and
+        // would be stale.
+        let effectiveRows = rows;
+        let effectiveColumns = active.columns.map((c) => c.name);
+        if (tableSource === 'upload') {
+          effectiveRows = uploadRows;
+        } else if (tableSource === 'sheet') {
+          if (sheetTable.error) throw new Error(sheetTable.error);
+          effectiveRows = sheetTable.rows;
+          effectiveColumns = sheetTable.columns;
+        }
+        body = effectiveContents;
+        queue = { vars: effectiveColumns, rows: effectiveRows };
       }
-      const submitted = await api.jobs.submit(body, multiAP ? submitTarget : undefined);
+      const submitted = await api.jobs.submit(
+        body,
+        multiAP ? submitTarget : undefined,
+        queue,
+      );
 
       // Common files: template default attachments + the user's
       // dropzone uploads + any inline executable script. These go to
@@ -1488,6 +1536,11 @@ export default function SubmitPage() {
           setSource={setTableSource}
           uploadFiles={uploadFiles}
           setUploadFiles={setUploadFiles}
+          sheet={sheetState}
+          setSheet={setSheetState}
+          sheetColumns={sheetTable.columns}
+          sheetRowCount={sheetTable.rows.length}
+          sheetError={sheetTable.error}
           driveFiles={driveFiles}
           setDriveFiles={setDriveFiles}
           driveError={driveTable.error}
@@ -2903,6 +2956,11 @@ function TableSection({
   driveFiles,
   setDriveFiles,
   driveError,
+  sheet,
+  setSheet,
+  sheetColumns,
+  sheetRowCount,
+  sheetError,
   count,
   setCount,
 }: {
@@ -2916,6 +2974,11 @@ function TableSection({
   driveFiles: ConnectorRowFile[];
   setDriveFiles: (f: ConnectorRowFile[]) => void;
   driveError: string | null;
+  sheet: SheetSelection | null;
+  setSheet: (s: SheetSelection | null) => void;
+  sheetColumns: string[];
+  sheetRowCount: number;
+  sheetError: string | null;
   count: number;
   setCount: (n: number) => void;
 }) {
@@ -2930,7 +2993,13 @@ function TableSection({
   // columns — that's the single-job fallback the page used to render
   // hardcoded; we now expose it as the explicit "Run N copies" option.
   const subtitle =
-    source === 'drive'
+    source === 'sheet'
+      ? sheet
+        ? `Columns and rows both come from "${sheet.name}" (${sheet.tab}). ` +
+          `${sheetRowCount} row${sheetRowCount === 1 ? '' : 's'} = ` +
+          `${sheetRowCount} job${sheetRowCount === 1 ? '' : 's'}.`
+        : 'One job per row of a spreadsheet in a connected account.'
+      : source === 'drive'
       ? `One job per file from the connected account. ${driveFiles.length} file${driveFiles.length === 1 ? '' : 's'} picked.`
       : source === 'count'
       ? `Will submit ${Math.max(1, Math.floor(count) || 1)} cop${count === 1 ? 'y' : 'ies'} of the template.`
@@ -2961,9 +3030,24 @@ function TableSection({
         <ModeButton active={source === 'drive'} onClick={() => setSource('drive')}>
           From a connected account
         </ModeButton>
+        {/* Not gated on the template having columns: a spreadsheet
+            brings its own header, so it supplies the column names as
+            well as the rows. */}
+        <ModeButton active={source === 'sheet'} onClick={() => setSource('sheet')}>
+          From a spreadsheet
+        </ModeButton>
       </div>
 
-      {source === 'drive' ? (
+      {source === 'sheet' ? (
+        <SheetSource
+          sheet={sheet}
+          setSheet={setSheet}
+          columns={sheetColumns}
+          rowCount={sheetRowCount}
+          error={sheetError}
+          templateColumns={columnNames}
+        />
+      ) : source === 'drive' ? (
         <DriveSource
           files={driveFiles}
           setFiles={setDriveFiles}
@@ -3304,6 +3388,179 @@ function DriveSource({
 // synthesizes `queue N` at submit time. Useful when each job needs
 // only ProcId-based variation (typical Monte Carlo / stress-test /
 // "just run it" patterns) and a per-job table would be busy work.
+// SheetSource picks a spreadsheet from a connected account and reads
+// one of its tabs as the job table.
+//
+// Unlike every other source, this one supplies the COLUMN NAMES too:
+// the tab's first row is the header. So the template's own declared
+// columns are advisory here, and a template that references a column
+// the spreadsheet does not have is worth pointing out -- that macro
+// expands to nothing and the jobs run with a parameter missing.
+function SheetSource({
+  sheet,
+  setSheet,
+  columns,
+  rowCount,
+  error,
+  templateColumns,
+}: {
+  sheet: SheetSelection | null;
+  setSheet: (s: SheetSelection | null) => void;
+  columns: string[];
+  rowCount: number;
+  error: string | null;
+  templateColumns: string[];
+}) {
+  const [pickers, setPickers] = useState<Picker[] | null>(null);
+  const [busy, setBusy] = useState<null | 'opening' | 'choosing' | 'loading'>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [file, setFile] = useState<SheetFile | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetchPickers()
+      .then((ps) => live && setPickers(ps))
+      .catch(() => live && setPickers([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const picker = pickers?.find((p) => p.provider === 'gdrive') ?? pickers?.[0] ?? null;
+
+  async function pick() {
+    if (!picker) return;
+    setProblem(null);
+    setBusy('opening');
+    try {
+      const chosen = await chooseFiles(picker, { onOpened: () => setBusy('choosing') });
+      if (chosen.kind !== 'picked' || chosen.files.length === 0) return;
+      // One spreadsheet: the table has one header, so a second file
+      // would be a second table rather than more rows.
+      const first = chosen.files[0];
+      setBusy('loading');
+      const got = await api.connect.sheetTabs(picker.connector, first.id);
+      const next: SheetFile = { fileId: got.fileId, name: got.name, tabs: got.tabs };
+      setFile(next);
+      setSheet(null);
+      // One tab needs no question; several must not have the first
+      // picked silently, because the rows would come from a tab nobody
+      // chose and the submission would look entirely normal.
+      if (next.tabs.length === 1) await loadTab(next, next.tabs[0].title);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function loadTab(f: SheetFile, title: string) {
+    if (!picker) return;
+    setProblem(null);
+    setBusy('loading');
+    try {
+      const got = await api.connect.sheetValues(picker.connector, f.fileId, title);
+      setSheet({
+        fileId: f.fileId,
+        name: f.name,
+        tab: title,
+        rows: got.rows,
+        truncated: got.truncated,
+      });
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+      setSheet(null);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const missing = sheet
+    ? templateColumns.filter(
+        (t) => !columns.some((c) => c.toLowerCase() === t.toLowerCase()),
+      )
+    : [];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={pick}
+          disabled={!picker || busy !== null}
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+        >
+          {busy === 'opening'
+            ? 'Opening\u2026'
+            : busy === 'choosing'
+              ? 'Choosing\u2026'
+              : busy === 'loading'
+                ? 'Reading\u2026'
+                : sheet || file
+                  ? 'Choose a different spreadsheet'
+                  : 'Choose a spreadsheet'}
+        </button>
+        {pickers !== null && !picker && (
+          <span className="text-sm text-gray-500">
+            No connected account on this access point can supply a spreadsheet.
+          </span>
+        )}
+      </div>
+
+      {file && file.tabs.length > 1 && (
+        <label className="block text-sm">
+          <span className="mr-2 text-gray-600">Tab in &quot;{file.name}&quot;:</span>
+          <select
+            value={sheet?.tab ?? ''}
+            onChange={(e) => e.target.value && loadTab(file, e.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm"
+          >
+            <option value="">Choose a tab\u2026</option>
+            {file.tabs.map((t) => (
+              <option key={t.id} value={t.title}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {problem && (
+        <p className="rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-sm text-red-700">
+          {problem}
+        </p>
+      )}
+      {error && (
+        <p className="rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
+      {sheet && !error && (
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600">
+            <span className="font-mono">{columns.join(', ')}</span> &mdash; {rowCount}{' '}
+            row{rowCount === 1 ? '' : 's'}.
+          </p>
+          {sheet.truncated && (
+            <p className="rounded-sm border border-amber-200 bg-amber-50 px-2 py-1 text-sm text-amber-800">
+              That tab has more rows than this access point will read, so only the first{' '}
+              {rowCount} became jobs. Split the sheet, or submit it in parts.
+            </p>
+          )}
+          {missing.length > 0 && (
+            <p className="rounded-sm border border-amber-200 bg-amber-50 px-2 py-1 text-sm text-amber-800">
+              The template uses{' '}
+              <span className="font-mono">{missing.join(', ')}</span>, which this
+              spreadsheet has no column for. Those macros will expand to nothing.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CountSource({
   count,
   setCount,
@@ -4109,36 +4366,6 @@ function reshapeRows(prev: string[][], cols: TemplateColumn[]): string[][] {
   });
 }
 
-// buildSubmitFile glues a template's body to a synthesized
-// `queue cols from (...)` line. We emit the table inline rather than
-// shipping a CSV file to keep submission a single API call.
-//
-// HTCondor's "queue ... from (...)" syntax reads each line inside the
-// parens as one row of whitespace- or comma-separated cells. We quote
-// each cell so values containing spaces survive intact.
-//
-// ONE paren. A second is not a delimiter -- condor_submit reads it as
-// the first item's text, so `from ((` queues an extra job whose first
-// variable is "(". This emitted two for a long time, and a pre-pass in
-// the Go submit parser hid it from everything except condor_submit
-// itself.
-function buildSubmitFile(
-  contents: string,
-  columns: string[],
-  rows: string[][],
-): string {
-  const body = contents.trimEnd();
-  if (columns.length === 0) {
-    return `${body}\nqueue\n`;
-  }
-  const colsLine = columns.join(', ');
-  const rowsBody = rows
-    .filter((r) => !r.every((c) => c.trim() === ''))
-    .map((r) => r.map(quoteCell).join(' '))
-    .join('\n  ');
-  return `${body}\nqueue ${colsLine} from (\n  ${rowsBody}\n)\n`;
-}
-
 // buildSubmitFileWithCount appends a flat `queue N` to the body. Used
 // for `tableSource === 'count'` where the user wants N copies of the
 // same job (typical for stress tests, parameter sweeps that vary by
@@ -4146,16 +4373,6 @@ function buildSubmitFile(
 function buildSubmitFileWithCount(contents: string, count: number): string {
   const n = Math.max(1, Math.floor(count) || 1);
   return `${contents.trimEnd()}\nqueue ${n}\n`;
-}
-
-function quoteCell(s: string): string {
-  // HTCondor's macro expansion handles quoted strings well; quote
-  // anything with whitespace or a quote char to keep the row record
-  // unambiguous.
-  if (/[\s"']/.test(s)) {
-    return '"' + s.replace(/"/g, '\\"') + '"';
-  }
-  return s;
 }
 
 function groupBySource(
