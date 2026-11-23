@@ -54,7 +54,7 @@ func (s *Handler) connectorUploadReader(
 			"session that owns them can supply")
 	}
 
-	files, err := s.spoolFilesFor(ctx, r, session, refs)
+	files, err := s.spoolFilesFor(ctx, session, refs)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,6 @@ func connectorRefsOf(ad *classad.ClassAd) ([]connectors.InputRef, error) {
 // keeps this streaming rather than buffering a file to measure it.
 func (s *Handler) spoolFilesFor(
 	ctx context.Context,
-	r *http.Request,
 	session *SessionData,
 	refs []connectors.InputRef,
 ) ([]connectors.SpoolFile, error) {
@@ -122,7 +121,7 @@ func (s *Handler) spoolFilesFor(
 
 		token, ok := tokens[ref.Service]
 		if !ok {
-			t, err := s.connectorAccessToken(ctx, r, def, session.Username)
+			t, err := s.connectorAccessToken(ctx, def, session.Username)
 			if err != nil {
 				return nil, err
 			}
@@ -175,7 +174,6 @@ func (s *Handler) connectorByService(service string) (connectors.Definition, err
 // connectorAccessToken mints a token for one connector and user.
 func (s *Handler) connectorAccessToken(
 	ctx context.Context,
-	r *http.Request,
 	def connectors.Definition,
 	user string,
 ) (string, error) {
@@ -188,7 +186,7 @@ func (s *Handler) connectorAccessToken(
 		return "", fmt.Errorf("you have not connected %s; visit %s",
 			def.ID, connectURL(def.ID))
 	}
-	secret, err := s.connectorSecret(r, def)
+	secret, err := s.connectorSecret(ctx, def)
 	if err != nil {
 		return "", fmt.Errorf("connector %s is not usable: %w", def.ID, err)
 	}

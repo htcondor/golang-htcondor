@@ -51,7 +51,7 @@ func (h *Handler) connectorSheet(
 	}
 
 	ctx := r.Context()
-	token, err := h.connectorAccessToken(ctx, r, def, session.Username)
+	token, err := h.connectorAccessToken(ctx, def, session.Username)
 	if err != nil {
 		h.writeError(w, http.StatusBadGateway, err.Error())
 		return

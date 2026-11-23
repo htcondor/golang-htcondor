@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sort"
 
 	"github.com/htcondor/golang-htcondor/config"
@@ -169,7 +168,7 @@ func (s *Handler) definitionFromStored(row connectors.Stored) connectors.Definit
 // From the file the configuration names, or from the sealed column for
 // a stored one. Re-read on each use rather than cached, so a rotated
 // secret takes effect without a restart.
-func (s *Handler) connectorSecret(r *http.Request, d connectors.Definition) (string, error) {
+func (s *Handler) connectorSecret(ctx context.Context, d connectors.Definition) (string, error) {
 	if d.ClientSecretFile != "" {
 		b, err := d.ClientSecret()
 		if err != nil {
@@ -182,7 +181,7 @@ func (s *Handler) connectorSecret(r *http.Request, d connectors.Definition) (str
 		return "", fmt.Errorf("connector %s has no stored client secret and no %s",
 			d.ID, d.ID.ConfigKey("CLIENT_SECRET_FILE"))
 	}
-	b, err := store.ClientSecret(r.Context(), d.ID)
+	b, err := store.ClientSecret(ctx, d.ID)
 	if err != nil {
 		return "", err
 	}
