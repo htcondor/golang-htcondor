@@ -7,41 +7,92 @@ import (
 	"testing"
 )
 
-// TestExpandInlineQueueBlocks_Errors makes sure the pre-processor
-// surfaces the classic broken-input cases instead of letting them
-// trickle through as opaque "syntax error" from the goyacc layer.
+// A bracketed item list is `from (` ... `)`, and the doubled-paren form
+// this file used to be about is not a form at all.
 //
-// The companion test that walks the built-in web templates through this
-// same parser lives in webapi/templates (it needs the templates library,
-// which is part of the webapi module).
-func TestExpandInlineQueueBlocks_Errors(t *testing.T) {
+// condor_submit anchors the queue parse on the `in`/`from` keyword and
+// looks for a single `(` to decide the list is bracketed. A second `(`
+// is therefore the first item's text, not part of any delimiter. This
+// parser used to intercept `from ((...))` in a pre-pass and write the
+// rows to a temp file, on the stated grounds that the doubled form was
+// "what HTCondor's own condor_submit accepts" -- which measurement, when
+// finally taken against SubmitHash 26.2.0 through the differential
+// oracle, said otherwise: three procs on the C++ side for a two-row
+// block, two here.
+//
+// These cases pin what the two parsers now agree on. The seeds that
+// hold the agreement itself are in fuzz/submit/differential_test.go,
+// where they run against the real SubmitHash.
+func TestBracketedItemListCounts(t *testing.T) {
 	cases := []struct {
-		name      string
-		body      string
-		wantInErr string
+		name string
+		body string
+		want int
 	}{
 		{
-			name:      "unterminated-block",
-			body:      "queue x from ((\n  1\n  2\n", // no closing ))
-			wantInErr: "unterminated 'queue ... from ((",
+			name: "one row per line",
+			body: "executable = /bin/true\nqueue x from (\n  1\n  2\n)\n",
+			want: 2,
 		},
 		{
-			name:      "empty-block",
-			body:      "queue x from ((\n))\n",
-			wantInErr: "no rows",
+			// The inner "(" is an item, so this is three rows: "(",
+			// "1", "2". Exactly the extra job the pre-pass used to hide.
+			name: "a doubled paren adds a row",
+			body: "executable = /bin/true\nqueue x from ((\n  1\n  2\n))\n",
+			want: 3,
+		},
+		{
+			// A ")" that is not the first thing on its line is text.
+			name: "close paren inside an item",
+			body: "executable = /bin/true\nqueue x from (\n  a)b\n  c\n)\n",
+			want: 2,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseSubmitFile(strings.NewReader(tc.body))
-			if err == nil {
-				t.Fatalf("expected error, got nil")
+			sf, err := ParseSubmitFile(strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("ParseSubmitFile: %v", err)
 			}
-			if !strings.Contains(err.Error(), tc.wantInErr) {
-				t.Errorf("error %q does not contain %q", err.Error(), tc.wantInErr)
+			if got := sf.QueueCount(); got != tc.want {
+				t.Errorf("QueueCount() = %d, want %d", got, tc.want)
 			}
 		})
 	}
+}
+
+// An unterminated bracketed list is an error; an empty one is not.
+//
+// Both are SubmitHash's answers, and the second is the one the old
+// pre-pass got wrong -- it refused `from ((\n))` with "no rows". The
+// parser queues the count with the loop variable expanding to nothing,
+// which the oracle confirms. Refusing a file HTCondor would have
+// accepted is the same class of bug as accepting one it would have
+// refused.
+//
+// Worth knowing where the agreement stops: `condor_submit` itself then
+// declines to submit, with "has only empty queue commands -- no jobs
+// queued". That check lives in condor_submit.V6/submit.cpp, in the tool
+// and not in SubmitHash, so it is outside what this parser mirrors and
+// outside what the oracle can see.
+func TestBracketedItemListEdges(t *testing.T) {
+	t.Run("unterminated is an error", func(t *testing.T) {
+		_, err := ParseSubmitFile(strings.NewReader(
+			"executable = /bin/true\nqueue x from (\n  1\n  2\n"))
+		if err == nil {
+			t.Fatal("expected an error for a list with no closing ')'")
+		}
+	})
+	t.Run("empty is not an error", func(t *testing.T) {
+		sf, err := ParseSubmitFile(strings.NewReader(
+			"executable = /bin/true\nqueue x from (\n)\n"))
+		if err != nil {
+			t.Fatalf("an empty list is not an error in SubmitHash: %v", err)
+		}
+		if got := sf.QueueCount(); got != 1 {
+			t.Errorf("QueueCount() = %d, want 1", got)
+		}
+	})
 }
 
 // TestParseErrorIncludesPosition confirms the line/col-aware Error()
@@ -66,30 +117,33 @@ func TestParseErrorIncludesPosition(t *testing.T) {
 	}
 }
 
-// TestInlineQueueBlockTempPathWithSpace pins the mechanism the inline
-// `((rows))` form depends on. The rows go to a temp file whose path is
-// written back into the submit text after `from`, and everything after
-// `from` is the item file's name verbatim -- so a path holding a space
-// works, and must not be quoted, because quotes would become part of the
-// name. Nothing else pins this: every temp path a developer's machine
-// hands out happens to be space-free, so the old quoting and the new bare
-// path are indistinguishable there.
-func TestInlineQueueBlockTempPathWithSpace(t *testing.T) {
+// An item file's name is taken verbatim after `from`, spaces included.
+//
+// This used to be pinned through the pre-pass's temp file, which was the
+// only path in the tree that could contain a space. With the pre-pass
+// gone the rule still holds and still needs a test, because a path with
+// a space is the one spelling that cannot be quoted: quotes would become
+// part of the name.
+func TestItemFileNameWithSpaceIsVerbatim(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a dir with spaces")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TMPDIR", dir)
-	if got := os.TempDir(); got != dir {
-		t.Skipf("os.TempDir() does not follow TMPDIR here (got %q); nothing to pin", got)
+	items := filepath.Join(dir, "rows.txt")
+	if err := os.WriteFile(items, []byte("alpha, 100\nbeta, 200\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	raw := "executable = /bin/true\narguments = $(sample) $(events)\n" +
-		"queue sample, events from ((\n  alpha, 100\n  beta, 200\n))\n"
+		"queue sample, events from " + items + "\n"
 
-	sf, err := ParseSubmitFile(strings.NewReader(raw))
+	// AllowLocalAccess, because this names a path on the parsing host --
+	// which is exactly what the default refuses for a submit file that
+	// arrived over an API.
+	sf, err := ParseSubmitFileWithOptions(strings.NewReader(raw),
+		SubmitParseOptions{AllowLocalAccess: true})
 	if err != nil {
-		t.Fatalf("inline rows must parse when the temp path contains a space: %v", err)
+		t.Fatalf("an item file whose path contains a space must parse: %v", err)
 	}
 	if got := sf.QueueCount(); got != 2 {
 		t.Errorf("QueueCount() = %d, want 2", got)
