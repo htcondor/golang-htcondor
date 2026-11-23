@@ -31,7 +31,7 @@ import (
 // local lookup finds the local database or nothing.
 
 // StatusCommand is htcondordb's DBSyncStatus CEDAR command
-// (github.com/bbockelm/htcondordb/command.DBSyncStatus = 74005). Duplicated for
+// (github.com/htcondor/htcondordb/command.DBSyncStatus = 74005). Duplicated for
 // the same reason as SessionCommand: htcondordb depends on this module, so
 // importing it back would be a cycle.
 const StatusCommand = 74005

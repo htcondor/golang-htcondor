@@ -60,7 +60,7 @@ func (s Stack) String() string {
 
 // Build is everything known about how the running binary was produced.
 type Build struct {
-	// Module is the main module's path, e.g. github.com/bbockelm/htcondordb.
+	// Module is the main module's path, e.g. github.com/htcondor/htcondordb.
 	// Empty for a binary built outside module mode.
 	Module string `json:"module,omitempty"`
 	// Version is the release this binary claims: the ldflags value when
