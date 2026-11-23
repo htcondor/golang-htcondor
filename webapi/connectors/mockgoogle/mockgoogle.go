@@ -246,6 +246,22 @@ func (s *Server) SheetRows(id, tab string) [][]string {
 	return nil
 }
 
+// MintAccessToken issues an access token directly, for a test whose
+// subject is not the OAuth flow.
+//
+// The flow is exercised by its own tests; a test about reading a
+// spreadsheet should not have to run a consent screen to get a token
+// the mock will accept. The token is a real one as far as this server
+// is concerned -- it goes in the same table the exchange fills, so a
+// client that sends it wrong is still caught.
+func (s *Server) MintAccessToken(user, scope string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok := s.mint("access")
+	s.access[tok] = &token{user: user, scope: scope}
+	return tok
+}
+
 // Revoke invalidates a refresh token, as the user withdrawing the
 // application's access does. A later refresh then fails invalid_grant.
 func (s *Server) Revoke(refreshToken string) {
