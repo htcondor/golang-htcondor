@@ -99,11 +99,14 @@ export default function ConnectorsPage() {
           <h2 className="text-lg font-semibold text-gray-900">
             Apps connected to your account
           </h2>
+          {/* The section as a whole, now that it holds two lists. What
+              is specific to REGISTERING one moved down to the heading
+              that introduces the form, because it was reading as a
+              description of the access list above it. */}
           <p className="mt-1 text-sm text-gray-500">
-            An app you connect here can act as you on this access point, within
-            the permissions you grant it when you sign in. Use this for a
-            service that asks you to paste a client ID and secret. Anything
-            that supports automatic setup does not need an entry here.
+            An app connected here can act as you on this access point, within the
+            permissions you grant it when you sign in. Nothing here can see other
+            people&apos;s jobs unless you granted it a permission that says so.
           </p>
         </div>
 
@@ -123,9 +126,14 @@ export default function ConnectorsPage() {
           />
         )}
 
-        <h3 className="pt-2 text-sm font-semibold text-gray-900">
-          Apps you registered here
-        </h3>
+        <div className="pt-2">
+          <h3 className="text-sm font-semibold text-gray-900">Apps you registered here</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            Register one for a service that asks you to paste a client ID and secret.
+            Anything that sets itself up does not need an entry here — it appears above
+            once you connect it, which is why the two lists are not the same.
+          </p>
+        </div>
 
         <CreateForm
           pending={create.isPending}
