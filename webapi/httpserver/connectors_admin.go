@@ -119,6 +119,26 @@ func (s *Handler) handleAdminConnectors(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Both of these are read before the rest is taken for an id, because
+	// "catalog" parses as no namespace and would 404 as a missing
+	// connector rather than reaching its handler.
+	switch rest {
+	case "catalog":
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.adminConnectorCatalog(w, r)
+		return
+	case "discover":
+		if r.Method != http.MethodPost {
+			s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.adminConnectorDiscover(w, r)
+		return
+	}
+
 	idPart, action, _ := strings.Cut(rest, "/")
 	id, err := connectors.ParseID(idPart)
 	if err != nil {
