@@ -1027,6 +1027,23 @@ func (r *Resolver) Degraded() error {
 	return r.degraded
 }
 
+// CoversDirectory reports whether a directory contributed to the index
+// currently in force.
+//
+// False is not by itself a fault -- a host with no directory reports it
+// forever and is perfectly healthy. It is a fault only where the
+// deployment says accounts come from a directory, which this package
+// cannot know and the caller can; see the warning in webapi's
+// identity_local.go. Degraded() answers a different question: whether a
+// directory could not be READ. A directory that was never consulted at
+// all leaves Degraded() nil and this false, which is exactly the state
+// that used to be invisible.
+func (r *Resolver) CoversDirectory() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.fromDirectory
+}
+
 // ShadowedUsernames lists accounts whose login name is ALSO some other
 // account's GECOS.
 //

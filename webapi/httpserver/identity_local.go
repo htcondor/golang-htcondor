@@ -91,6 +91,12 @@ type localIdentity struct {
 	// is the case for a deployment with no application database.
 	store *identityIndexStore
 
+	// explicitPasswdFile records that the operator named the account
+	// database (HTTP_API_IDENTITY_MAP_PASSWD_FILE). Then the file is the
+	// whole answer by design and no directory is consulted, so the
+	// directoryless-index warning below must stay quiet.
+	explicitPasswdFile bool
+
 	// refreshStopped is closed when the background loop returns, so a
 	// caller that cancelled it can wait for it to actually be gone.
 	//
@@ -157,7 +163,7 @@ func newLocalIdentity(strategies []idmap.Strategy, groupSources []string, passwd
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	l := &localIdentity{logger: logger, refreshEvery: ttl}
+	l := &localIdentity{logger: logger, refreshEvery: ttl, explicitPasswdFile: passwdFile != ""}
 	// Several sources are unioned; see buildGroupSources.
 	l.groups = buildGroupSources(groupSources, ttl)
 	if len(strategies) == 0 {
@@ -283,6 +289,16 @@ func (l *localIdentity) warmUp(ctx context.Context) {
 				"a directory account will be refused until it can be. This is being retried",
 			"error", derr, "indexed", accounts)
 	}
+	// Built cleanly, and still covers nobody this deployment cares about:
+	// see directorylessIndex.
+	if l.directorylessIndex() {
+		l.logger.Warn(logging.DestinationHTTP,
+			"The account index covers no directory accounts, but nsswitch.conf lists sss for passwd, "+
+				"so only this host's local accounts can be mapped and every directory identity will be "+
+				"refused. Nothing failed: SSSD was not reachable or listed nobody. Check that it is "+
+				"running and that its domain sets `enumerate = true`",
+			"indexed", accounts)
+	}
 	// Only meaningful when the login-name strategy is also in play, and
 	// then worth saying out loud: the subject naming one of these
 	// resolves to somebody else's account.
@@ -383,6 +399,7 @@ func (l *localIdentity) refreshLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	wasDegraded := l.resolver.Degraded() != nil
+	wasDirectoryless := l.directorylessIndex()
 	lastCount, _, _ := l.resolver.Stats()
 
 	for {
@@ -413,6 +430,24 @@ func (l *localIdentity) refreshLoop(ctx context.Context) {
 		accounts, ambiguous, _ := l.resolver.Stats()
 		degraded := l.resolver.Degraded() != nil
 
+		// Separate from the switch below, because a rebuild can change
+		// this without changing the count or the degraded flag -- an
+		// SSSD sidecar that finally answers replaces a local-only index
+		// with a directory-backed one of a different size, and an
+		// operator watching for the recovery needs to see it land.
+		if directoryless := l.directorylessIndex(); directoryless != wasDirectoryless {
+			if directoryless {
+				l.logger.Warn(logging.DestinationHTTP,
+					"The account index no longer covers any directory account, although nsswitch.conf "+
+						"lists sss for passwd; directory identities will be refused until it does",
+					"indexed", accounts)
+			} else {
+				l.logger.Info(logging.DestinationHTTP,
+					"The account index now covers directory accounts", "accounts", accounts)
+			}
+			wasDirectoryless = directoryless
+		}
+
 		// Report only transitions. A steady state is not news, and this
 		// runs for the life of the process.
 		switch {
@@ -441,6 +476,35 @@ func (l *localIdentity) refreshLoop(ctx context.Context) {
 func (l *localIdentity) resolve(ctx context.Context, subject string, tokenGroups []string) (account string, groups []string, err error) {
 	account, groups, _, err = l.resolveWithHint(ctx, subject, tokenGroups, "")
 	return account, groups, err
+}
+
+// directorylessIndex reports whether the index covers no directory
+// although nsswitch.conf says accounts come from one.
+//
+// This is the state that has no symptom of its own. A container whose
+// SSSD never started enumerates its own image's accounts, succeeds, and
+// builds an index of a dozen entries that maps nobody -- while every
+// other signal looks healthy. The enumeration did not fail, so
+// Degraded() is nil; the count is not zero, so "enumerated to nothing"
+// does not fire; and the first anybody hears of it is a user who cannot
+// log in, with the mapping failure reported as "no local account".
+//
+// Three things are deliberately excluded:
+//
+//   - A degraded build. "A directory could not be read" is already
+//     warned about, and more precisely, by the caller.
+//   - An empty index. "The account database enumerated to nothing" names
+//     the enumerate=true cause better than this would.
+//   - An operator-named passwd file, where no directory is consulted by
+//     design and false here means nothing is wrong.
+func (l *localIdentity) directorylessIndex() bool {
+	if !l.mapsAccount() || l.explicitPasswdFile || l.resolver.Degraded() != nil {
+		return false
+	}
+	if accounts, _, _ := l.resolver.Stats(); accounts == 0 {
+		return false
+	}
+	return !l.resolver.CoversDirectory() && droppriv.DirectoryDeclaredForAccounts()
 }
 
 // indexIsComplete reports whether the mapping is being made with full

@@ -17,6 +17,7 @@ package droppriv
 import (
 	"bufio"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -29,8 +30,7 @@ import (
 // meant the same path existed under some builds and not others.
 var (
 	nssSwitchPathMu sync.RWMutex
-	//nolint:unused // Read via nsswitchPath in the nocgo build
-	nssSwitchPath = "/etc/nsswitch.conf"
+	nssSwitchPath   = "/etc/nsswitch.conf"
 )
 
 // SetNSSSwitchPath sets the path to nsswitch.conf. Intended for testing.
@@ -46,11 +46,34 @@ func SetNSSSwitchPath(path string) {
 
 // nsswitchPath returns the configured nsswitch.conf location.
 //
-//nolint:unused // Used in the nocgo build; with cgo, glibc reads this file itself
+// Read on every build by DirectoryDeclaredForAccounts, and by the passwd
+// and group chains without cgo. With cgo those chains go through glibc,
+// which reads this file itself.
 func nsswitchPath() string {
 	nssSwitchPathMu.RLock()
 	defer nssSwitchPathMu.RUnlock()
 	return nssSwitchPath
+}
+
+// DirectoryDeclaredForAccounts reports whether nsswitch.conf names sss on
+// the passwd line -- that is, whether this host is configured to learn
+// about accounts from a directory as well as from /etc/passwd.
+//
+// It answers the question an empty-looking account index raises: is this
+// a host that simply has no directory, or one that has a directory and
+// got nothing out of it? Only the second is somebody's fault, and the
+// difference is not visible from the enumeration result, which is
+// identical either way.
+//
+// A missing or unreadable nsswitch.conf reports false. Claiming a
+// directory on the strength of a file we could not read would turn a
+// macOS laptop, where the file does not exist, into a permanent warning.
+func DirectoryDeclaredForAccounts() bool {
+	methods, err := ParseNSSwitchDB(nsswitchPath(), "passwd")
+	if err != nil {
+		return false
+	}
+	return slices.Contains(methods, NSSSwitchMethodSSS)
 }
 
 // countDeclaredMethods counts every method on a database's line,
