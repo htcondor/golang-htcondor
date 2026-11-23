@@ -28,7 +28,9 @@ func newPingDaemon(t *testing.T, sc *security.SecurityConfig) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	sc.Authentication = security.SecurityRequired
+	if sc.Authentication == "" {
+		sc.Authentication = security.SecurityRequired
+	}
 	sc.CryptoMethods = []security.CryptoMethod{security.CryptoAES}
 	sc.Encryption = security.SecurityOptional
 	sc.Integrity = security.SecurityOptional
@@ -114,31 +116,48 @@ func TestPeriodicCollectorPingUsesConfiguredMethods(t *testing.T) {
 }
 
 // TestPeriodicCollectorPingOffersSSL pings a collector that accepts only
-// SSL, from a client whose configuration does and does not name SSL. SSL
-// is offered either way, so an anonymous SSL handshake keeps the
-// collector healthy when the configured methods are not accepted.
+// SSL, from a client whose configuration does and does not name SSL. SSL is
+// offered either way, so an anonymous SSL handshake -- one presenting no
+// client certificate -- reaches a collector that does not require
+// authentication, and /readyz reports it healthy.
+//
+// A collector that does require authentication refuses that same peer. cedar
+// v0.7.17 stopped counting a peer that presented no client certificate as
+// authenticated; it used to be admitted under the literal identity
+// unauthenticated@unmapped, so this fallback could report a collector healthy
+// to a client holding no credential it would accept.
 func TestPeriodicCollectorPingOffersSSL(t *testing.T) {
 	certFile, keyFile := writeKeyPairNamed(t, t.TempDir(), "localhost", "collector.crt", "collector.key")
-	collector := newPingDaemon(t, &security.SecurityConfig{
-		AuthMethods: []security.AuthMethod{security.AuthSSL},
-		CertFile:    certFile,
-		KeyFile:     keyFile,
-	})
 	schedd := newPingDaemon(t, &security.SecurityConfig{AuthMethods: []security.AuthMethod{security.AuthFS}})
 
-	for _, methods := range []string{"FS, IDTOKENS", "FS, SSL"} {
-		t.Run(methods, func(t *testing.T) {
-			cfg := clientConfigFrom(t, "SEC_CLIENT_AUTHENTICATION_METHODS = "+methods+"\n"+
-				"AUTH_SSL_CLIENT_CAFILE = "+certFile+"\nAUTH_SSL_CLIENT_USE_DEFAULT_CAS = false\n")
+	for _, auth := range []struct {
+		level      security.SecurityLevel
+		wantStatus string
+		wantCode   int
+	}{
+		{security.SecurityOptional, "ok", http.StatusOK},
+		{security.SecurityRequired, "down", http.StatusServiceUnavailable},
+	} {
+		for _, methods := range []string{"FS, IDTOKENS", "FS, SSL"} {
+			t.Run(string(auth.level)+"/"+methods, func(t *testing.T) {
+				collector := newPingDaemon(t, &security.SecurityConfig{
+					AuthMethods:    []security.AuthMethod{security.AuthSSL},
+					Authentication: auth.level,
+					CertFile:       certFile,
+					KeyFile:        keyFile,
+				})
+				cfg := clientConfigFrom(t, "SEC_CLIENT_AUTHENTICATION_METHODS = "+methods+"\n"+
+					"AUTH_SSL_CLIENT_CAFILE = "+certFile+"\nAUTH_SSL_CLIENT_USE_DEFAULT_CAS = false\n")
 
-			code, snap := periodicPingReadyz(t, cfg, collector, schedd)
-			if snap.Collector.Status != "ok" {
-				t.Errorf("collector status = %q, want ok", snap.Collector.Status)
-			}
-			if code != http.StatusOK {
-				t.Errorf("/readyz = %d (%+v), want 200", code, snap)
-			}
-		})
+				code, snap := periodicPingReadyz(t, cfg, collector, schedd)
+				if snap.Collector.Status != auth.wantStatus {
+					t.Errorf("collector status = %q, want %s", snap.Collector.Status, auth.wantStatus)
+				}
+				if code != auth.wantCode {
+					t.Errorf("/readyz = %d (%+v), want %d", code, snap, auth.wantCode)
+				}
+			})
+		}
 	}
 }
 
