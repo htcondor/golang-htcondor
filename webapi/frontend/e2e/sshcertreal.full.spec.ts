@@ -140,13 +140,21 @@ test("an issued certificate can be withdrawn", async ({ page, request }) => {
   await expect(row).toBeVisible({ timeout: 10_000 });
   await expect(row).toContainText("Active");
 
+  // By ROLE, not by text: getByText matches the button and every
+  // wrapper whose text content is also "Revoke", which is a strict-mode
+  // violation rather than a click. The accessible name is
+  // ConfirmButton's title.
+  const revoke = row.getByRole("button", {
+    name: "Refuse this certificate from now on",
+  });
+
   // ConfirmButton asks first; the first click is the ask.
-  await row.getByText("Revoke").click();
-  await row.getByText("Confirm").click();
+  await revoke.click();
+  await row.getByRole("button", { name: "Confirm" }).click();
 
   // Revoked, and the button is gone with it -- there is nothing left to
   // withdraw, and offering one would invite a second press that does
   // nothing.
   await expect(row).toContainText("Revoked", { timeout: 10_000 });
-  await expect(row.getByText("Revoke")).toHaveCount(0);
+  await expect(revoke).toHaveCount(0);
 });
