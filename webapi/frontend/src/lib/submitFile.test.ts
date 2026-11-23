@@ -66,9 +66,15 @@ describe('buildConnectorTable', () => {
   it('produces a queue statement the access point can act on', () => {
     const { columns, rows } = buildConnectorTable(['name'], files);
     const queue = buildTableQueue(columns, rows);
+    // `from ((...))`, one row per line. The `in` form this once
+    // asserted queues one job PER CELL -- four jobs for this table, each
+    // missing a variable -- in condor_submit and in this repository's
+    // own parser alike.
     expect(queue).toBe(
-      'queue name, connector_input in (a.csv webapi-builtin-gdrive+gdrive2://1AbC/a.csv, ' +
-        'b.csv webapi-builtin-gdrive+gdrive2://2DeF/b.csv)',
+      'queue name, connector_input from ((\n' +
+        '  a.csv webapi-builtin-gdrive+gdrive2://1AbC/a.csv\n' +
+        '  b.csv webapi-builtin-gdrive+gdrive2://2DeF/b.csv\n' +
+        '))',
     );
     const body = ensureTransferInput('executable = run.sh\n', CONNECTOR_INPUT_MACRO);
     expect(body).toContain('transfer_input_files = $(connector_input)');
