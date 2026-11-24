@@ -236,6 +236,11 @@ docs-check: ## Validate docs front matter, links and nav.json
 	@echo "Checking documentation tree..."
 	go test ./internal/docsmeta/
 
+.PHONY: knobs
+knobs: ## Regenerate webapi/knobs/knobs_gen.go from knobs.yaml
+	@echo "Generating webapi/knobs/knobs_gen.go..."
+	cd webapi/knobs && go generate ./...
+
 .PHONY: imports
 imports: ## Organize imports with goimports
 	@echo "Organizing imports..."

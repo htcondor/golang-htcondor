@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Who may see a site app is the site's decision, and it is made in the
@@ -295,28 +297,29 @@ func (c *ConfigPolicy) Policy(id string) (Policy, bool) {
 	if c == nil || c.params == nil {
 		return Policy{}, false
 	}
-	key := ConfigKey(id, "GROUPS")
-	raw, ok := c.params.Get(key)
-	if !ok || strings.TrimSpace(raw) == "" {
-		// An empty GROUPS is not "nobody": far more likely a mistake,
-		// and treating it as undeclared means Library.Reload reports it
-		// the same way it reports a bundle nobody has configured.
+	set := knobs.SiteApp(id)
+	// An empty GROUPS is not "nobody": far more likely a mistake, and
+	// treating it as undeclared means Library.Reload reports it the
+	// same way it reports a bundle nobody has configured. A knob reads
+	// a value that expands to nothing as unset, so Lookup's presence
+	// is exactly the test this used to make on the raw string.
+	groups, declared := set.Groups().Lookup(c.params)
+	if !declared {
 		return Policy{}, false
 	}
 	p := Policy{
-		Groups: ParseGroupList(raw),
-		Origin: key,
+		Groups: groups,
+		Origin: set.Groups().Name(),
 	}
-	if home := c.params.GetBool(ConfigKey(id, "HOME"), false); home {
+	if home := set.Home().Get(c.params); home {
 		p.Home = &home
 	}
-	if _, set := c.params.Get(ConfigKey(id, "ENABLED")); set {
-		enabled := c.params.GetBool(ConfigKey(id, "ENABLED"), true)
+	if enabled, present := set.Enabled().Lookup(c.params); present {
 		p.Enabled = &enabled
 	}
-	p.Name = configString(c.params, ConfigKey(id, "NAME"))
-	p.Description = configString(c.params, ConfigKey(id, "DESCRIPTION"))
-	p.Icon = configString(c.params, ConfigKey(id, "ICON"))
+	p.Name = set.Name().Get(c.params)
+	p.Description = set.Description().Get(c.params)
+	p.Icon = set.Icon().Get(c.params)
 	return p, true
 }
 
@@ -359,14 +362,6 @@ func UnconfiguredMessage(id, bundle string) error {
 		"not published. Set %s to the groups that may see it, or to * for every "+
 		"authenticated user, then run condor_reconfig",
 		id, bundle, ConfigKey(id, "GROUPS"))
-}
-
-func configString(p Params, key string) string {
-	v, ok := p.Get(key)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(v)
 }
 
 // plausibleMacroID reports whether a macro name could have come from a

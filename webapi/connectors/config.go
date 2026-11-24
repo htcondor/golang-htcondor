@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 	"golang.org/x/oauth2"
 )
 
@@ -156,13 +157,13 @@ func (c *ConfigSource) IDs() []ID {
 	if c == nil || c.params == nil {
 		return nil
 	}
-	raw, ok := c.params.Get("HTTP_API_CONNECTORS")
-	if !ok {
+	names := knobs.ConnectorInstances.Get(c.params)
+	if len(names) == 0 {
 		return nil
 	}
 	var out []ID
 	seen := map[string]bool{}
-	for _, tok := range splitList(raw) {
+	for _, tok := range names {
 		id, err := ParseID(tok)
 		if err != nil {
 			// A malformed entry is skipped here and reported by
@@ -214,46 +215,38 @@ func (c *ConfigSource) Definition(id ID) (Definition, bool) {
 		d.AuthStyle = def.AuthStyle
 	}
 
-	if v, ok := c.get(id, "KIND"); ok {
+	// Lookup, not Get: an absent setting keeps what the shipped
+	// definition supplied, and an explicitly empty one overrides it
+	// with nothing. SCOPES = [] means "no scopes", not "the shipped
+	// scopes".
+	set := knobs.Connector(id.MacroID())
+	if v, ok := set.Kind().Lookup(c.params); ok {
 		d.Kind = Kind(strings.ToLower(v))
 	}
-	if v, ok := c.get(id, "CLIENT_ID"); ok {
+	if v, ok := set.ClientID().Lookup(c.params); ok {
 		d.ClientID = v
 	}
-	if v, ok := c.get(id, "CLIENT_SECRET_FILE"); ok {
+	if v, ok := set.ClientSecretFile().Lookup(c.params); ok {
 		d.ClientSecretFile = v
 	}
-	if v, ok := c.get(id, "AUTHORIZATION_URL"); ok {
+	if v, ok := set.AuthorizationURL().Lookup(c.params); ok {
 		d.AuthorizationURL = v
 	}
-	if v, ok := c.get(id, "TOKEN_URL"); ok {
+	if v, ok := set.TokenURL().Lookup(c.params); ok {
 		d.TokenURL = v
 	}
-	if v, ok := c.get(id, "SCOPES"); ok {
-		d.Scopes = splitList(v)
+	if v, ok := set.Scopes().Lookup(c.params); ok {
+		d.Scopes = v
 	}
-	if v, ok := c.get(id, "GROUPS"); ok {
-		d.Groups = splitList(v)
+	if v, ok := set.Groups().Lookup(c.params); ok {
+		d.Groups = v
 	}
-	if v, ok := c.get(id, "TRANSFER"); ok {
+	if v, ok := set.Transfer().Lookup(c.params); ok {
 		d.Transfer = Transfer(strings.ToLower(strings.TrimSpace(v)))
 	}
-	d.Enabled = c.params.GetBool(id.ConfigKey("ENABLED"), true)
+	d.Enabled = set.Enabled().Get(c.params)
 
 	return d, true
-}
-
-// get reads one of a connector's settings, treating a value that
-// expands to nothing as unset.
-func (c *ConfigSource) get(id ID, setting string) (string, bool) {
-	v, ok := c.params.Get(id.ConfigKey(setting))
-	if !ok {
-		return "", false
-	}
-	if v = strings.TrimSpace(v); v == "" {
-		return "", false
-	}
-	return v, true
 }
 
 // splitList reads a comma-separated or JSON-array list, the way site
