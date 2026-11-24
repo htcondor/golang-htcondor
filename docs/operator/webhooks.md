@@ -1,3 +1,9 @@
+---
+title: Outbound webhooks
+audience: operator
+order: 140
+---
+
 # Outbound webhooks
 
 A user can ask this access point to POST to a URL when their jobs change
@@ -9,7 +15,7 @@ configuring the receiver again.
 
 This is the outbound half of an integration. The inbound half is an OAuth2
 client, which lets an outside service act *as* the user here; see
-[Authentication and authorization](server-auth.md). The two are opposite
+[Authentication and authorization](auth.md). The two are opposite
 directions and the UI labels them as such, because revoking the wrong one is
 the easy mistake.
 

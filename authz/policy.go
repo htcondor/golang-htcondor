@@ -131,7 +131,7 @@ func (p *Policy) buildEntry(cfg ConfigGetter, perm Perm) *permEntry {
 // value and the knob that set it (mirrors SecMan::getSecSetting). fmt is
 // "ALLOW_%s" / "DENY_%s".
 func (p *Policy) getSecSetting(cfg ConfigGetter, format string, perm Perm) (value, knob string, ok bool) {
-	for _, pp := range ConfigChain(perm, false) {
+	for _, pp := range FallbackChain(perm) {
 		base := fmt.Sprintf(format, string(pp))
 		if p.subsys != "" {
 			k := base + "_" + strings.ToUpper(p.subsys)

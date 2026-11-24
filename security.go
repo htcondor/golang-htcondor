@@ -492,8 +492,8 @@ var userTokenDir = func() string {
 //   - SEC_<context>_<feature> where context is CLIENT, READ, WRITE, etc.
 //   - Each setting falls back along the context's chain to SEC_DEFAULT_*, as
 //     HTCondor's SecMan::getSecSetting: an ADVERTISE_* context takes
-//     SEC_DAEMON_* first (and DAEMON takes SEC_WRITE_* under
-//     LEGACY_ALLOW_SEMANTICS)
+//     SEC_DAEMON_* first. LEGACY_ALLOW_SEMANTICS, under which DAEMON would
+//     take SEC_WRITE_* first, is not implemented -- see authz.FallbackChain.
 //   - Supports REQUIRED, PREFERRED, OPTIONAL, NEVER security levels
 //   - Supports multiple authentication methods (SSL, KERBEROS, TOKEN, etc.)
 //   - Supports multiple encryption methods (AES, BLOWFISH, 3DES)
@@ -724,14 +724,15 @@ type CredentialReloader interface {
 }
 
 // secSetting returns SEC_<level>_<feature> for the first level in secContext's
-// config-fallback chain that sets it (authz.ConfigChain: an ADVERTISE_* level
+// config-fallback chain that sets it (authz.FallbackChain: an ADVERTISE_* level
 // falls back to DAEMON, every level to DEFAULT), and the level that set it. As
-// SecMan::getSecSetting, it walks the chain one setting at a time, honours
-// LEGACY_ALLOW_SEMANTICS, and treats an empty value as unset.
+// SecMan::getSecSetting, it walks the chain one setting at a time and treats an
+// empty value as unset.
+//
+// LEGACY_ALLOW_SEMANTICS is deliberately not consulted; see
+// authz.FallbackChain.
 func secSetting(cfg authz.ConfigGetter, secContext, feature string) (value string, level authz.Perm, ok bool) {
-	legacyVal, _ := cfg.Get("LEGACY_ALLOW_SEMANTICS")
-	legacy := parseBool(legacyVal, false)
-	for _, lvl := range authz.ConfigChain(authz.Perm(strings.ToUpper(secContext)), legacy) {
+	for _, lvl := range authz.FallbackChain(authz.Perm(strings.ToUpper(secContext))) {
 		if v, ok := cfg.Get(fmt.Sprintf("SEC_%s_%s", lvl, feature)); ok && strings.TrimSpace(v) != "" {
 			return v, lvl, true
 		}
