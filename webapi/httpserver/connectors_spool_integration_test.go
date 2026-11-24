@@ -178,9 +178,29 @@ type connectorFixture struct {
 	server *Server
 }
 
+// connectorFixtureOpts asks for more than the default fixture.
+type connectorFixtureOpts struct {
+	// mirror runs an htcondordb schedd-sync mirror beside the pool and
+	// points the server at it, which is what gives the server a job
+	// watch feed -- and so a change-stream nudge -- at all.
+	mirror bool
+	// sweepInterval is HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL, set
+	// through the configuration rather than afterwards so the server
+	// starts its sweep and nudge the way a real one does. Empty leaves
+	// the feature off at startup, which is the default everywhere else.
+	sweepInterval string
+}
+
 // setupConnectorFixture brings all of that up and registers its
 // teardown.
 func setupConnectorFixture(t *testing.T) *connectorFixture {
+	t.Helper()
+	return setupConnectorFixtureWith(t, connectorFixtureOpts{})
+}
+
+// setupConnectorFixtureWith is setupConnectorFixture with the parts a
+// test may need switched on.
+func setupConnectorFixtureWith(t *testing.T, opts connectorFixtureOpts) *connectorFixture {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -205,6 +225,29 @@ func setupConnectorFixture(t *testing.T) *connectorFixture {
 
 	user := localOwner(t)
 
+	// The mirror, before the server, so the collector already has it to
+	// discover. Its absence is not a skip here: every other assertion
+	// in these tests holds without one, and only the nudge needs it.
+	var htcCfg *config.Config
+	if opts.mirror {
+		bin, ok := optionalHTCondorDB()
+		if !ok {
+			t.Skip("no htcondordb binary; the change-stream nudge cannot be exercised without a mirror")
+		}
+		startScheddSyncMirror(t, harness, bin, t.TempDir())
+		// Mirror routing needs both: the collector to discover the
+		// database, and the HTCondor config for the SEC_* knobs it
+		// authenticates with. Without them dbMirror.Enabled() is false
+		// and no feed is ever started.
+		htcCfg = mirrorClientConfig(harness)
+	}
+	if opts.sweepInterval != "" {
+		if htcCfg == nil {
+			htcCfg = config.NewEmpty()
+		}
+		htcCfg.Set("HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL", opts.sweepInterval)
+	}
+
 	passwordsDir := filepath.Join(harness.GetSpoolDir(), "passwords.d")
 	if err := os.MkdirAll(passwordsDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -228,6 +271,8 @@ func setupConnectorFixture(t *testing.T) *connectorFixture {
 		TrustDomain:              "test.htcondor.org",
 		UIDDomain:                "test.htcondor.org",
 		OAuth2DBPath:             filepath.Join(harness.GetSpoolDir(), "oauth2.db"),
+		HTCondorConfig:           htcCfg,
+		Collector:                harnessCollector(harness, opts.mirror),
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -273,7 +318,14 @@ func setupConnectorFixture(t *testing.T) *connectorFixture {
 	// run one pass themselves, at a moment they choose. Non-zero so the
 	// submit path does not warn that nothing will be written, which is
 	// also what a real deployment with this feature on looks like.
-	server.connectorOutputSweepInterval = time.Hour
+	//
+	// Not when the configuration already said: a test that asked for an
+	// interval wants the sweep and nudge the server started for itself,
+	// and overwriting the field here would leave those goroutines
+	// running on the old value while the field read a new one.
+	if opts.sweepInterval == "" {
+		server.connectorOutputSweepInterval = time.Hour
+	}
 
 	// A browser session: a connector credential is reachable only from
 	// one, by design, so this is also the only caller that can submit a
@@ -312,6 +364,18 @@ func setupConnectorFixture(t *testing.T) *connectorFixture {
 		schedd: htcondor.NewSchedd(location.Name, location.Address),
 		server: server,
 	}
+}
+
+// harnessCollector is the collector the server discovers the mirror
+// through, and nil when there is no mirror to find: passing one without
+// a database behind it would have the server retrying discovery for the
+// whole test. Not "mirrorCollector", which metrics.go already uses for
+// the Prometheus collector that reports mirror state.
+func harnessCollector(h *htcondor.CondorTestHarness, mirror bool) *htcondor.Collector {
+	if !mirror {
+		return nil
+	}
+	return htcondor.NewCollector(h.GetCollectorAddr())
 }
 
 // submit posts a submit file and returns the cluster it created.

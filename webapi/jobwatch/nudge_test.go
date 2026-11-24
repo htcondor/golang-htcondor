@@ -49,6 +49,16 @@ func (r *recorder) waitCall(t *testing.T) string {
 	}
 }
 
+// expectNoCall fails if any check happens within d.
+func (r *recorder) expectNoCall(t *testing.T, d time.Duration) {
+	t.Helper()
+	select {
+	case owner := <-r.calls:
+		t.Fatalf("%q was nudged by a transition this consumer did not ask for", owner)
+	case <-time.After(d):
+	}
+}
+
 // nudgerFixture runs a nudger against a live feed with a short delay, so
 // the test exercises the real subscription rather than a stub of it.
 func nudgerFixture(t *testing.T) (*Feed, *recorder, *Nudger) {
@@ -231,5 +241,77 @@ func TestUnownedActivityIsIgnored(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 	if got := rec.count(""); got != 0 {
 		t.Errorf("an ownerless event caused %d sweeps", got)
+	}
+}
+
+// nudgerFixtureKinds is nudgerFixture for a consumer that only wants
+// some transitions. Kinds has to be set before Run subscribes, so this
+// cannot be done by mutating the nudger the other fixture returns.
+func nudgerFixtureKinds(t *testing.T, kinds ...ActivityKind) (*Feed, *recorder, *Nudger) {
+	t.Helper()
+	f := NewFeed(nil)
+	rec := newRecorder()
+	n := NewNudger(f, rec.check, nil)
+	n.Delay = 10 * time.Millisecond
+	n.MinGap = 0
+	n.Kinds = kinds
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); n.Run(ctx) }()
+	waitSubscribed(t, f)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("the nudger did not stop when its context was cancelled")
+		}
+	})
+	return f, rec, n
+}
+
+// A consumer that only acts on completions is not woken by a submission
+// burst.
+//
+// The filtering happens before coalescing on purpose: ten thousand jobs
+// starting is ten thousand events, and a consumer with nothing to do
+// about any of them should sleep through all of them rather than wake to
+// find nothing. Delay and MinGap would bound the waking, not remove it.
+func TestKindsFilterKeepsOtherTransitionsOut(t *testing.T) {
+	f, rec, n := nudgerFixtureKinds(t, ActivityCompleted)
+
+	// Known idle, then running: a real transition, and not one this
+	// consumer asked for.
+	applyUpsert(f, "1.0", jobAd(1, "alice", 1, fmt.Sprintf("QDate = %d", time.Now().Add(-time.Hour).Unix())))
+	applyUpsert(f, "1.0", jobAd(1, "alice", 2, `RemoteHost = "slot1@ep.example"`))
+
+	// The silence is the assertion, and it has to be waited out rather
+	// than sampled: the nudger wakes on a ticker, so reading a counter
+	// straight after publishing proves only that the tick has not
+	// happened yet. Several Delay periods is what makes it mean
+	// something.
+	rec.expectNoCall(t, 20*n.Delay)
+
+	// Then a completion, which this consumer did ask for. Asserting the
+	// completion arrives is what keeps the silence above honest: a
+	// nudger that was simply broken would produce silence too.
+	applyUpsert(f, "1.0", jobAd(1, "alice", 4, "ExitCode = 0"))
+
+	if owner := rec.waitCall(t); owner != "alice" {
+		t.Errorf("nudged %q, want alice", owner)
+	}
+}
+
+// With no Kinds set, every transition nudges -- what a watch evaluator
+// needs, and what the three existing nudgers rely on.
+func TestNoKindsMeansEveryTransition(t *testing.T) {
+	f, rec, _ := nudgerFixtureKinds(t) // no kinds
+
+	applyUpsert(f, "2.0", jobAd(2, "bob", 1, fmt.Sprintf("QDate = %d", time.Now().Add(-time.Hour).Unix())))
+	applyUpsert(f, "2.0", jobAd(2, "bob", 2, `RemoteHost = "slot1@ep.example"`))
+
+	if owner := rec.waitCall(t); owner != "bob" {
+		t.Errorf("nudged %q, want bob", owner)
 	}
 }
