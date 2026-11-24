@@ -1263,6 +1263,14 @@ func (h *Handler) handleDeviceCodeTokenRequest(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// RFC 8628 3.4 requires client_id on the token request. This flow does
+	// not go through fosite's NewAccessRequest, so nothing else asks for it.
+	presentedClientID := r.PostForm.Get("client_id")
+	if presentedClientID == "" {
+		h.writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_id is required")
+		return
+	}
+
 	// Create device code handler
 	deviceHandler := NewDeviceCodeHandler(h.oauth2Provider.GetStorage(), h.oauth2Provider.config)
 
@@ -1281,12 +1289,45 @@ func (h *Handler) handleDeviceCodeTokenRequest(w http.ResponseWriter, r *http.Re
 			h.writeOAuthError(w, http.StatusBadRequest, "slow_down", "Polling too frequently; increase the interval by 5 seconds")
 			return
 		}
+		if errors.Is(err, ErrExpiredToken) {
+			// RFC 8628 3.5: distinct from invalid_grant, because it tells
+			// the client to start a new device authorization rather than
+			// to give up.
+			h.writeOAuthError(w, http.StatusBadRequest, "expired_token", "The device code has expired")
+			return
+		}
 		if errors.Is(err, fosite.ErrAccessDenied) {
 			h.writeOAuthError(w, http.StatusBadRequest, "access_denied", "Authorization denied by user")
 			return
 		}
 		h.logger.Error(logging.DestinationHTTP, "Device code token request failed", "error", err)
 		h.writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "Invalid device code")
+		return
+	}
+
+	// The device code is a bearer secret, so holding one must not be
+	// enough on its own: RFC 8628 3.5 requires the code to have been
+	// issued to the client now redeeming it. Without this the code alone
+	// buys an access token AND a refresh token for whatever identity
+	// approved it, under any client that asks.
+	//
+	// This binds to the client_id presented; it does not yet authenticate
+	// the client, which 3.4 also requires of a confidential one. Doing
+	// that needs two things first: the CLI has to send the client_secret
+	// it already holds (this commit), and dynamic registration has to stop
+	// recording every client as confidential while advertising support for
+	// token_endpoint_auth_method "none" (mcp_handlers.go, Public: false).
+	// Until then, requiring authentication would refuse every deployed
+	// client.
+	if issued := request.GetClient(); issued == nil || issued.GetID() != presentedClientID {
+		issuedID := ""
+		if issued != nil {
+			issuedID = issued.GetID()
+		}
+		h.logger.Warn(logging.DestinationHTTP, "Device code redeemed by a client it was not issued to",
+			"issued_to", issuedID, "presented_by", presentedClientID)
+		h.writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
+			"this device code was not issued to this client")
 		return
 	}
 

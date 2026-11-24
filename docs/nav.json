@@ -19,11 +19,18 @@
           "order": 20
         },
         {
+          "path": "user/sftp-job-submit.md",
+          "url": "/docs/user/sftp-job-submit",
+          "title": "Submitting jobs over SFTP",
+          "audience": "user",
+          "order": 30
+        },
+        {
           "path": "user/files.md",
           "url": "/docs/user/files",
           "title": "Files and jobs over SFTP",
           "audience": "user",
-          "order": 30
+          "order": 40
         }
       ]
     },

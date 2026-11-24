@@ -101,10 +101,14 @@ func TestSecSettingMatchesCpp(t *testing.T) {
 						}
 						c /= 3
 					}
-					want := cppGetSecSetting(params, feature, perm, legacy)
+					// Always the modern chain, whether or not
+					// LEGACY_ALLOW_SEMANTICS is in the config: the legacy
+					// order is deliberately not implemented, so half these
+					// runs assert the knob is ignored rather than honoured.
+					want := cppGetSecSetting(params, feature, perm, false)
 					got, _, ok := secSetting(mapConfig(params), cppPerms[perm], feature)
 					if got != want || ok != (want != "") {
-						t.Errorf("%s %s (legacy %v, %v): got %q (set %v), want %q",
+						t.Errorf("%s %s (LEGACY_ALLOW_SEMANTICS set: %v, %v): got %q (set %v), want %q from the modern chain",
 							cppPerms[perm], feature, legacy, params, got, ok, want)
 					}
 				}
@@ -178,8 +182,12 @@ func TestServerSecurityConfigFallsBackPerSetting(t *testing.T) {
 		t.Errorf("READ methods = %v, want SEC_DEFAULT_AUTHENTICATION_METHODS (FS)", m)
 	}
 
-	// Under LEGACY_ALLOW_SEMANTICS DAEMON falls back to WRITE, and an
-	// ADVERTISE_* level through DAEMON to WRITE as well.
+	// LEGACY_ALLOW_SEMANTICS is not implemented: DAEMON falls back to
+	// DEFAULT, not to WRITE, even with the knob set. HTCondor honours it for
+	// upgrades from 8.8, whose last release was March 2022; see
+	// authz.FallbackChain. Note that $SECURITY.HOST_BASED still sets the knob
+	// -- param_defaults.go mirrors upstream's param_info.in and is generated
+	// -- so this is the case a real pool hits.
 	legacy := config.NewEmpty()
 	legacy.Set("LEGACY_ALLOW_SEMANTICS", "TRUE")
 	legacy.Set("SEC_DEFAULT_AUTHENTICATION", "OPTIONAL")
@@ -189,8 +197,10 @@ func TestServerSecurityConfigFallsBackPerSetting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if sc.Authentication != security.SecurityRequired {
-			t.Errorf("legacy %s authentication = %v, want SEC_WRITE_AUTHENTICATION's %v", level, sc.Authentication, security.SecurityRequired)
+		if sc.Authentication != security.SecurityOptional {
+			t.Errorf("%s authentication = %v, want SEC_DEFAULT_AUTHENTICATION's %v: "+
+				"SEC_WRITE_AUTHENTICATION must not answer for it",
+				level, sc.Authentication, security.SecurityOptional)
 		}
 	}
 }
