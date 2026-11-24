@@ -145,6 +145,14 @@ func (k StringKnob) Get(c Source) string {
 	return k.def
 }
 
+// Lookup is Get, and also reports whether the setting was present.
+func (k StringKnob) Lookup(c Source) (string, bool) {
+	if v, found := k.raw(c); found {
+		return v, true
+	}
+	return k.def, false
+}
+
 // Default is the value that applies when the setting is absent.
 func (k StringKnob) Default() string { return k.def }
 
@@ -163,16 +171,37 @@ func DefineBool(name string, def bool, scope Scope, doc string) BoolKnob {
 // Get returns the configured value, or the default when it is unset or
 // cannot be read as a boolean.
 func (k BoolKnob) Get(c Source) bool {
-	v, ok := k.raw(c)
-	if !ok {
+	v, found := k.raw(c)
+	if !found {
 		return k.def
 	}
-	b, ok := StringIsBooleanParam(v)
-	if !ok {
-		k.malformed(c, v, fmt.Errorf("%q is not a boolean", v))
-		return k.def
+	// Resolved exactly as Config.GetBool does, down to the case
+	// param_boolean inherits: a value that is not a boolean but starts
+	// with a literal ("falsey", "false # not a comment") takes that
+	// literal's value, and only a value starting with none takes the
+	// default. Two ways to read the same setting that disagree would
+	// be worse than either.
+	b, ok, literal := stringIsBooleanParam(v)
+	if ok {
+		return b
 	}
+	if !literal {
+		b = k.def
+	}
+	k.malformed(c, v, fmt.Errorf("not a valid boolean; set it to True or False"))
 	return b
+}
+
+// Lookup is Get, and also reports whether the setting was present. It
+// is for a caller that must distinguish "set to the default" from
+// "unset" -- overlaying operator settings on a shipped definition, say,
+// where an explicitly empty list means "none" and an absent one means
+// "keep the shipped ones".
+func (k BoolKnob) Lookup(c Source) (bool, bool) {
+	if _, found := k.raw(c); !found {
+		return k.def, false
+	}
+	return k.Get(c), true
 }
 
 // Default is the value that applies when the setting is absent.
@@ -203,6 +232,14 @@ func (k DurationKnob) Get(c Source) time.Duration {
 		return k.def
 	}
 	return d
+}
+
+// Lookup is Get, and also reports whether the setting was present.
+func (k DurationKnob) Lookup(c Source) (time.Duration, bool) {
+	if _, found := k.raw(c); !found {
+		return k.def, false
+	}
+	return k.Get(c), true
 }
 
 // Default is the value that applies when the setting is absent.
@@ -242,6 +279,14 @@ func (k BytesKnob) Get(c Source) int64 {
 	return n
 }
 
+// Lookup is Get, and also reports whether the setting was present.
+func (k BytesKnob) Lookup(c Source) (int64, bool) {
+	if _, found := k.raw(c); !found {
+		return k.def, false
+	}
+	return k.Get(c), true
+}
+
 // Default is the value that applies when the setting is absent.
 func (k BytesKnob) Default() int64 { return k.def }
 
@@ -274,6 +319,16 @@ func (k ListKnob) Get(c Source) []string {
 		return append([]string(nil), k.def...)
 	}
 	return out
+}
+
+// Lookup is Get, and also reports whether the setting was present. An
+// explicitly empty list reports true with no entries, which is how a
+// caller tells "none" from "nothing said".
+func (k ListKnob) Lookup(c Source) ([]string, bool) {
+	if _, found := k.raw(c); !found {
+		return append([]string(nil), k.def...), false
+	}
+	return k.Get(c), true
 }
 
 // Default is the value that applies when the setting is absent.

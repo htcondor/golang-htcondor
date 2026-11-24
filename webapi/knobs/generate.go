@@ -36,6 +36,12 @@ type family struct {
 	EnumeratedBy string `yaml:"enumerated_by"`
 	Doc          string `yaml:"doc"`
 	Settings     []knob `yaml:"settings"`
+	// EnumeratedByDir says the instances are discovered somewhere
+	// other than a parameter -- site apps are the bundles found in a
+	// directory -- so there is no list knob to declare. Declaring one
+	// anyway would put a setting in the reference that nothing reads,
+	// which is the defect this table exists to prevent.
+	EnumeratedByDir bool `yaml:"enumerated_by_dir"`
 }
 
 type file struct {
@@ -148,8 +154,11 @@ func renderFamily(b *bytes.Buffer, f family) error {
 		return fmt.Errorf("a family has no name")
 	case !strings.HasPrefix(f.Prefix, "HTTP_API_") || !strings.HasSuffix(f.Prefix, "_"):
 		return fmt.Errorf("%s: prefix must start with HTTP_API_ and end with _, got %q", f.Family, f.Prefix)
-	case f.EnumeratedBy == "":
-		return fmt.Errorf("%s: no enumerated_by; nothing would say which instances exist", f.Family)
+	case f.EnumeratedBy == "" && !f.EnumeratedByDir:
+		return fmt.Errorf("%s: set enumerated_by, or enumerated_by_dir when the instances "+
+			"come from somewhere other than a parameter", f.Family)
+	case f.EnumeratedBy != "" && f.EnumeratedByDir:
+		return fmt.Errorf("%s: enumerated_by and enumerated_by_dir are alternatives", f.Family)
 	case len(f.Settings) == 0:
 		return fmt.Errorf("%s: no settings", f.Family)
 	case strings.TrimSpace(f.Doc) == "":
@@ -170,10 +179,12 @@ func renderFamily(b *bytes.Buffer, f family) error {
 		"func %s(instance string) %s {\n\treturn %s{config.InstanceID(instance)}\n}\n\n",
 		f.Family, f.Family, f.Family, typ, typ)
 
-	fmt.Fprintf(b, "// %sInstances is the parameter naming every %s that exists.\n"+
-		"var %sInstances = config.DefineList(%q, nil, config.Startup,\n\t%q)\n\n",
-		f.Family, f.Family, f.Family, f.EnumeratedBy,
-		fmt.Sprintf("Names the %s instances that exist. %s", f.Family, doc))
+	if f.EnumeratedBy != "" {
+		fmt.Fprintf(b, "// %sInstances is the parameter naming every %s that exists.\n"+
+			"var %sInstances = config.DefineList(%q, nil, config.Startup,\n\t%q)\n\n",
+			f.Family, f.Family, f.Family, f.EnumeratedBy,
+			fmt.Sprintf("Names the %s instances that exist. %s", f.Family, doc))
+	}
 
 	for _, k := range f.Settings {
 		sk := k
@@ -195,9 +206,9 @@ func renderFamily(b *bytes.Buffer, f family) error {
 		for _, line := range wrap(sdoc, 68) {
 			fmt.Fprintf(b, "// %s\n", line)
 		}
-		fmt.Fprintf(b, "func (s %s) %s() config.StringKnob {\n"+
+		fmt.Fprintf(b, "func (s %s) %s() config.%s {\n"+
 			"\treturn config.%s(%q+s.id+%q, %s, %s,\n\t\t%q)\n}\n\n",
-			typ, method, ctor, f.Prefix, "_"+k.Name, def, scope, sdoc)
+			typ, method, knobType(k.Type), ctor, f.Prefix, "_"+k.Name, def, scope, sdoc)
 	}
 	return nil
 }
@@ -206,9 +217,8 @@ func validateSetting(f family, k knob) error {
 	switch {
 	case k.Name == "":
 		return fmt.Errorf("%s: a setting has no name", f.Family)
-	case k.Type != "string":
-		return fmt.Errorf("%s/%s: only string settings are supported in a family so far, not %q",
-			f.Family, k.Name, k.Type)
+	case knobType(k.Type) == "":
+		return fmt.Errorf("%s/%s: unknown type %q", f.Family, k.Name, k.Type)
 	case strings.TrimSpace(k.Doc) == "":
 		return fmt.Errorf("%s/%s: no doc", f.Family, k.Name)
 	case k.Scope != "startup" && k.Scope != "reconfig":
@@ -271,6 +281,24 @@ func literal(k knob) (def, ctor string, err error) {
 		return "[]string{" + strings.Join(q, ", ") + "}", "DefineList", nil
 	}
 	return "", "", fmt.Errorf("%s: unknown type %q", k.Name, k.Type)
+}
+
+// knobType names the Go type a setting of this kind reads as. An
+// unknown kind returns the empty string.
+func knobType(kind string) string {
+	switch kind {
+	case "string":
+		return "StringKnob"
+	case "bool":
+		return "BoolKnob"
+	case "duration":
+		return "DurationKnob"
+	case "bytes":
+		return "BytesKnob"
+	case "list":
+		return "ListKnob"
+	}
+	return ""
 }
 
 // initialisms keep their capitalisation, so HTTP_API_TLS_CA_CERT reads

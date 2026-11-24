@@ -242,3 +242,53 @@ func TestKnobTypedNilConfig(t *testing.T) {
 		t.Errorf("string = %q", got)
 	}
 }
+
+// A BoolKnob and Config.GetBool must resolve the same configuration the
+// same way, including param_boolean's rule that a non-boolean starting
+// with a literal takes that literal's value.
+func TestBoolKnobMatchesGetBool(t *testing.T) {
+	for _, def := range []bool{true, false} {
+		for _, v := range []string{"true", "True", "1", "false", "0", "falsey",
+			"false # not a comment", "truthy", "no", "yes", "maybe", "1 + 1 == 2"} {
+			c := knobConfig(t, map[string]string{"B": v})
+			want := c.GetBool("B", def)
+			got := DefineBool("B", def, Startup, "").Get(c)
+			if got != want {
+				t.Errorf("B=%q def=%v: knob gave %v, GetBool gave %v", v, def, got, want)
+			}
+		}
+	}
+}
+
+// Lookup is what tells "set to the default" from "unset"; overlaying
+// operator settings on a shipped definition needs the difference.
+func TestKnobLookupReportsPresence(t *testing.T) {
+	set := knobConfig(t, map[string]string{"S": "x", "B": "true", "L": "[]", "D": "1s", "Z": "1K"})
+	unset := knobConfig(t, nil)
+
+	if _, ok := DefineString("S", "d", Startup, "").Lookup(set); !ok {
+		t.Error("string: present but reported absent")
+	}
+	if v, ok := DefineString("S", "d", Startup, "").Lookup(unset); ok || v != "d" {
+		t.Errorf("string: absent reported %q, %v", v, ok)
+	}
+	if _, ok := DefineBool("B", false, Startup, "").Lookup(set); !ok {
+		t.Error("bool: present but reported absent")
+	}
+	if _, ok := DefineDuration("D", time.Minute, Startup, "").Lookup(set); !ok {
+		t.Error("duration: present but reported absent")
+	}
+	if _, ok := DefineBytes("Z", 1, Startup, "").Lookup(set); !ok {
+		t.Error("bytes: present but reported absent")
+	}
+
+	// An explicitly empty list is "none", and must not read as "unset".
+	v, ok := DefineList("L", []string{"shipped"}, Startup, "").Lookup(set)
+	if !ok || len(v) != 0 {
+		t.Errorf("empty list: %q, %v; want present and empty", v, ok)
+	}
+	v, ok = DefineList("L", []string{"shipped"}, Startup, "").Lookup(unset)
+	if ok || len(v) != 1 {
+		t.Errorf("absent list: %q, %v; want absent and the default", v, ok)
+	}
+}
