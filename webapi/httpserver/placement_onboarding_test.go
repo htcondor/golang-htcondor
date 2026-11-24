@@ -489,7 +489,7 @@ func TestOpenAPIDocumentsPlacementOnboarding(t *testing.T) {
 	var doc struct {
 		Paths map[string]any `json:"paths"`
 	}
-	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+	if err := json.Unmarshal(openAPISchema, &doc); err != nil {
 		t.Fatalf("schema is not JSON: %v", err)
 	}
 	for _, p := range []string{"/placement/me", "/placement/me/token", "/placement/me/device/{user_code}",
