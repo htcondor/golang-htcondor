@@ -749,6 +749,18 @@ func loadSpoolMaxUploadBytes(cfg *config.Config, logger *logging.Logger) int64 {
 	return n
 }
 
+// loadSpoolBufferDir reads where an archive dropped in /submit/, or
+// posted to the upload endpoints, is buffered while it is unpacked.
+// Empty holds it in memory under a much smaller ceiling.
+//
+// Both server paths call this. Until now only demo mode read the
+// setting at all, so an operator who set it on a real deployment got
+// the in-memory path and no warning -- and a grep for the parameter
+// name found the demo call site and looked wired.
+func loadSpoolBufferDir(cfg *config.Config) string {
+	return knobs.SpoolBufferDir.Get(cfg)
+}
+
 // loadTemplateGlobalPath resolves the YAML file (if any) the operator
 // has populated with shared batch-submission templates. Empty disables.
 func loadTemplateGlobalPath(cfg *config.Config) string {
@@ -2826,6 +2838,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		RESTStatsEnabled:            restStatsEnabled,
 		UtilizationMaxJobs:          utilizationMaxJobs,
 		SpoolMaxUploadBytes:         loadSpoolMaxUploadBytes(cfg, logger),
+		SpoolBufferDir:              loadSpoolBufferDir(cfg),
 		RuntimeEstimateInterval:     runtimeEstimateInterval,
 		RuntimeEstimateBackfill:     runtimeEstimateBackfill,
 		DBMirrorName:                dbMirrorName,
@@ -3084,7 +3097,6 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 	demoGatewayHost, _ := cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
 	demoSSHHostKey, _ := cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
 	demoSSHCAKey, _ := cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
-	demoSpoolBufferDir, _ := cfg.Get("HTTP_API_SPOOL_BUFFER_DIR")
 	// And the KEK, without which there is no key store to generate the
 	// gateway's host key and CA into: the gateway refuses to start
 	// rather than mint keys it cannot keep. Read here too so that
@@ -3277,7 +3289,7 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 		SSHGatewayPublicHost:   demoGatewayHost,
 		SSHHostKeyFile:         demoSSHHostKey,
 		SSHCAKeyFile:           demoSSHCAKey,
-		SpoolBufferDir:         demoSpoolBufferDir,
+		SpoolBufferDir:         loadSpoolBufferDir(cfg),
 		KEKFilePath:            demoKEKFile,
 		DagmanEnvironment:      demoDagmanEnvironment(configFile),
 		HTCondorConfig:         cfg,

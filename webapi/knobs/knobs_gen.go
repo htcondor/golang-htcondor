@@ -122,6 +122,14 @@ var OAuth2UsernameClaim = config.DefineString("HTTP_API_OAUTH2_USERNAME_CLAIM", 
 var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(30000000000) /* 30s */, config.Startup,
 	"How long a request may take to arrive in full, as a Go duration. A value that cannot be parsed is logged and the default applies.")
 
+// SpoolBufferDir is HTTP_API_SPOOL_BUFFER_DIR.
+//
+// Where an archive dropped in the SSH gateway's /submit/, or posted to
+// the REST upload endpoints, is buffered while it is unpacked. Unset
+// holds it in memory instead, under a much smaller ceiling.
+var SpoolBufferDir = config.DefineString("HTTP_API_SPOOL_BUFFER_DIR", "", config.Startup,
+	"Where an archive dropped in the SSH gateway's /submit/, or posted to the REST upload endpoints, is buffered while it is unpacked. Unset holds it in memory instead, under a much smaller ceiling.")
+
 // TLSCACert is HTTP_API_TLS_CA_CERT.
 //
 // CA bundle used to verify client certificates. Unset asks for no
@@ -400,6 +408,7 @@ var All = []config.Knob{
 	OAuth2UserinfoURL.Knob,
 	OAuth2UsernameClaim.Knob,
 	ReadTimeout.Knob,
+	SpoolBufferDir.Knob,
 	TLSCACert.Knob,
 	TLSCert.Knob,
 	TLSKey.Knob,

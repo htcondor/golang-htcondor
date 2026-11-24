@@ -182,6 +182,16 @@ knobs:
       unified migration, so setting this is reported and has no effect.
 
 
+  - name: HTTP_API_SPOOL_BUFFER_DIR
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Where an archive dropped in the SSH gateway's /submit/, or posted
+      to the REST upload endpoints, is buffered while it is unpacked.
+      Unset holds it in memory instead, under a much smaller ceiling.
+
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so
