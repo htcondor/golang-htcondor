@@ -1199,6 +1199,20 @@ can show, each of which a unit test can be wrong about and still pass:
 The header row is deliberately in an order the jobs do not use, with a
 column no job produces, so appending fields in emission order fails.
 
+`TestResultsArriveWithoutWaitingForTheSweepIntegration` is the same
+trip driven by the change stream instead of by hand, and it rests on one
+number: the sweep interval is **an hour**, so a row appearing within a
+minute cannot be the ticker's doing. It runs a real htcondordb mirror
+beside the pool, because without one there is no feed, no nudge, and
+nothing to test; it skips when no htcondordb binary is available.
+
+Deleting the nudge makes it fail with the queue's own account of why --
+"completed=[0] unfinished=0 present=true" -- which distinguishes a job
+that never ran from a nudge that never fired. The first version of that
+diagnostic was useless: it waited the fixture's whole three-minute
+budget and then tried to ask the queue on a context that had expired
+with it, so it reported only that it could not ask.
+
 The at-most-once check **re-nominates the destination** rather than
 sweeping twice. Sweeping again after the first pass retired the binding
 would be vacuous — there would be nothing open to sweep, and the test

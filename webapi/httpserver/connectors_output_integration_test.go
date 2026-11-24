@@ -3,6 +3,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -372,4 +373,102 @@ func (f *connectorFixture) submitExpectingFailure(
 		t.Fatalf("the submission was accepted; it should have been refused: %s", got)
 	}
 	return resp.StatusCode, string(got)
+}
+
+// Results arrive without anybody running a sweep.
+//
+// The assertion rests on one number: the sweep interval is an hour, so
+// nothing the ticker does can explain rows appearing within a minute.
+// The only other path is the change-stream nudge, which is the whole
+// point -- and the reason this test needs a real htcondordb mirror
+// beside the pool rather than a stub of one. Without the mirror there
+// is no feed, no nudge, and the test skips.
+//
+// What it covers that the unit tests cannot: that a completion actually
+// reaches ActivityCompleted on the feed (rather than being, say,
+// collapsed into a single mirror commit with the submission), that the
+// owner the stream reports is one bindingMatchesOwner accepts against a
+// real session's subject, and that the sweep driven this way reads a
+// real sandbox with a token it minted for the job's owner.
+func TestResultsArriveWithoutWaitingForTheSweepIntegration(t *testing.T) {
+	fix := setupConnectorFixtureWith(t, connectorFixtureOpts{
+		mirror: true,
+		// An hour. If a row appears, the ticker did not put it there.
+		sweepInterval: "1h",
+	})
+	fix.google.PickSheet("SHEET", "results.gsheet", mockgoogle.MockTab{
+		Title: "results",
+		Rows:  [][]string{{"sample", "value"}},
+	})
+
+	script := writeResultScript(t)
+	submitFile := strings.Join([]string{
+		"executable = " + script,
+		"transfer_executable = false",
+		"arguments = $(sample) $(value)",
+		"should_transfer_files = YES",
+		"when_to_transfer_output = ON_EXIT",
+		"transfer_output_files = results.json",
+		"output = run-$(ProcId).out",
+		"error = run-$(ProcId).err",
+		"log = run.log",
+		"queue sample, value from (",
+		"HG002, 7",
+		")",
+		"",
+	}, "\n")
+
+	cluster := fix.submitWith(t, JobSubmitRequest{
+		SubmitFile: submitFile,
+		OutputSheet: &SubmitOutputSheet{
+			Connector: "builtin:gdrive",
+			FileID:    "SHEET",
+			Tab:       "results",
+			JobFile:   "results.json",
+		},
+	})
+	t.Logf("cluster %d submitted; waiting for the nudge, not the sweep", cluster)
+
+	// Generous, because this waits on a chain: the job has to run, the
+	// schedd has to write the completion to job_queue.log, scheddsync
+	// has to tail it into the mirror, the feed has to deliver the
+	// transition, and the nudger has to let its Delay elapse. Each is
+	// fast and none is synchronous with this test; it takes about half
+	// a minute in practice.
+	//
+	// Not the fixture's whole three-minute budget, deliberately. Waiting
+	// that long leaves nothing for the diagnostic below -- the first
+	// version of this test waited the full three minutes and then
+	// reported "the queue could not be asked why", because the context
+	// it would have asked on had expired with it.
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		rows := fix.google.SheetRows("SHEET", "results")
+		if len(rows) > 1 {
+			if got := rows[1]; len(got) != 2 || got[0] != "HG002" || got[1] != "7" {
+				t.Errorf("the appended row is %v, want [HG002 7]", got)
+			}
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// Say which link of the chain is missing rather than only that the
+	// row never came: a feed that never connected and a job that never
+	// ran are different faults, and the queue can tell them apart.
+	//
+	// On its own context, not the fixture's, so this still answers when
+	// the wait above has eaten into that budget.
+	dctx, dcancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dcancel()
+	state, err := fix.server.clusterStateFor(dctx, connectors.OutputBinding{
+		Subject: localOwner(t), Cluster: cluster,
+	})
+	if err != nil {
+		t.Fatalf("no row appeared, and the queue could not be asked why: %v", err)
+	}
+	t.Fatalf("no row appeared within the deadline, though the sweep interval is an hour: "+
+		"the queue says completed=%v unfinished=%d present=%v. "+
+		"If the jobs completed, the change-stream nudge did not fire",
+		state.Completed, state.Unfinished, state.Present)
 }
