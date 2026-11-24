@@ -1,0 +1,69 @@
+# Settings the HTCondor API server reads.
+#
+# This file is the source. knobs_gen.go is generated from it by
+# `make knobs`, and a setting the server reads has to be here, because
+# config.Get only accepts a declared knob -- there is no way to spell a
+# name that this file does not carry.
+#
+# Fields:
+#   name     the configuration parameter, HTTP_API_*
+#   type     string | bool | duration | bytes | list
+#   default  what applies when the setting is absent
+#   scope    startup (a change needs a restart) | reconfig (a
+#            reconfigure installs it on the running server)
+#   doc      one paragraph, written for an operator; this is what the
+#            configuration reference prints
+#
+# Migration in progress: most settings are still read as strings
+# elsewhere. See design_notes/DOCUMENTATION_SITE.md.
+
+knobs:
+  - name: HTTP_API_TLS_CERT
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      PEM certificate for serving HTTPS directly, rather than behind a
+      terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables
+      TLS.
+
+  - name: HTTP_API_TLS_KEY
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Private key for HTTP_API_TLS_CERT. Keep it readable only by the
+      account the server runs as.
+
+  - name: HTTP_API_TLS_CA_CERT
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      CA bundle used to verify client certificates. Unset asks for no
+      client certificate.
+
+  - name: HTTP_API_READ_TIMEOUT
+    type: duration
+    default: 30s
+    scope: startup
+    doc: >
+      How long a request may take to arrive in full, as a Go duration.
+      A value that cannot be parsed is logged and the default applies.
+
+  - name: HTTP_API_WRITE_TIMEOUT
+    type: duration
+    default: 30s
+    scope: startup
+    doc: >
+      How long a response may take to write, as a Go duration. This
+      bounds a slow client, so it also bounds a deliberately long poll;
+      see the note on streaming endpoints before lowering it.
+
+  - name: HTTP_API_IDLE_TIMEOUT
+    type: duration
+    default: 120s
+    scope: startup
+    doc: >
+      How long a keep-alive connection may sit idle before the server
+      closes it, as a Go duration.

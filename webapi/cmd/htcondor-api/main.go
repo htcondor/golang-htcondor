@@ -40,6 +40,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/dbmirror"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/webui"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 	"github.com/htcondor/golang-htcondor/webapi/mcpserver"
 	"github.com/htcondor/golang-htcondor/webapi/poolpolicy"
 	"github.com/htcondor/golang-htcondor/webapi/sharedportrouter"
@@ -1987,6 +1988,15 @@ func loadConfigWithDefaults() (*config.Config, error) {
 		return nil, fmt.Errorf("failed to load HTCondor configuration: %w", err)
 	}
 
+	// A setting that is present but cannot be read as its type falls
+	// back to the default. Saying so once, here, is what every knob
+	// read used to carry its own parse-and-warn for -- and what the
+	// ones that had no warning silently skipped.
+	cfg.SetKnobErrorHandler(func(k config.Knob, raw string, kerr error) {
+		log.Printf("Warning: %s is set to %q, which is not valid: %v; using the default",
+			k.Name(), raw, kerr)
+	})
+
 	// Fix TILDE and LOCAL_DIR defaults if needed
 	// Enable debug messages in development (can be controlled by env var if needed)
 	debug := os.Getenv("HTCONDOR_API_DEBUG") != ""
@@ -2233,42 +2243,17 @@ func getHTTPConfig(cfg *config.Config, logger *logging.Logger) (listenAddrResult
 		}
 	}
 	mcpListenAddrResult, _ = cfg.Get("HTTP_API_MCP_LISTEN_ADDR")
-	tlsCertFile, _ = cfg.Get("HTTP_API_TLS_CERT")
-	tlsKeyFile, _ = cfg.Get("HTTP_API_TLS_KEY")
-	tlsCACertFile, _ = cfg.Get("HTTP_API_TLS_CA_CERT")
+	tlsCertFile = knobs.TLSCert.Get(cfg)
+	tlsKeyFile = knobs.TLSKey.Get(cfg)
+	tlsCACertFile = knobs.TLSCACert.Get(cfg)
 	return listenAddrResult, mcpListenAddrResult, tlsCertFile, tlsKeyFile, tlsCACertFile
 }
 
-// getTimeoutConfig parses timeout configuration with defaults
+// getTimeoutConfig reads the HTTP server's timeouts. A value that
+// cannot be parsed falls back to the default and is reported through
+// the Config's knob error handler, which main installs once.
 func getTimeoutConfig(cfg *config.Config) (readTimeout, writeTimeout, idleTimeout time.Duration) {
-	readTimeout = 30 * time.Second
-	if timeoutStr, ok := cfg.Get("HTTP_API_READ_TIMEOUT"); ok {
-		if duration, err := time.ParseDuration(timeoutStr); err == nil {
-			readTimeout = duration
-		} else {
-			log.Printf("Warning: failed to parse HTTP_API_READ_TIMEOUT '%s', using default: %v", timeoutStr, err)
-		}
-	}
-
-	writeTimeout = 30 * time.Second
-	if timeoutStr, ok := cfg.Get("HTTP_API_WRITE_TIMEOUT"); ok {
-		if duration, err := time.ParseDuration(timeoutStr); err == nil {
-			writeTimeout = duration
-		} else {
-			log.Printf("Warning: failed to parse HTTP_API_WRITE_TIMEOUT '%s', using default: %v", timeoutStr, err)
-		}
-	}
-
-	idleTimeout = 120 * time.Second
-	if timeoutStr, ok := cfg.Get("HTTP_API_IDLE_TIMEOUT"); ok {
-		if duration, err := time.ParseDuration(timeoutStr); err == nil {
-			idleTimeout = duration
-		} else {
-			log.Printf("Warning: failed to parse HTTP_API_IDLE_TIMEOUT '%s', using default: %v", timeoutStr, err)
-		}
-	}
-
-	return readTimeout, writeTimeout, idleTimeout
+	return knobs.ReadTimeout.Get(cfg), knobs.WriteTimeout.Get(cfg), knobs.IdleTimeout.Get(cfg)
 }
 
 // getUserHeaderConfig extracts user header and domain configuration

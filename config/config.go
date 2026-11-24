@@ -118,6 +118,10 @@ type Config struct {
 	// hosts answers the host-name lookups for HOSTNAME and FULL_HOSTNAME,
 	// remembering canonical names for the life of this Config.
 	hosts *memoHosts
+	// knobErr is told about a declared setting whose value cannot be
+	// read as its type; see SetKnobErrorHandler. nil discards those
+	// reports, which is what a library embedding this wants.
+	knobErr KnobErrorFunc
 }
 
 // localHostSystem is the machine HOSTNAME and FULL_HOSTNAME are computed
