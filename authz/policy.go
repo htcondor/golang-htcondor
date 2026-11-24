@@ -50,6 +50,14 @@ type Policy struct {
 
 	usePoolUsernameEquiv bool
 
+	// legacyAllow is LEGACY_ALLOW_SEMANTICS: it selects the pre-v9.0
+	// config-fallback order, where a DAEMON setting falls back to WRITE
+	// before DEFAULT. secSetting honours it for the SEC_<level>_* chain;
+	// this is the ALLOW_<level>/DENY_<level> chain, which used to walk the
+	// modern order unconditionally and so resolved a DAEMON request
+	// differently from the C++ IpVerify on the same configuration.
+	legacyAllow bool
+
 	// forwardResolve maps a hostname to its IP-string addresses (ExpandHostAddresses);
 	// reverseResolve maps a peer IP to its hostnames (get_hostname_with_alias).
 	// Both default to the net package and are overridable for tests.
@@ -71,6 +79,7 @@ func NewPolicy(cfg ConfigGetter, subsys string) (*Policy, error) {
 		entries:              make(map[Perm]*permEntry),
 		holes:                NewHoles(),
 		usePoolUsernameEquiv: configBool(cfg, "USE_POOL_USERNAME_EQUIVALENT", true),
+		legacyAllow:          configBool(cfg, "LEGACY_ALLOW_SEMANTICS", false),
 		forwardResolve:       defaultForwardResolve,
 		reverseResolve:       defaultReverseResolve,
 	}
@@ -131,7 +140,7 @@ func (p *Policy) buildEntry(cfg ConfigGetter, perm Perm) *permEntry {
 // value and the knob that set it (mirrors SecMan::getSecSetting). fmt is
 // "ALLOW_%s" / "DENY_%s".
 func (p *Policy) getSecSetting(cfg ConfigGetter, format string, perm Perm) (value, knob string, ok bool) {
-	for _, pp := range ConfigChain(perm, false) {
+	for _, pp := range ConfigChain(perm, p.legacyAllow) {
 		base := fmt.Sprintf(format, string(pp))
 		if p.subsys != "" {
 			k := base + "_" + strings.ToUpper(p.subsys)
