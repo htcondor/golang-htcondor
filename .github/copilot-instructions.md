@@ -272,8 +272,8 @@ Install with: `make pre-commit-install` or `pip install pre-commit && pre-commit
 
 ### Project Documentation
 - [README.md](../README.md): Project overview + entry points
-- [docs/library.md](../docs/library.md): Go library usage
-- [docs/server.md](../docs/server.md): HTTP API + MCP server
+- [docs/developer/library.md](../docs/developer/library.md): Go library usage
+- [docs/operator/index.md](../docs/operator/index.md): HTTP API + MCP server
 - [CONTRIBUTING.md](../CONTRIBUTING.md): Contribution guidelines
 - [DEV_SETUP.md](DEV_SETUP.md): Development tools and CI setup
 

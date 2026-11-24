@@ -1,9 +1,15 @@
+---
+title: API surface
+audience: developer
+order: 20
+---
+
 # API surface
 
 Endpoint groupings. The full reference — request and response shapes —
-is in [httpserver/README.md](../webapi/httpserver/README.md) and the
+is in [httpserver/README.md](../../webapi/httpserver/README.md) and the
 OpenAPI document at `/openapi.json`. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](../operator/index.md) documentation.
 
 
 **Jobs** (authenticated, owner-scoped)
@@ -13,13 +19,13 @@ OpenAPI document at `/openapi.json`. Part of the
 - `PUT /api/v1/jobs/{id}/input` — upload input tarball
 - `GET /api/v1/jobs/{id}/output` — download output tarball
 - `GET /api/v1/jobs/{id}/runtime-estimate` — how long the job is likely
-  to run; see [Runtime estimates](server-estimates.md#runtime-estimates)
+  to run; see [Runtime estimates](../operator/estimates.md#runtime-estimates)
 - `POST /api/v1/jobs/runtime-estimates` — the same for up to 5000 jobs at
-  once; see [Runtime estimates](server-estimates.md#runtime-estimates)
+  once; see [Runtime estimates](../operator/estimates.md#runtime-estimates)
 
 **Pool** (authenticated; every signed-in user)
 - `GET /api/v1/pool/drain-estimates` — when each execute node would be
-  empty if drained now; see [Drain estimates](server-estimates.md#drain-estimates)
+  empty if drained now; see [Drain estimates](../operator/estimates.md#drain-estimates)
 
 **Templates** (browser-submission UI)
 - `GET /api/v1/templates` — list
@@ -50,19 +56,19 @@ OpenAPI document at `/openapi.json`. Part of the
 - `GET /api/v1/admin/usage` — call statistics by tool or endpoint, user
   and client. `?kind=mcp|rest` picks the kind (default `mcp`);
   `?name=`, `?user=`, `?client=` narrow them. See
-  [Usage statistics](server-metrics.md#usage-statistics)
+  [Usage statistics](../operator/metrics.md#usage-statistics)
 
-**Placement** — see [Placement](server-placement.md#api-endpoints).
+**Placement** — see [Placement](../operator/placement.md#api-endpoints).
 
 **Chat assistant** — see
-[Agents](server-agents.md#chat-assistant).
+[Agents](../operator/agents.md#chat-assistant).
 
 **MCP** (when enabled via `HTTP_API_ENABLE_MCP=true`)
 - The OAuth2 endpoints do not depend on this; see
-  [When OAuth2 is served](server-auth.md#when-oauth2-is-served).
+  [When OAuth2 is served](../operator/auth.md#when-oauth2-is-served).
 - The full MCP surface is exposed at `/mcp/*` for cooperative
   agents. The standalone `htcondor-mcp` binary speaks the same MCP
-  protocol over stdio. See [mcpserver/README.md](../webapi/mcpserver/README.md).
+  protocol over stdio. See [mcpserver/README.md](../../webapi/mcpserver/README.md).
 
 ## Example calls
 

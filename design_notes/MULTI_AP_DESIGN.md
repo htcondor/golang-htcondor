@@ -14,7 +14,7 @@ new work goes to the AP a user's assignment names.
   `jobid` (the job id type and its codecs).
 - Two hubs with sticky failover, federated `epoch_history` and `job_metrics`.
 
-How to run and what each endpoint answers is [docs/server-multi-ap.md](../docs/server-multi-ap.md).
+How to run and what each endpoint answers is [docs/operator/multi-ap.md](../docs/operator/multi-ap.md).
 This note is the reasoning behind it: the alternatives that were rejected,
 the rules that exist to prevent a specific wrong answer, and what is still
 open.

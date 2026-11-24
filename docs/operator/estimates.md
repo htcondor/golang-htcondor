@@ -1,16 +1,22 @@
+---
+title: Runtime and drain estimates
+audience: operator
+order: 120
+---
+
 # Runtime and drain estimates
 
 How long a job is likely to run, and when an execute node would be empty
 if drained now. Both need the
-[htcondordb](server.md#further-reading) mirror. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[htcondordb](index.md#further-reading) mirror. Part of the
+[HTTP API + MCP server](index.md) documentation.
 
 ## Runtime estimates
 
 `GET /api/v1/jobs/{id}/runtime-estimate` estimates how long a job will run
 from the runtimes of **the same owner's** similar jobs that have already
 completed, and the MCP `get_job` tool carries the same answer as
-`runtime_estimate`. It needs the [htcondordb](server.md#further-reading) mirror:
+`runtime_estimate`. It needs the [htcondordb](index.md#further-reading) mirror:
 history is read from the mirror's archive every
 `HTTP_API_RUNTIME_ESTIMATE_INTERVAL` (default `5m`), never from the
 schedd, because a background `condor_history` scan would cost the access

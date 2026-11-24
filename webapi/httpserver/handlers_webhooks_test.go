@@ -631,7 +631,7 @@ func TestWebhookFanoutLimitIsConfigurable(t *testing.T) {
 // hexSecret is the boundary between this server and every receiver ever
 // written against it: the key is 32 raw bytes, and what the create response
 // carries is those bytes hex-encoded. A receiver has to decode before using
-// it, which docs/server-webhooks.md now says outright because getting it
+// it, which docs/operator/webhooks.md now says outright because getting it
 // wrong is invisible from both ends -- HMAC takes any key, so the undecoded
 // 64-character string still yields a well-formed signature that simply never
 // matches, with nothing logged anywhere to say why.

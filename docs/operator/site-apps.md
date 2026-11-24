@@ -1,7 +1,13 @@
+---
+title: Site apps
+audience: operator
+order: 80
+---
+
 # Site apps
 
 Serving a lab's own web interface from this access point, to the people
-it belongs to. Part of the [HTTP API + MCP server](server.md)
+it belongs to. Part of the [HTTP API + MCP server](index.md)
 documentation.
 
 A research group wants a submission page of their own: drop some input
@@ -358,7 +364,7 @@ Everything the signed-in visitor can do, through the ordinary API —
 there is no separate permission system. Submit with
 `POST /api/v1/jobs`, attach dropped files with
 `POST /api/v1/jobs/{id}/input/multipart`, watch the queue with
-`GET /api/v1/jobs/watch`. See the [API surface](server-api.md).
+`GET /api/v1/jobs/watch`. See the [API surface](../developer/api.md).
 
 That is also the limit worth understanding before you install one: a
 site app runs with the full rights of whoever is looking at it, in code

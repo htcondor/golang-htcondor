@@ -1,8 +1,14 @@
+---
+title: Reservations
+audience: operator
+order: 110
+---
+
 # Reservations
 
 Holding pool capacity for a project at recurring times — a course, a
 demo, anything with a timetable — or continuously, without throwing away
-work that was already running. Part of the [HTTP API + MCP server](server.md) documentation.
+work that was already running. Part of the [HTTP API + MCP server](index.md) documentation.
 
 ## What a reservation is
 
@@ -435,7 +441,7 @@ that when the schedd holds a claim against ordinary work the remaining
 step is a configuration change rather than a feature.
 
 The design note has the measurements and the list of schedd fixes:
-[RESERVATIONS.md](../design_notes/RESERVATIONS.md), under "Building
+[RESERVATIONS.md](../../design_notes/RESERVATIONS.md), under "Building
 this on OCUs".
 
 ## Administering them
@@ -476,6 +482,6 @@ at 14:00 when the offset changes under it.
 
 ## Further reading
 
-- [Runtime and drain estimates](server-estimates.md) — where the
+- [Runtime and drain estimates](estimates.md) — where the
   predictions the sieve relies on come from.
-- [Configuration](server-config.md)
+- [Configuration](config.md)
