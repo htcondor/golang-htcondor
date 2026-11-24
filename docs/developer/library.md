@@ -1,3 +1,9 @@
+---
+title: Go library reference
+audience: developer
+order: 10
+---
+
 # Go library reference
 
 The `github.com/htcondor/golang-htcondor` module is a Go client for
@@ -8,7 +14,7 @@ handling, file transfer, and a metrics collector — exposed through
 idiomatic Go types and `context.Context` cancellation.
 
 This document covers using the library as a Go module. For the
-HTTP / MCP server built on top of it, see [server.md](server.md).
+HTTP / MCP server built on top of it, see [server.md](../operator/index.md).
 
 ## Install
 
@@ -66,7 +72,7 @@ fmt.Printf("schedd at %s\n", where.Address)
 
 For background on the limit/projection defaults and pagination
 semantics, see
-[design_notes/QUERY_OPTIMIZATION.md](../design_notes/QUERY_OPTIMIZATION.md).
+[design_notes/QUERY_OPTIMIZATION.md](../../design_notes/QUERY_OPTIMIZATION.md).
 
 ## Schedd
 
@@ -261,8 +267,8 @@ Features:
 - Wildcard / glob matching for output files.
 - Directory structure preserved in tarballs.
 
-Full reference: [sandbox/README.md](../sandbox/README.md) and
-[design_notes/SANDBOX_API.md](../design_notes/SANDBOX_API.md).
+Full reference: [sandbox/README.md](../../sandbox/README.md) and
+[design_notes/SANDBOX_API.md](../../design_notes/SANDBOX_API.md).
 
 ## File transfer protocol
 
@@ -272,7 +278,7 @@ I/O; secure transfer-key handling and metadata serialization are
 unit-tested.
 
 See the working example at
-[examples/file_transfer_demo/](../examples/file_transfer_demo/).
+[examples/file_transfer_demo/](../../examples/file_transfer_demo/).
 
 ## metricsd: pool/process metrics
 
@@ -298,10 +304,10 @@ Built-in collectors:
 
 The HTTP server bundled in this repo automatically exposes
 `/metrics` when a collector is configured (see
-[server.md](server.md)). The standalone library usage above is for
+[server.md](../operator/index.md)). The standalone library usage above is for
 embedding the same collectors in a different binary.
 
-Reference: [metricsd/README.md](../metricsd/README.md).
+Reference: [metricsd/README.md](../../metricsd/README.md).
 
 ## Rate limiting
 
@@ -328,11 +334,11 @@ Properties:
 - Defaults to unlimited when no config is set, so embedding the
   library in a tool that doesn't read HTCondor config still works.
 
-Full reference: [design_notes/RATE_LIMITING.md](../design_notes/RATE_LIMITING.md).
+Full reference: [design_notes/RATE_LIMITING.md](../../design_notes/RATE_LIMITING.md).
 
 ## Examples
 
-Runnable examples under [examples/](../examples/):
+Runnable examples under [examples/](../../examples/):
 
 - `basic/` — minimal `QueryAds` demo against a real collector.
 - `submit_demo/` — submit a job through a schedd.

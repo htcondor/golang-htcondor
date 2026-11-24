@@ -1,9 +1,15 @@
+---
+title: SSH gateway
+audience: operator
+order: 70
+---
+
 # SSH gateway
 
 An SSH port on the API server that authenticates with the OAuth2 device
 flow and drops the caller into an HTCondor job — so users get an
 interactive terminal without an account on the access point. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 ## Turning it on
 
@@ -14,7 +20,7 @@ HTTP_API_SSH_HOST_KEY_FILE = /etc/condor/htcondor-api/ssh_host_key
 
 The gateway does not start where the site allows nothing to reach into
 a running job ([`HTTP_API_SSH_TO_JOB =
-false`](server-interactive.md#sites-that-forbid-condor_ssh_to_job)) --
+false`](interactive.md#sites-that-forbid-condor_ssh_to_job)) --
 a listener that accepts connections only to refuse them is worse than
 no listener, because it answers on the port and so looks configured.
 The address can stay set; it is logged and ignored.
@@ -130,7 +136,7 @@ Asking for a shell here gets an explanation rather than a bare failure. The
 surface is read-only; writes are refused with a reason.
 
 `outputs/` lists your **completed jobs that are still in the queue**, read from
-the [htcondordb mirror](server-config.md). That is not a subset of what you
+the [htcondordb mirror](config.md). That is not a subset of what you
 might expect — it is the whole set that can be served. Output is read with
 `TRANSFER_DATA`, which matches against the queue, so once a job leaves the
 queue its spool is gone and there is nothing left to transfer. A completed job
@@ -455,7 +461,7 @@ belongs to one database, so replicas would present different host keys.
 | `HTTP_API_SPOOL_MAX_UPLOAD_BYTES` | Ceiling for one upload that ends in a spool, shared with the REST endpoints. Default 1000 MiB. It bounds a dropped archive times the procs it is spooled to, and a template's input files times the rows of a CSV. |
 
 The gateway needs OAuth2, which is served whenever the web UI or MCP is
-enabled (see [When OAuth2 is served](server-auth.md#when-oauth2-is-served)), since the device
+enabled (see [When OAuth2 is served](auth.md#when-oauth2-is-served)), since the device
 flow is how it authenticates. Shell access needs no new scope: the schedd
 registers `GET_JOB_CONNECT_INFO` at `WRITE`, so `condor:/WRITE` covers it.
 

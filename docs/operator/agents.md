@@ -1,8 +1,14 @@
+---
+title: Agents: MCP, site skills and the chat assistant
+audience: operator
+order: 50
+---
+
 # Agents: MCP, site skills and the chat assistant
 
 What an LLM agent may do through this access point, and the
 site-specific text it is given. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 ## Enabling MCP
 
@@ -11,21 +17,21 @@ site-specific text it is given. Part of the
 `mcp:read` / `mcp:write` scopes. It is also required by the chat
 assistant. OAuth2 itself is served whenever the web UI **or** MCP is
 enabled — see
-[When OAuth2 is served](server-auth.md#when-oauth2-is-served).
+[When OAuth2 is served](auth.md#when-oauth2-is-served).
 
 A deployment whose callers all arrive through a gateway that forwards a
 per-user HTCondor IDTOKEN can set `HTTP_API_MCP_OAUTH2 = false`. MCP is
 served as before and every OAuth2 endpoint is withdrawn — see [MCP
-without OAuth2](server-auth.md#mcp-without-oauth2).
+without OAuth2](auth.md#mcp-without-oauth2).
 
 The standalone `htcondor-mcp` binary speaks the same protocol over
 stdio. The tool catalogue is in
-[mcpserver/README.md](../webapi/mcpserver/README.md).
+[mcpserver/README.md](../../webapi/mcpserver/README.md).
 
 Who may drive the access point through MCP is
 `HTTP_API_MCP_ACCESS_GROUP`, narrowed by `HTTP_API_MCP_READ_GROUP` and
 `HTTP_API_MCP_WRITE_GROUP`; see
-[Authorization groups](server-auth.md#authorization-groups).
+[Authorization groups](auth.md#authorization-groups).
 
 ## What to hand a user
 
@@ -321,7 +327,7 @@ HTTP_API_POOL_QUERY_IDENTITY = restricted
 The privilege is the same one that decides whether a caller may read
 other users' jobs — `HTTP_API_WEBUI_ADMIN_GROUP`, the `anyuser:read`
 scope, or `MCP_ADMIN_USERS`; see [Authorization
-groups](server-auth.md#authorization-groups). Someone who may already
+groups](auth.md#authorization-groups). Someone who may already
 read everyone's jobs is not restricted here.
 
 Under `restricted`:
@@ -559,7 +565,7 @@ connect after it.
 
 The web UI's chat assistant is enabled by `HTTP_API_LLM_API_KEY_FILE`;
 the model, endpoint and authentication scheme come from the other
-`HTTP_API_LLM_*` knobs in [Configuration](server-config.md). It needs
+`HTTP_API_LLM_*` knobs in [Configuration](config.md). It needs
 `HTTP_API_ENABLE_MCP`.
 
 - `POST /api/v1/chat` — AI-SDK v6 UI-message stream. The body's `scope`

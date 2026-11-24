@@ -1,3 +1,9 @@
+---
+title: HTTP API + MCP server
+audience: operator
+order: 10
+---
+
 # HTTP API + MCP server
 
 In addition to the Go library, this repo ships two long-running servers
@@ -20,21 +26,21 @@ configured server. Each larger feature has a page of its own:
 
 | Page | What it covers |
 | --- | --- |
-| [Authentication and authorization](server-auth.md) | Who may sign in, identity mapping, groups, superuser mode and project leads, OAuth2 clients |
-| [Configuration reference](server-config.md) | Every `HTTP_API_*` setting |
-| [API surface](server-api.md) | Endpoint groupings and example calls |
-| [SSH gateway](server-ssh-gateway.md) | An SSH port that drops users into their jobs |
-| [Interactive sessions and apps](server-interactive.md) | JupyterLab and VS Code sessions |
-| [Agents: MCP, site skills, chat](server-agents.md) | Enabling MCP, publishing site documentation to agents, the chat assistant |
-| [Metrics and usage statistics](server-metrics.md) | `/metrics`, what is counted, the admin Usage page |
-| [Runtime and drain estimates](server-estimates.md) | How long a job will run; when a node would be empty |
-| [Web UI branding](server-branding.md) | Making the pages say who runs this access point |
-| [Site apps](server-site-apps.md) | Serving a lab's own web interface, to the people it belongs to |
-| [Outbound webhooks](server-webhooks.md) | Posting to a service when a user's jobs change state |
-| [Reservations](server-reservations.md) | Holding pool capacity for a class or other scheduled work |
-| [Placement](server-placement.md) | Onboarding users through `condor_placementd` |
-| [Reaching jobs behind CCB](server-networking.md) | Connecting into jobs on firewalled execute nodes |
-| [Multi-AP mode](server-multi-ap.md) | One server fronting several access points |
+| [Authentication and authorization](auth.md) | Who may sign in, identity mapping, groups, superuser mode and project leads, OAuth2 clients |
+| [Configuration reference](config.md) | Every `HTTP_API_*` setting |
+| [API surface](../developer/api.md) | Endpoint groupings and example calls |
+| [SSH gateway](ssh-gateway.md) | An SSH port that drops users into their jobs |
+| [Interactive sessions and apps](interactive.md) | JupyterLab and VS Code sessions |
+| [Agents: MCP, site skills, chat](agents.md) | Enabling MCP, publishing site documentation to agents, the chat assistant |
+| [Metrics and usage statistics](metrics.md) | `/metrics`, what is counted, the admin Usage page |
+| [Runtime and drain estimates](estimates.md) | How long a job will run; when a node would be empty |
+| [Web UI branding](branding.md) | Making the pages say who runs this access point |
+| [Site apps](site-apps.md) | Serving a lab's own web interface, to the people it belongs to |
+| [Outbound webhooks](webhooks.md) | Posting to a service when a user's jobs change state |
+| [Reservations](reservations.md) | Holding pool capacity for a class or other scheduled work |
+| [Placement](placement.md) | Onboarding users through `condor_placementd` |
+| [Reaching jobs behind CCB](networking.md) | Connecting into jobs on firewalled execute nodes |
+| [Multi-AP mode](multi-ap.md) | One server fronting several access points |
 
 ## Install
 
@@ -118,7 +124,7 @@ The same flag works for the MCP binary:
 
 With a `condor_placementd` on `PATH`, demo mode also starts one so the
 placement features can be tried locally; see
-[Placement](server-placement.md#trying-it-in-demo-mode).
+[Placement](placement.md#trying-it-in-demo-mode).
 
 ### Running demo mode as root
 
@@ -250,18 +256,18 @@ HTTP_API_SUPERUSER_GROUP    = chtc_admin                 # acting as another use
 
 Where those groups come from — the token, the host's account database,
 or a file — and how a token's subject becomes a local account is
-[Authentication and authorization](server-auth.md). An access point
+[Authentication and authorization](auth.md). An access point
 that signs people in through an upstream OIDC provider configures it
 with the `HTTP_API_OAUTH2_*` knobs described there.
 
 Every other setting is in the [configuration
-reference](server-config.md).
+reference](config.md).
 
 Two things commonly need no configuration at all: routing job-queue
 reads to an [htcondordb](#further-reading) mirror, which is discovered
 through the pool's collector, and the schedd and collector rate limits,
 which this server inherits from the library. Both are covered in the
-[configuration reference](server-config.md).
+[configuration reference](config.md).
 
 ## The database
 
@@ -332,17 +338,17 @@ curl -X POST http://localhost:8080/api/v1/jobs \
   -d '{"submit_file":"executable=/bin/echo\narguments=Hello\nqueue"}'
 ```
 
-More in [API surface](server-api.md).
+More in [API surface](../developer/api.md).
 
 ## Further reading
 
-- [httpserver/README.md](../webapi/httpserver/README.md) — full HTTP API
+- [httpserver/README.md](../../webapi/httpserver/README.md) — full HTTP API
   reference, demo-mode internals, security model.
-- [mcpserver/README.md](../webapi/mcpserver/README.md) — MCP tool catalog
+- [mcpserver/README.md](../../webapi/mcpserver/README.md) — MCP tool catalog
   and integration notes.
-- [SECURITY_CONFIG.md](../design_notes/SECURITY_CONFIG.md) — operator-facing
+- [SECURITY_CONFIG.md](../../design_notes/SECURITY_CONFIG.md) — operator-facing
   security configuration guide.
-- [docs/library.md](library.md) — embedding the underlying Go
+- [docs/library.md](../developer/library.md) — embedding the underlying Go
   library in your own service.
 - [htcondordb](https://github.com/htcondor/htcondordb) — the job-queue
   mirror several features read from, including runtime and drain

@@ -1,8 +1,14 @@
+---
+title: Multi-AP mode
+audience: operator
+order: 150
+---
+
 # Multi-AP mode
 
 One server fronting every access point whose schedd ad matches a
 collector constraint, instead of one schedd. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 ```
 HTTP_API_SCHEDD_CONSTRAINT = regexp("^ap[0-9]+\\.example\\.org$", Name)

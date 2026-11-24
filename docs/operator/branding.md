@@ -1,7 +1,13 @@
+---
+title: Web UI branding
+audience: operator
+order: 90
+---
+
 # Web UI branding
 
 Making the web interface say who runs this access point. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 The web interface ships with CHTC's own presentation: the pages are
 called "HTCondor Access Point" and the footer carries the CHTC,

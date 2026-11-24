@@ -1,9 +1,15 @@
+---
+title: Placement
+audience: operator
+order: 100
+---
+
 # Placement
 
 When a `condor_placementd` is reachable, this server onboards users onto
 the access point: it issues placement tokens, maps placement identities
 to accounts, and takes access requests. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 Which placementd is used, and what happens when there is none, is under
 [Finding the placementd](#finding-the-placementd) below.
@@ -26,7 +32,7 @@ file lines keep matching. Set the same claim list placement-webapp used,
 for example `HTTP_API_PLACEMENT_IDENTITY_CLAIMS = eppn, sub`.
 
 **People with no local account.** With [local identity
-mapping](server-auth.md#local-identity-mapping) on, a sign-in that maps to no account is
+mapping](auth.md#local-identity-mapping) on, a sign-in that maps to no account is
 normally refused. While a placementd is reachable it instead gets a
 *placement-only* session: no username, and it reaches only `/placement`,
 `/placement/device`, `GET /api/v1/auth/me`, `/api/v1/placement/me*`, the

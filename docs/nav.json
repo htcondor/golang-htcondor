@@ -1,0 +1,148 @@
+{
+  "guides": [
+    {
+      "audience": "user",
+      "title": "User guide",
+      "pages": [
+        {
+          "path": "user/index.md",
+          "url": "/docs/user",
+          "title": "User guide",
+          "audience": "user",
+          "order": 10
+        }
+      ]
+    },
+    {
+      "audience": "operator",
+      "title": "Operator guide",
+      "pages": [
+        {
+          "path": "operator/index.md",
+          "url": "/docs/operator",
+          "title": "HTTP API + MCP server",
+          "audience": "operator",
+          "order": 10
+        },
+        {
+          "path": "operator/auth.md",
+          "url": "/docs/operator/auth",
+          "title": "Authentication and authorization",
+          "audience": "operator",
+          "order": 20
+        },
+        {
+          "path": "operator/config.md",
+          "url": "/docs/operator/config",
+          "title": "Configuration reference",
+          "audience": "operator",
+          "order": 30
+        },
+        {
+          "path": "operator/networking.md",
+          "url": "/docs/operator/networking",
+          "title": "Reaching jobs behind CCB",
+          "audience": "operator",
+          "order": 40
+        },
+        {
+          "path": "operator/agents.md",
+          "url": "/docs/operator/agents",
+          "title": "Agents: MCP, site skills and the chat assistant",
+          "audience": "operator",
+          "order": 50
+        },
+        {
+          "path": "operator/interactive.md",
+          "url": "/docs/operator/interactive",
+          "title": "Interactive sessions and apps",
+          "audience": "operator",
+          "order": 60
+        },
+        {
+          "path": "operator/ssh-gateway.md",
+          "url": "/docs/operator/ssh-gateway",
+          "title": "SSH gateway",
+          "audience": "operator",
+          "order": 70
+        },
+        {
+          "path": "operator/site-apps.md",
+          "url": "/docs/operator/site-apps",
+          "title": "Site apps",
+          "audience": "operator",
+          "order": 80
+        },
+        {
+          "path": "operator/branding.md",
+          "url": "/docs/operator/branding",
+          "title": "Web UI branding",
+          "audience": "operator",
+          "order": 90
+        },
+        {
+          "path": "operator/placement.md",
+          "url": "/docs/operator/placement",
+          "title": "Placement",
+          "audience": "operator",
+          "order": 100
+        },
+        {
+          "path": "operator/reservations.md",
+          "url": "/docs/operator/reservations",
+          "title": "Reservations",
+          "audience": "operator",
+          "order": 110
+        },
+        {
+          "path": "operator/estimates.md",
+          "url": "/docs/operator/estimates",
+          "title": "Runtime and drain estimates",
+          "audience": "operator",
+          "order": 120
+        },
+        {
+          "path": "operator/metrics.md",
+          "url": "/docs/operator/metrics",
+          "title": "Metrics and usage statistics",
+          "audience": "operator",
+          "order": 130
+        },
+        {
+          "path": "operator/webhooks.md",
+          "url": "/docs/operator/webhooks",
+          "title": "Outbound webhooks",
+          "audience": "operator",
+          "order": 140
+        },
+        {
+          "path": "operator/multi-ap.md",
+          "url": "/docs/operator/multi-ap",
+          "title": "Multi-AP mode",
+          "audience": "operator",
+          "order": 150
+        }
+      ]
+    },
+    {
+      "audience": "developer",
+      "title": "Developer and API reference",
+      "pages": [
+        {
+          "path": "developer/library.md",
+          "url": "/docs/developer/library",
+          "title": "Go library reference",
+          "audience": "developer",
+          "order": 10
+        },
+        {
+          "path": "developer/api.md",
+          "url": "/docs/developer/api",
+          "title": "API surface",
+          "audience": "developer",
+          "order": 20
+        }
+      ]
+    }
+  ]
+}
