@@ -94,7 +94,8 @@ func (m *Manager) listAdsOn(ctx context.Context, caller Caller, ap, name string)
 		// the pattern needs no escaping.
 		batchClause = fmt.Sprintf("regexp(%q, JobBatchName)", "^"+SessionBatchPrefix)
 	}
-	constraint := fmt.Sprintf(`Owner == %q && %s && %s`, caller.Owner, liveSessionClause, batchClause)
+	constraint := fmt.Sprintf(`Owner == %s && %s && %s`,
+		htcondor.QuoteClassAdString(caller.Owner), liveSessionClause, batchClause)
 
 	ads, _, err := schedd.QueryWithOptions(ctx, constraint, &htcondor.QueryOptions{
 		Projection: sessionAdAttrs,
@@ -796,7 +797,8 @@ func (m *Manager) removeJob(ctx context.Context, caller Caller, ap string, clust
 	}
 	m.wrote(ap)
 	defer m.wrote(ap)
-	constraint := fmt.Sprintf(`ClusterId == %d && ProcId == %d && Owner == %q`, cluster, proc, caller.Owner)
+	constraint := fmt.Sprintf(`ClusterId == %d && ProcId == %d && Owner == %s`,
+		cluster, proc, htcondor.QuoteClassAdString(caller.Owner))
 	if _, err := schedd.RemoveJobs(ctx, constraint, reason); err != nil {
 		m.log().Warn(m.opts.LogDest, "interactive session condor_rm failed",
 			"owner", caller.Owner, "job_id", m.jobID(ap, cluster, proc), "error", err)
