@@ -2,9 +2,10 @@
 
 ## Status
 
-In progress. Stages 1a and 1b are built, and stage 2 has begun; the
-rest is planned. Each stage below is meant to land on its own and be useful
-before the next one starts.
+In progress. Stages 1a and 1b are built, stage 2 is most of the way
+through its conversion, and stage 3 is done out of order because it
+depended on nothing. Each stage below is meant to land on its own and
+be useful before the next one starts.
 
 Stage 1a, as built: `docs/` is three audience directories, every page
 carries `title`/`audience`/`order` front matter, `docs/nav.json` is
@@ -19,6 +20,65 @@ be folded into the HTCondor manual rather than rewritten for it.
 
 The starting point is not the README. It is `docs/`, which already holds
 6,018 lines of good prose that nothing renders and nothing links to.
+
+## What the conversion turned up
+
+Stage 2 is the stage that touches code rather than prose, and most of
+what it found was not in this note's reasoning. Recorded because each
+one is a trap for the next person converting a setting.
+
+**A knob had to be readable through an interface, not a Config.** The
+first consumer outside `main.go` was `webapi/connectors`, which takes a
+narrow `Params` interface rather than the whole `*config.Config`, so
+`Get(*Config)` did not compile against it. `Get` takes a
+`config.Source` now. Reporting a malformed value needs more than that
+interface, so it is an unexported method only `*Config` implements.
+
+**A new primitive guessing at semantics the old code had pinned down is
+the real risk of a mechanical migration.** `ParseList` split on
+whitespace as well as commas, because that looked like a reasonable
+reading of "a list". `splitList`, which it replaced, splits on commas
+only, and every setting of that shape is documented as
+comma-separated -- so the conversion would have silently turned
+`HTTP_API_PICKERS = my picker` into two choosers. The same class caught
+`BoolKnob`, which fell back to the default for a value like `falsey`
+while `Config.GetBool` resolves it to `false`, following
+`param_boolean`. Both are now checked against the thing they replace
+rather than against what seemed sensible.
+
+**The comma-or-space prediction came true immediately.** OAuth2 scopes
+are space-delimited by RFC 6749 and read with `strings.Fields`, so they
+needed `WordsKnob`. The note said "a setting documented as
+comma-or-space needs a kind of its own"; it was the next setting
+converted.
+
+**Reading a value is not enough; some callers need to know it was
+set.** Connector and site-app settings overlay a shipped definition,
+where an absent list keeps the shipped one and an explicitly empty list
+means none. Every kind gained `Lookup`.
+
+**Two size parsers disagree, which blocks a conversion that looks
+trivial.** `HTTP_API_SPOOL_MAX_UPLOAD_BYTES` is the `BytesKnob` case
+the note describes, but `spool.ParseSize` requires the number first and
+so rejects a negative, while `config.ParseBytes` parses one and then
+rejects it as non-positive. Swapping them would change which
+configurations are accepted. They have to be reconciled first.
+
+**Declaring a reload scope found three places where the daemon and the
+documentation disagreed.** The TLS certificate and key were declared
+`reconfig` and are read at startup; the connector and picker
+enumerating parameters were generated as `startup` and are re-read
+wholesale on every reconfigure; and eight declared settings appeared in
+`reconfigParams` nowhere at all, which by that file's own reasoning
+means a change to them does nothing and nothing says so. A test now
+checks the declaration against the table in both directions.
+
+**The cheap drift test is weaker than this note first claimed.**
+`HTTP_API_SPOOL_BUFFER_DIR` is read in exactly one place,
+`runDemoMode`, so a check that matches parameter names against the code
+passes on it while the ordinary server ignores the setting entirely. A
+name-matching test is still worth having, but it is not a substitute
+for the registry; it cannot see where the name is read.
 
 ## The problem
 
@@ -442,8 +502,21 @@ stock-knob generator from `param_info.in`; the lint, switched on
 per-directory. A grep-based drift test can ship on day one and retires
 when the lint covers everything.
 
-**3. OpenAPI out of the Go string, into a file, plus a rendered
-reference page.**
+**3. OpenAPI out of the Go string.** *Done, ahead of stage 2's
+completion, because it depended on nothing.* The document is
+`webapi/httpserver/openapi.json`, embedded with `go:embed`;
+`openapi.go` went from 5,953 lines to 230. What is served is unchanged,
+which was checked rather than assumed: the handler already re-encoded
+the document with sorted keys, so the old literal and the file have the
+same canonical encoding. Three checks came with it -- the document is
+OpenAPI-shaped, every internal `$ref` resolves, and the OAuth2 flow
+object is where `setOpenAPIOAuth2URLs` walks to find it, that last one
+being a silent no-op if any of those keys move.
+
+Still to do here: validating against the OpenAPI schema itself, a
+rendered reference page, and the check that the paths it declares are
+routes the server registers -- the one that would catch an endpoint
+added without documentation.
 
 **4. The user guide.** The genuinely missing audience. Everything before
 this exists to make writing it, and keeping it correct, cheap.
