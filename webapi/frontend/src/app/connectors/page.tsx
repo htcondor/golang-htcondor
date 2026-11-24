@@ -12,7 +12,7 @@
 //     somewhere else -- Drive and the like -- so a job can read or write
 //     files there. We hold the credential, which is why that section
 //     disconnects rather than deletes.
-//   - Your own machines over SSH. A certificate your laptop holds that
+//   - Connect over SSH. A certificate your laptop holds that
 //     lets it act as you here. The same direction as the first section
 //     -- something outside holding a credential for this account -- and
 //     a section of its own because the holder is not an app: nothing

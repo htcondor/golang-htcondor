@@ -47,7 +47,7 @@ test("no certificate authority means no panel at all", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Connectors" }).first(),
   ).toBeVisible();
-  await expect(page.getByText("Your own machines over SSH")).toHaveCount(0);
+  await expect(page.getByText("Connect over SSH")).toHaveCount(0);
   await expect(page.getByTestId("ssh-public-key")).toHaveCount(0);
   // And no error leaked onto the page in its place.
   await expect(page.locator("body")).not.toContainText("certificate authority");
@@ -104,7 +104,7 @@ test("a certificate can be issued for a pasted public key", async ({
   await loginAsAdmin(page, password);
   await page.goto("/connectors");
 
-  await expect(page.getByText("Your own machines over SSH")).toBeVisible();
+  await expect(page.getByText("Connect over SSH")).toBeVisible();
   // Step 1 gives the user something to trust.
   await expect(page.locator("body")).toContainText(CA.known_hosts_line);
   await expect(page.locator("body")).toContainText(CA.fingerprint);
