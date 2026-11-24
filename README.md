@@ -9,14 +9,14 @@ metrics — plus two long-running servers built on top of it.
 - **Go library** (`github.com/htcondor/golang-htcondor`) — idiomatic
   Go bindings mirroring the HTCondor Python bindings. Submit jobs,
   query the schedd/collector, transfer files, build sandboxes,
-  collect pool metrics. See [docs/library.md](docs/library.md).
+  collect pool metrics. See [docs/developer/library.md](docs/developer/library.md).
 - **`htcondor-api`** — RESTful HTTP API server with a bundled SPA,
   OAuth2/OIDC support, API-key auth, an embedded IDP, admin UI, and
   an LLM-powered chat assistant. Runs standalone, under
-  `condor_master`, or in Docker. See [docs/server.md](docs/server.md).
+  `condor_master`, or in Docker. See [docs/operator/index.md](docs/operator/index.md).
 - **`htcondor-mcp`** — [Model Context Protocol](https://modelcontextprotocol.io/)
   server that exposes the same engine to LLM agents (Claude Code,
-  etc.) over stdio. See [docs/server.md](docs/server.md).
+  etc.) over stdio. See [docs/operator/index.md](docs/operator/index.md).
 
 ## Install
 
@@ -50,7 +50,7 @@ ads, _, err := collector.QueryAdsWithOptions(ctx, "ScheddAd", "",
     &htcondor.QueryOptions{Limit: 50})
 ```
 
-More: [docs/library.md](docs/library.md).
+More: [docs/developer/library.md](docs/developer/library.md).
 
 **HTTP server** — start a demo pool and the API in a temp directory
 (needs HTCondor on `PATH`, but no configured pool):
@@ -63,12 +63,12 @@ The SPA, admin UI, and chat assistant are served at
 `https://localhost:8080`. The first-time `admin` credentials are
 printed to stdout.
 
-More: [docs/server.md](docs/server.md).
+More: [docs/operator/index.md](docs/operator/index.md).
 
 ## Documentation
 
-- [docs/library.md](docs/library.md) — using the Go library
-- [docs/server.md](docs/server.md) — running the HTTP API + MCP server
+- [docs/developer/library.md](docs/developer/library.md) — using the Go library
+- [docs/operator/index.md](docs/operator/index.md) — running the HTTP API + MCP server
 - [webapi/httpserver/README.md](webapi/httpserver/README.md) — full HTTP API reference
 - [webapi/mcpserver/README.md](webapi/mcpserver/README.md) — MCP tool catalog
 - [design_notes/SECURITY_CONFIG.md](design_notes/SECURITY_CONFIG.md) — operator security guide

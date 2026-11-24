@@ -68,7 +68,7 @@ func writeSelfSignedCert(t *testing.T, dir string) (certPath, keyPath string, po
 }
 
 // TestHTCondorAPIServesTLSOverSharedPort stands up the real htcondor-api binary
-// as a condor_master-managed daemon configured exactly like docs/server.md's
+// as a condor_master-managed daemon configured exactly like docs/operator/index.md's
 // 50-htcondor-api.conf (DC_DAEMON_LIST=+HTTP_API, a fixed -sock endpoint name,
 // SHARED_PORT_HTTP_FORWARDING_ID), with TLS enabled. It then makes an HTTPS
 // request to the pool's single shared port and asserts that condor_shared_port

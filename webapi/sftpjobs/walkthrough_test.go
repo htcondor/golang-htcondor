@@ -28,7 +28,7 @@ import (
 // it. The examples are read out of the page rather than copied into
 // this file, so a change to either side that leaves them disagreeing
 // fails here instead of wasting somebody's afternoon.
-const walkthroughDoc = "../../docs/sftp-job-submit.md"
+const walkthroughDoc = "../../docs/user/sftp-job-submit.md"
 
 func readWalkthrough(t *testing.T) string {
 	t.Helper()

@@ -1,9 +1,15 @@
+---
+title: Submitting jobs over SFTP
+audience: user
+order: 30
+---
+
 # Submitting jobs over SFTP
 
 A walkthrough of the `+jobs` file service: how to send work to an access
 point with nothing but an SFTP client, and how to get the output back.
 The service itself, and how an administrator turns it on, is described in
-[SSH gateway](server-ssh-gateway.md); this page is the user's side of it,
+[SSH gateway](../operator/ssh-gateway.md); this page is the user's side of it,
 start to finish.
 
 You need no account on the access point, no HTCondor installed locally, and
@@ -36,7 +42,7 @@ and press Enter. The username `+jobs` carries no identity — the browser
 approval does — so it is the same for everybody. For scripts and cron jobs,
 where nobody is there to approve, get a certificate instead: see
 [Certificates, for scripts and for not approving every
-connection](server-ssh-gateway.md#certificates-for-scripts-and-for-not-approving-every-connection).
+connection](ssh.md#certificates-for-scripts-and-for-not-approving-every-connection).
 
 What you land in is not a shell. It is a small tree:
 
@@ -421,7 +427,7 @@ catalog, your own saved templates, and any another user shared. Not every
 template that works on the web **Submit** page can be driven by a dropped CSV;
 where one cannot, its `README` says so at the top, before the columns. The
 reasons are in [Which templates can be used
-here](server-ssh-gateway.md#which-templates-can-be-used-here).
+here](files.md#which-templates-can-be-used-here).
 
 Every job carries `SFTPJobTemplate = "<id>"`, so `condor_q -af
 SFTPJobTemplate` says which template a cluster came from.

@@ -1,8 +1,14 @@
+---
+title: Reaching jobs behind CCB
+audience: operator
+order: 40
+---
+
 # Reaching jobs behind CCB
 
 What it takes for this server to open a connection *into* a running job
 when the execute nodes are firewalled. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 Anything that reaches *into* a running job — a shell, `tail_job_output`,
 `exec_in_job`, an interactive session — connects to the starter on the execute
