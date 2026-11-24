@@ -1,8 +1,14 @@
+---
+title: Metrics and usage statistics
+audience: operator
+order: 130
+---
+
 # Metrics and usage statistics
 
 What this server counts, where the numbers are kept, and what ends up on
 a scrapeable endpoint. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 `GET /metrics` is Prometheus exposition. It requires an API key carrying
 the `metrics` scope unless `HTTP_API_METRICS_PUBLIC = true`.

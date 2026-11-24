@@ -226,6 +226,16 @@ fmt: ## Format code with gofmt
 	@echo "Formatting code..."
 	gofmt -s -w .
 
+.PHONY: docs-nav
+docs-nav: ## Regenerate docs/nav.json from the documentation tree
+	@echo "Generating docs/nav.json..."
+	go run ./internal/docsmeta/cmd/docsnav
+
+.PHONY: docs-check
+docs-check: ## Validate docs front matter, links and nav.json
+	@echo "Checking documentation tree..."
+	go test ./internal/docsmeta/
+
 .PHONY: knobs
 knobs: ## Regenerate webapi/knobs/knobs_gen.go from knobs.yaml
 	@echo "Generating webapi/knobs/knobs_gen.go..."

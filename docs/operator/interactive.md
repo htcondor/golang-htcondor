@@ -1,8 +1,14 @@
+---
+title: Interactive sessions and apps
+audience: operator
+order: 60
+---
+
 # Interactive sessions and apps
 
 Browser terminals, JupyterLab and VS Code are ordinary HTCondor jobs
 reached through this server. Part of the
-[HTTP API + MCP server](server.md) documentation.
+[HTTP API + MCP server](index.md) documentation.
 
 ## Sites that forbid condor_ssh_to_job
 
@@ -79,7 +85,7 @@ session can still be found.
 
 A terminal session has three front doors — the web console, the MCP
 `interactive_session_start` tool, and `ssh` to the
-[gateway](server-ssh-gateway.md), which makes one for a user who has none —
+[gateway](ssh-gateway.md), which makes one for a user who has none —
 and `HTTP_API_INTERACTIVE_TERMINAL` closes all three, because they are
 one thing: a long-lived job the caller runs commands in. A site that turns terminals off because its policy forbids
 interactive shells, and then finds an agent starting them, has been
@@ -88,7 +94,7 @@ withdrawn on each: `interactive_session_list`, `_exec` and `_stop` keep
 working on a session that already exists, and `ssh` still attaches to
 one — and to any job, as `ssh 12345.0@gateway` always did. Tools a site
 wants gone for other reasons remain
-[`HTTP_API_MCP_DISABLED_TOOLS`](server-agents.md#disabling-tools)'
+[`HTTP_API_MCP_DISABLED_TOOLS`](agents.md#disabling-tools)'
 business.
 
 All three are applied on SIGHUP (or `condor_reconfig`). Restarting the
@@ -167,7 +173,7 @@ sessions off machines where attaching to them cannot work.
 A JupyterLab session is a job too, started from **Interactive** in the
 web UI or with `POST /api/v1/jupyter/instances`, and reached through a
 tunnel the job dials back. Four knobs bound its life; the full text of
-each is in [Configuration](server-config.md).
+each is in [Configuration](config.md).
 
 | Knob | Default | Purpose |
 | --- | --- | --- |

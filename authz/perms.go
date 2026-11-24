@@ -36,14 +36,6 @@ var configNext = map[Perm]Perm{
 	// PermDefault terminates the chain (no entry).
 }
 
-// configNextLegacy is where DCpermissionHierarchy::aConfigNextLegacy, the
-// order before recommended_v90 security, differs from configNext: DAEMON
-// falls back to WRITE before DEFAULT. LEGACY_ALLOW_SEMANTICS (which use
-// SECURITY:HOST_BASED sets) selects it.
-var configNextLegacy = map[Perm]Perm{
-	PermDaemon: PermWrite,
-}
-
 // impliedNext is DCpermissionHierarchy::aImpliedNext: the next-lower permission a
 // granted permission implies (granting DAEMON implies WRITE implies READ, etc.).
 var impliedNext = map[Perm]Perm{
@@ -70,17 +62,23 @@ func directlyImpliedBy(perm Perm) []Perm {
 	return out
 }
 
-// ConfigChain returns perm followed by the levels whose settings it falls
+// FallbackChain returns perm followed by the levels whose settings it falls
 // back to, ending at DEFAULT: DCpermissionHierarchy::nextConfig, as
 // SecMan::getSecSetting walks it to resolve SEC_<perm>_*, ALLOW_<perm> and
-// DENY_<perm>. legacy selects the order LEGACY_ALLOW_SEMANTICS restores.
-func ConfigChain(perm Perm, legacy bool) []Perm {
+// DENY_<perm>.
+//
+// Only the modern order exists here. HTCondor also carries
+// aConfigNextLegacy, selected by LEGACY_ALLOW_SEMANTICS, in which DAEMON
+// falls back to WRITE instead of DEFAULT -- the 8.8 behaviour, kept to ease
+// upgrades to 9.0. The 8.8 series took its last release (8.8.17) in March
+// 2022 and has been unsupported since; the knob is a migration aid for a
+// migration that is over, and upstream's own documentation calls the
+// behaviour "a potential security concern". This implementation does not
+// offer it. See ConfigChain for what that means for a caller that asked.
+func FallbackChain(perm Perm) []Perm {
 	chain := []Perm{perm}
 	for perm != PermDefault {
 		next, ok := configNext[perm]
-		if l, lok := configNextLegacy[perm]; legacy && lok {
-			next, ok = l, true
-		}
 		if !ok {
 			next = PermDefault
 		}
@@ -89,3 +87,12 @@ func ConfigChain(perm Perm, legacy bool) []Perm {
 	}
 	return chain
 }
+
+// ConfigChain is FallbackChain, ignoring legacy.
+//
+// Deprecated: the LEGACY_ALLOW_SEMANTICS order is no longer implemented, so
+// the legacy argument has no effect and a caller passing true now gets the
+// modern chain -- DAEMON falls back to DEFAULT rather than to WRITE. That is
+// the removal, not an oversight: it makes a DAEMON request resolve through
+// ALLOW_DEFAULT where 8.8 resolved it through ALLOW_WRITE. Use FallbackChain.
+func ConfigChain(perm Perm, _ bool) []Perm { return FallbackChain(perm) }

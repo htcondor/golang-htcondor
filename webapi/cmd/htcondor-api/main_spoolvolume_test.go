@@ -57,7 +57,7 @@ func TestLoadSpoolMaxUploadBytesCannotBeTurnedOff(t *testing.T) {
 }
 
 // The knob's documented default has to be the one the code actually
-// uses, or docs/server-config.md is telling operators a different
+// uses, or docs/operator/config.md is telling operators a different
 // number than the server enforces.
 func TestDocumentedSpoolDefaultMatchesTheCode(t *testing.T) {
 	documented, err := spool.ParseSize("1000M")
@@ -65,7 +65,7 @@ func TestDocumentedSpoolDefaultMatchesTheCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := spool.DefaultLimits().MaxVolume; got != documented {
-		t.Errorf("docs/server-config.md says the default is 1000M (%d bytes), "+
+		t.Errorf("docs/operator/config.md says the default is 1000M (%d bytes), "+
 			"but spool.DefaultLimits().MaxVolume is %d", documented, got)
 	}
 }
