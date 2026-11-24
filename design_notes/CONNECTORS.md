@@ -984,12 +984,30 @@ Same rule as the spool path, for the same reason: a list snapshotted at
 submit time catches an operator changing policy and misses a user being
 removed from the group, which is the half that matters for taking access
 away. With no session, membership comes from the system
-(`liveGroupsFor`). When a connector restricts by group and nothing can
-report membership, the binding is refused rather than swept — an
-operator who confined a connector to a group meant it, and a background
-worker that ignores the confinement whenever it cannot check is the
-failure they would most want not to have. A connector open to everyone
-(`*`) asks no question, so most deployments never reach the refusal.
+(`liveGroupsFor`).
+
+**The case that needed deciding is the one where nothing can report
+membership.** This refused at first, on the argument that an operator who
+confined a connector to a group meant it. The round-trip integration
+test showed what that costs: `liveGroupsFor` answers only when this
+machine sources groups *and* the identity is inside `UID_DOMAIN`, so on
+an access point whose groups come from an identity provider — which is
+most of them — the sweep would never run at all, for anybody, and would
+say so once per binding per pass for ten days. The feature would be
+configured, enabled, and silently inert.
+
+So the rule is: a check that **can** be made is made, and a user who has
+genuinely lost membership is refused. A check that **cannot** be made
+proceeds and logs that it could not be made. "Could not ask" is not
+evidence of removal, and what is allowed through is narrow — one tab,
+for one cluster, nominated by a session that did pass the check, for as
+long as that cluster stays in the queue. A deployment that sources
+groups locally still gets revocation; one that does not gets the
+feature. A connector open to everyone (`*`) asks no question at all.
+
+The decision is `connectorStillPermitted`, separated from the lookup so
+all four cases have tests: still a member, no longer a member, in no
+groups at all (a real answer, and a refusal), and nothing could say.
 
 ### Appending at most once
 
@@ -1102,11 +1120,38 @@ A spreadsheet with several tabs never has the first picked silently.
 Results would go to a tab nobody chose and the submission would look
 entirely normal.
 
+### What the round trip proves
+
+`TestResultsReachTheSpreadsheetIntegration` submits with a nominated
+spreadsheet, lets two real jobs run to completion on the harness's
+startd, sweeps, and reads the rows back. Three things only a real schedd
+can show, each of which a unit test can be wrong about and still pass:
+
+- a job's declared results file is where the sweep looks for it, which
+  depends on spooled output landing somewhere `ReceiveJobSandbox` reads;
+- a completed job is **still in the queue** when the sweep asks, which
+  depends on `SubmitRemote`'s `LeaveJobInQueue` and would fail silently
+  if that ever changed;
+- a token minted for the job's *owner*, rather than this daemon's own
+  credential, is accepted by the schedd for both the query and the
+  sandbox read.
+
+The header row is deliberately in an order the jobs do not use, with a
+column no job produces, so appending fields in emission order fails.
+
+The at-most-once check **re-nominates the destination** rather than
+sweeping twice. Sweeping again after the first pass retired the binding
+would be vacuous — there would be nothing open to sweep, and the test
+would pass whether or not the accounting worked. Putting the binding
+back gives the sweep the same cluster with both jobs already recorded,
+which is the state a crash between appending and marking would leave.
+
 ### Still open
 
-- **`checkSheetDestination` is covered only by its refusals.** The
-  happy path needs the mock provider and a session, which means the
-  integration fixture rather than a unit test.
-- **No end-to-end test of the whole round trip** — submit with an
-  output sheet, let the jobs finish, sweep, and read the rows back.
-  Every piece is covered on its own; the seam between them is not.
+- **Multi-AP output.** The sweep refuses to run there, and the reason is
+  structural rather than an oversight: there is no way for background
+  work to hold a caller credential for another access point. Giving
+  multi-AP this feature means answering that question first.
+- **A results file per proc.** `job_file` is one name for the whole
+  cluster, so a submission whose jobs write `out_$(sample).json` cannot
+  be bound. The macro warning says so rather than supporting it.

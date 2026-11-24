@@ -231,3 +231,95 @@ func adMatches(expr *classad.Expr, ad *classad.ClassAd) bool {
 	v, err := expr.Eval(ad).BoolValue()
 	return err == nil && v
 }
+
+// Whether a binding may still spend its credential, given what could be
+// learned about its owner's groups.
+//
+// The interesting case is the last one. Refusing when nothing can
+// answer was the first implementation, and the integration test showed
+// what it costs: liveGroupsFor answers only when this machine sources
+// groups AND the identity is in UID_DOMAIN, so an access point whose
+// groups come from an identity provider would never sweep anything, for
+// anybody. A check that can be made is still made.
+func TestConnectorStillPermitted(t *testing.T) {
+	restricted := connectors.Definition{
+		ID:     connectors.MustParse("builtin:gdrive"),
+		Groups: []string{"lab"},
+	}
+	open := connectors.Definition{
+		ID:     connectors.MustParse("builtin:gdrive"),
+		Groups: []string{"*"},
+	}
+
+	for _, tc := range []struct {
+		name     string
+		def      connectors.Definition
+		groups   []string
+		answered bool
+		want     bool
+		note     string
+	}{
+		{
+			name: "open to everyone asks nothing",
+			def:  open, groups: nil, answered: false,
+			want: true, note: "",
+		},
+		{
+			name: "still a member",
+			def:  restricted, groups: []string{"lab", "other"}, answered: true,
+			want: true, note: "",
+		},
+		{
+			// The half that matters: a snapshot taken at submit time
+			// would still say yes here.
+			name: "no longer a member",
+			def:  restricted, groups: []string{"other"}, answered: true,
+			want: false, note: "no longer in a group",
+		},
+		{
+			name: "in no groups at all is a real answer",
+			def:  restricted, groups: nil, answered: true,
+			want: false, note: "no longer in a group",
+		},
+		{
+			// "Could not ask" is not evidence of removal.
+			name: "nothing could report membership",
+			def:  restricted, groups: nil, answered: false,
+			want: true, note: "cannot read the owner's membership",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			allowed, note := connectorStillPermitted(tc.def, tc.groups, tc.answered)
+			if allowed != tc.want {
+				t.Errorf("allowed = %v, want %v (note %q)", allowed, tc.want, note)
+			}
+			if tc.note == "" {
+				if note != "" {
+					t.Errorf("note = %q, want none", note)
+				}
+				return
+			}
+			if !strings.Contains(note, tc.note) {
+				t.Errorf("note = %q, want it to mention %q", note, tc.note)
+			}
+		})
+	}
+}
+
+// A connector open to everyone is not asked about groups at all, so a
+// deployment that configures none never pays for a lookup.
+func TestConnectorGroupCheckNeeded(t *testing.T) {
+	id := connectors.MustParse("builtin:gdrive")
+	if connectorGroupCheckNeeded(connectors.Definition{ID: id, Groups: []string{"*"}}) {
+		t.Error("a wildcard connector asked about groups")
+	}
+	if !connectorGroupCheckNeeded(connectors.Definition{ID: id, Groups: []string{"lab"}}) {
+		t.Error("a restricted connector did not ask about groups")
+	}
+	// Permits returns false for an empty group list, so a connector
+	// with none configured is usable by nobody -- and the check has to
+	// happen for that to be what occurs.
+	if !connectorGroupCheckNeeded(connectors.Definition{ID: id}) {
+		t.Error("a connector with no groups skipped the check, so it would be usable by anyone")
+	}
+}
