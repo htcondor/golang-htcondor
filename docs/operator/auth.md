@@ -1,7 +1,13 @@
+---
+title: Authentication and authorization
+audience: operator
+order: 20
+---
+
 # Authentication and authorization
 
 Who may reach this server, who the server thinks they are, and what they
-may do once they are in. Part of the [HTTP API + MCP server](server.md)
+may do once they are in. Part of the [HTTP API + MCP server](index.md)
 documentation.
 
 ## Authentication
@@ -158,7 +164,7 @@ list of strategies; the first to answer wins.
 
 | Knob | Default | Effect |
 | --- | --- | --- |
-| `HTTP_API_IDENTITY_MAP` | unset (no mapping) | Comma-separated strategy list, e.g. `gecos,username`. `gecos` matches the token subject against accounts' GECOS names; `username` treats the subject as a login name; `placementd` asks condor_placementd (see [placementd as an identity mapping](server-placement.md#placementd-as-an-identity-mapping)). An unparseable list makes the server refuse to start rather than fall back to an unmapped identity. |
+| `HTTP_API_IDENTITY_MAP` | unset (no mapping) | Comma-separated strategy list, e.g. `gecos,username`. `gecos` matches the token subject against accounts' GECOS names; `username` treats the subject as a login name; `placementd` asks condor_placementd (see [placementd as an identity mapping](placement.md#placementd-as-an-identity-mapping)). An unparseable list makes the server refuse to start rather than fall back to an unmapped identity. |
 | `HTTP_API_IDENTITY_MAP_PASSWD_FILE` | system default | Read accounts from this file instead of `/etc/passwd`. Both the index and the re-check use it, so it is self-consistent. |
 | `HTTP_API_IDENTITY_MAP_TTL` | `5m` | How long the account index and group answers are reused. The index is rebuilt lazily on the first login after it expires. |
 | `HTTP_API_IDENTITY_MAP_STRIP_DOMAIN` | `false` | Also try the local part of a scoped subject: `bockelman@wisc.edu` matches a GECOS of `bockelman`. The full subject is tried first, so this only ever adds a fallback. |
@@ -245,7 +251,7 @@ directory is consulted by design.
 
 Where a mapping does fail, the refusal says which failure it was. With
 placement onboarding enabled the person is given a
-[placement-only session](server-placement.md) instead of a refusal page,
+[placement-only session](placement.md) instead of a refusal page,
 and the cause is then only in the log, on the
 `Created a placement-only session` line's `reason` field.
 

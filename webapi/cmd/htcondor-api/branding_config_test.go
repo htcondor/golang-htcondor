@@ -8,7 +8,7 @@ import (
 
 // The footer band is a JSON array in an HTCondor configuration file,
 // which is an awkward pairing: this is the documented way to write one
-// (docs/server.md, "Web UI branding"), read through the same parser the
+// (docs/operator/index.md, "Web UI branding"), read through the same parser the
 // daemon uses, and handed to the same parser the daemon hands it to.
 // A config-parser change that broke the form the documentation tells
 // operators to use would otherwise be found by an operator.
