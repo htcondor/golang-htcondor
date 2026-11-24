@@ -147,7 +147,7 @@ func TestDuplicateResponseNamesTheHoldingJob(t *testing.T) {
 // bug.
 func TestOpenAPIDocumentsTheIdempotencyKey(t *testing.T) {
 	var doc map[string]any
-	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+	if err := json.Unmarshal(openAPISchema, &doc); err != nil {
 		t.Fatalf("the OpenAPI schema is not valid JSON: %v", err)
 	}
 	paths, ok := doc["paths"].(map[string]any)

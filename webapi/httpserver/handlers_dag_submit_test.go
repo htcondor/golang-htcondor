@@ -380,7 +380,7 @@ func opaqueNames(fs []dagman.OpaqueFile) []string {
 // no documentation, because a generator stops on it.
 func TestOpenAPIDocumentsDagSubmit(t *testing.T) {
 	var doc map[string]any
-	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+	if err := json.Unmarshal(openAPISchema, &doc); err != nil {
 		t.Fatalf("the OpenAPI document is not valid JSON: %v", err)
 	}
 	paths, _ := doc["paths"].(map[string]any)

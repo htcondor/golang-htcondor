@@ -205,7 +205,7 @@ func TestBulkRuntimeEstimatesIsARead(t *testing.T) {
 	var doc struct {
 		Paths map[string]json.RawMessage `json:"paths"`
 	}
-	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+	if err := json.Unmarshal(openAPISchema, &doc); err != nil {
 		t.Fatalf("openapi does not parse: %v", err)
 	}
 	if _, ok := doc.Paths["/jobs/runtime-estimates"]; !ok {

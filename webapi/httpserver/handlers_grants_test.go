@@ -299,7 +299,7 @@ func TestGrantsAreDocumented(t *testing.T) {
 			Schemas map[string]json.RawMessage `json:"schemas"`
 		} `json:"components"`
 	}
-	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+	if err := json.Unmarshal(openAPISchema, &doc); err != nil {
 		t.Fatalf("openapi does not parse: %v", err)
 	}
 	for _, path := range []string{"/oauth2/grants", "/oauth2/grants/revoke"} {

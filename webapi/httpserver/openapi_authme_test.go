@@ -11,7 +11,7 @@ import (
 func specDoc(t *testing.T) map[string]any {
 	t.Helper()
 	var doc map[string]any
-	if err := json.Unmarshal([]byte(openAPISchema), &doc); err != nil {
+	if err := json.Unmarshal(openAPISchema, &doc); err != nil {
 		t.Fatalf("the OpenAPI document is not valid JSON: %v", err)
 	}
 	return doc
