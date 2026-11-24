@@ -153,3 +153,32 @@ func TestTreeNavManifestIsCurrent(t *testing.T) {
 		t.Error("docs/nav.json is out of date; run `make docs-nav`")
 	}
 }
+
+// The packaging manifest ships the documentation tree, and a page it
+// leaves out is a broken link in the installed copy. This is the check
+// that was missing: the manifest fell behind twice -- it shipped 13 of
+// 17 pages before the tree was reorganised, and it missed the pages a
+// later split added, both times silently.
+func TestTreeIsShippedByThePackage(t *testing.T) {
+	const manifest = "../../packaging/nfpm.yaml"
+	b, err := os.ReadFile(manifest) //nolint:gosec // G304: a fixed path in this repo
+	if err != nil {
+		t.Skipf("no packaging manifest: %v", err)
+	}
+	shipped := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if rel, ok := strings.CutPrefix(line, "- src: docs/"); ok {
+			shipped[strings.TrimSpace(rel)] = true
+		}
+	}
+	for _, p := range loadTree(t) {
+		if !shipped[p.Path] {
+			t.Errorf("%s is not shipped by %s; an installed page would link to a file that is not there",
+				p.Path, manifest)
+		}
+	}
+	if !shipped["README.md"] {
+		t.Errorf("docs/README.md is not shipped by %s", manifest)
+	}
+}

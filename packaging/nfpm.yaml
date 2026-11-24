@@ -150,6 +150,24 @@ contents:
     file_info:
       mode: 0644
 
+  - src: docs/user/ssh.md
+    dst: /usr/share/doc/htcondor-api/user/ssh.md
+    type: doc
+    file_info:
+      mode: 0644
+
+  - src: docs/user/sftp-job-submit.md
+    dst: /usr/share/doc/htcondor-api/user/sftp-job-submit.md
+    type: doc
+    file_info:
+      mode: 0644
+
+  - src: docs/user/files.md
+    dst: /usr/share/doc/htcondor-api/user/files.md
+    type: doc
+    file_info:
+      mode: 0644
+
   - src: docs/README.md
     dst: /usr/share/doc/htcondor-api/README.md
     type: doc

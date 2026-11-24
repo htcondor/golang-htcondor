@@ -400,8 +400,16 @@ func (h *Handler) setupRoutes() {
 
 	// Batch-submission templates: built-in + global + user-saved.
 	// Catch-all so handleTemplates can split on the trailing /{id}.
-	mux.Handle("/api/v1/templates", cors(http.HandlerFunc(h.handleTemplates)))
-	mux.Handle("/api/v1/templates/", cors(http.HandlerFunc(h.handleTemplates)))
+	// Behind requireCondorScope like the other credential-authorized
+	// routes: POST and DELETE here are writes, and handleTemplates itself
+	// checks only that the caller is authenticated, so without this a
+	// read-scoped key or an mcp:read grant could save and delete
+	// templates. Unlike /api/v1/share/* (the ?t= token is the
+	// authorization), /api/v1/integrations and /api/v1/webhooks (session
+	// -gated inside their handlers) and /api/v1/placement/ (admin-gated
+	// inside), nothing else stands in front of these.
+	mux.Handle("/api/v1/templates", cors(h.requireCondorScope(http.HandlerFunc(h.handleTemplates))))
+	mux.Handle("/api/v1/templates/", cors(h.requireCondorScope(http.HandlerFunc(h.handleTemplates))))
 
 	// Chat endpoint (LLM-backed assistant for the jobs view). The
 	// handlers themselves return 503 when the chat engine isn't

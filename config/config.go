@@ -24,12 +24,11 @@ package config
 //go:generate go run ../param/generate.go
 
 import (
-	"context"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -878,19 +877,22 @@ func detectMemorySyscall() int {
 	return 0
 }
 
-// detectMemorySysctl uses sysctl to get memory on BSD-like systems
+// detectMemorySysctl gets memory from sysctl on BSD-like systems. See
+// sysctlMemoryBytes: this asks the kernel directly rather than running
+// sysctl(8), so it cannot block.
 func detectMemorySysctl() int {
-	cmd := exec.CommandContext(context.Background(), "sysctl", "-n", "hw.memsize")
-	output, err := cmd.Output()
-	if err != nil {
+	n, ok := sysctlMemoryBytes()
+	if !ok {
 		return 0
 	}
-	bytes, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
-	if err != nil {
-		return 0
+	// Convert bytes to MiB. Clamped because the result is an int: a 32-bit
+	// build cannot hold the MiB count of a machine with more than 2 PiB,
+	// and reporting math.MaxInt beats wrapping to a negative.
+	mib := n / (1024 * 1024)
+	if mib > math.MaxInt {
+		return math.MaxInt
 	}
-	// Convert bytes to MiB
-	return int(bytes / (1024 * 1024))
+	return int(mib)
 }
 
 // htcondorArch maps a uname machine name as sysapi_condor_arch does.
