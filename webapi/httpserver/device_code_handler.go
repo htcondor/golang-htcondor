@@ -160,7 +160,10 @@ func (h *DeviceCodeHandler) HandleDeviceAccessRequest(ctx context.Context, devic
 			return nil, err // Return as-is for proper error response
 		}
 		if errors.Is(err, ErrExpiredToken) {
-			return nil, fosite.ErrInvalidGrant.WithDebug("Device code expired")
+			// As-is, like the two branches above: the caller turns it into
+			// RFC 8628's expired_token, which tells the client to start a
+			// new device authorization rather than to stop.
+			return nil, err
 		}
 		return nil, err
 	}
