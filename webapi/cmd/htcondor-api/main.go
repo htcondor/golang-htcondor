@@ -618,9 +618,9 @@ func loadKEKFilePath(cfg *config.Config, logger *logging.Logger) string {
 // /var/lib/condor location as a final fallback.
 func loadDBPath(cfg *config.Config, logger *logging.Logger) string {
 	dbPath, hasDBPath := cfg.Get("HTTP_API_DB_PATH")
-	legacy, hasLegacy := cfg.Get("HTTP_API_OAUTH2_DB_PATH")
+	legacy := knobs.OAuth2DBPath.Get(cfg)
 
-	if hasLegacy && legacy != "" && (!hasDBPath || dbPath == "") && logger != nil {
+	if legacy != "" && (!hasDBPath || dbPath == "") && logger != nil {
 		logger.Warn(logging.DestinationHTTP,
 			"HTTP_API_OAUTH2_DB_PATH is deprecated and ignored; the unified application DB is HTTP_API_DB_PATH (default LOCAL_DIR/htcondor-api.db). The legacy oauth.db has a schema that conflicts with the unified migration, so it cannot be reused as-is — rename the file or set HTTP_API_DB_PATH explicitly to opt in to a manual migration.",
 			"legacy_path", legacy,
@@ -1116,7 +1116,7 @@ func loadHTTPBaseURL(cfg *config.Config, listenAddr string, useTLS bool) string 
 
 // loadOAuth2Issuer loads OAuth2 issuer from config or constructs it
 func loadOAuth2Issuer(cfg *config.Config, listenAddrFromConfig string) string {
-	if issuer, ok := cfg.Get("HTTP_API_OAUTH2_ISSUER"); ok && issuer != "" {
+	if issuer := knobs.OAuth2Issuer.Get(cfg); issuer != "" {
 		return issuer
 	}
 
@@ -1126,8 +1126,8 @@ func loadOAuth2Issuer(cfg *config.Config, listenAddrFromConfig string) string {
 
 // loadOAuth2ClientSecret loads OAuth2 client secret from file
 func loadOAuth2ClientSecret(cfg *config.Config, logger *logging.Logger) string {
-	secretFile, ok := cfg.Get("HTTP_API_OAUTH2_CLIENT_SECRET_FILE")
-	if !ok || secretFile == "" {
+	secretFile := knobs.OAuth2ClientSecretFile.Get(cfg)
+	if secretFile == "" {
 		return ""
 	}
 
@@ -1148,7 +1148,7 @@ func loadOAuth2ClientSecret(cfg *config.Config, logger *logging.Logger) string {
 // loadOAuth2Endpoints loads OAuth2 auth, token, and userinfo URLs via OIDC discovery or explicit config
 func loadOAuth2Endpoints(cfg *config.Config, logger *logging.Logger) (authURL, tokenURL, userInfoURL string) {
 	// Check for OIDC discovery first
-	if idpURL, ok := cfg.Get("HTTP_API_OAUTH2_IDP"); ok && idpURL != "" {
+	if idpURL := knobs.OAuth2IDP.Get(cfg); idpURL != "" {
 		logger.Info(logging.DestinationHTTP, "Attempting OIDC discovery", "url", idpURL)
 		auth, token, userInfo, err := discoverOIDCEndpoints(idpURL)
 		if err == nil {
@@ -1162,15 +1162,9 @@ func loadOAuth2Endpoints(cfg *config.Config, logger *logging.Logger) (authURL, t
 	}
 
 	// Fall back to explicit URLs
-	if auth, ok := cfg.Get("HTTP_API_OAUTH2_AUTH_URL"); ok && auth != "" {
-		authURL = auth
-	}
-	if token, ok := cfg.Get("HTTP_API_OAUTH2_TOKEN_URL"); ok && token != "" {
-		tokenURL = token
-	}
-	if userInfo, ok := cfg.Get("HTTP_API_OAUTH2_USERINFO_URL"); ok && userInfo != "" {
-		userInfoURL = userInfo
-	}
+	authURL = knobs.OAuth2AuthURL.Get(cfg)
+	tokenURL = knobs.OAuth2TokenURL.Get(cfg)
+	userInfoURL = knobs.OAuth2UserinfoURL.Get(cfg)
 
 	return authURL, tokenURL, userInfoURL
 }
@@ -1179,7 +1173,7 @@ func loadOAuth2Endpoints(cfg *config.Config, logger *logging.Logger) (authURL, t
 // callbackPath is the path this server advertises for its callback
 // (httpserver.OAuth2CallbackPath).
 func loadOAuth2RedirectURL(cfg *config.Config, issuer, callbackPath string, logger *logging.Logger) string {
-	if redirectURL, ok := cfg.Get("HTTP_API_OAUTH2_REDIRECT_URL"); ok && redirectURL != "" {
+	if redirectURL := knobs.OAuth2RedirectURL.Get(cfg); redirectURL != "" {
 		return redirectURL
 	}
 
@@ -1195,13 +1189,9 @@ func loadOAuth2RedirectURL(cfg *config.Config, issuer, callbackPath string, logg
 // loadOAuth2Scopes loads OAuth2 scopes from config
 // Format: HTTP_API_OAUTH2_SCOPES = openid profile email org.cilogon.userinfo
 func loadOAuth2Scopes(cfg *config.Config, logger *logging.Logger) []string {
-	if scopesStr, ok := cfg.Get("HTTP_API_OAUTH2_SCOPES"); ok && scopesStr != "" {
-		// Split by whitespace
-		scopes := strings.Fields(scopesStr)
-		if len(scopes) > 0 {
-			logger.Info(logging.DestinationHTTP, "OAuth2 scopes from config", "scopes", scopes)
-			return scopes
-		}
+	if scopes := knobs.OAuth2Scopes.Get(cfg); len(scopes) > 0 {
+		logger.Info(logging.DestinationHTTP, "OAuth2 scopes from config", "scopes", scopes)
+		return scopes
 	}
 	return nil // Will use defaults
 }
@@ -1600,23 +1590,23 @@ func reservationStampBudget(cfg *config.Config) int {
 	return n
 }
 
-// oauth2SettingNames are the settings whose presence means an operator
+// oauth2Settings are the settings whose presence means an operator
 // meant this server to log people in through an identity provider.
-var oauth2SettingNames = []string{
-	"HTTP_API_OAUTH2_ISSUER",
-	"HTTP_API_OAUTH2_IDP",
-	"HTTP_API_OAUTH2_CLIENT_ID",
-	"HTTP_API_OAUTH2_AUTH_URL",
-	"HTTP_API_OAUTH2_TOKEN_URL",
+var oauth2Settings = []config.StringKnob{
+	knobs.OAuth2Issuer,
+	knobs.OAuth2IDP,
+	knobs.OAuth2ClientID,
+	knobs.OAuth2AuthURL,
+	knobs.OAuth2TokenURL,
 }
 
 // configuredOAuth2Settings returns the OAuth2 settings this configuration
-// gives a value, in the order of oauth2SettingNames.
+// gives a value, in the order of oauth2Settings.
 func configuredOAuth2Settings(cfg *config.Config) []string {
 	var configured []string
-	for _, name := range oauth2SettingNames {
-		if v, ok := cfg.Get(name); ok && strings.TrimSpace(v) != "" {
-			configured = append(configured, name)
+	for _, k := range oauth2Settings {
+		if v, ok := k.Lookup(cfg); ok && v != "" {
+			configured = append(configured, k.Name())
 		}
 	}
 	return configured
@@ -1667,7 +1657,7 @@ func loadOAuth2Config(cfg *config.Config, config *mcpConfig, listenAddrFromConfi
 	logger.Info(logging.DestinationHTTP, "OAuth2 issuer", "issuer", config.oauth2Issuer)
 
 	// Load OAuth2 client ID
-	if clientID, ok := cfg.Get("HTTP_API_OAUTH2_CLIENT_ID"); ok && clientID != "" {
+	if clientID := knobs.OAuth2ClientID.Get(cfg); clientID != "" {
 		config.oauth2ClientID = clientID
 	}
 
@@ -1691,10 +1681,7 @@ func loadOAuth2Config(cfg *config.Config, config *mcpConfig, listenAddrFromConfi
 	config.oauth2Scopes = loadOAuth2Scopes(cfg, logger)
 
 	// Load groups claim name (default: "groups")
-	config.oauth2GroupsClaim = "groups"
-	if groupsClaim, ok := cfg.Get("HTTP_API_OAUTH2_GROUPS_CLAIM"); ok && groupsClaim != "" {
-		config.oauth2GroupsClaim = groupsClaim
-	}
+	config.oauth2GroupsClaim = knobs.OAuth2GroupsClaim.Get(cfg)
 	logger.Info(logging.DestinationHTTP, "OAuth2 groups claim", "claim", config.oauth2GroupsClaim)
 
 	// Identity mapping: the provider's subject is not always the name of
@@ -1706,13 +1693,13 @@ func loadOAuth2Config(cfg *config.Config, config *mcpConfig, listenAddrFromConfi
 	// Login policy as a ClassAd expression over the token's claims. Parsed
 	// and validated in NewHandler, which refuses to start on a malformed
 	// one rather than letting it fail at the first login.
-	if v, ok := cfg.Get("HTTP_API_OAUTH2_REQUIREMENTS"); ok && strings.TrimSpace(v) != "" {
-		config.oauth2Requirements = strings.TrimSpace(v)
+	if v := knobs.OAuth2Requirements.Get(cfg); v != "" {
+		config.oauth2Requirements = v
 		logger.Info(logging.DestinationHTTP, "OAuth2 login requirements configured",
 			"requirements", config.oauth2Requirements)
 	}
 
-	if usernameClaim, ok := cfg.Get("HTTP_API_OAUTH2_USERNAME_CLAIM"); ok && usernameClaim != "" {
+	if usernameClaim := knobs.OAuth2UsernameClaim.Get(cfg); usernameClaim != "" {
 		config.oauth2UsernameClaim = usernameClaim
 		logger.Info(logging.DestinationHTTP, "OAuth2 username claim", "claim", usernameClaim)
 	}

@@ -334,6 +334,45 @@ func (k ListKnob) Lookup(c Source) ([]string, bool) {
 // Default is the value that applies when the setting is absent.
 func (k ListKnob) Default() []string { return append([]string(nil), k.def...) }
 
+// WordsKnob is a setting read as a whitespace-separated list. OAuth2
+// scopes are the case it exists for: RFC 6749 delimits them with
+// spaces, so a comma-separated reading would be wrong and a site
+// following the spec would get one scope with commas in it.
+type WordsKnob struct {
+	Knob
+	def []string
+}
+
+// DefineWords declares a whitespace-separated list setting. For
+// generated knob tables.
+func DefineWords(name string, def []string, scope Scope, doc string) WordsKnob {
+	return WordsKnob{Knob{name, doc, scope}, def}
+}
+
+// Get returns the configured words, or the default when unset.
+func (k WordsKnob) Get(c Source) []string {
+	v, ok := k.raw(c)
+	if !ok {
+		return append([]string(nil), k.def...)
+	}
+	out := strings.Fields(v)
+	if len(out) == 0 {
+		return append([]string(nil), k.def...)
+	}
+	return out
+}
+
+// Lookup is Get, and also reports whether the setting was present.
+func (k WordsKnob) Lookup(c Source) ([]string, bool) {
+	if _, found := k.raw(c); !found {
+		return append([]string(nil), k.def...), false
+	}
+	return k.Get(c), true
+}
+
+// Default is the value that applies when the setting is absent.
+func (k WordsKnob) Default() []string { return append([]string(nil), k.def...) }
+
 // ParseBytes reads a byte count with an optional unit suffix. Units are
 // powers of 1024: K, M, G, T, with an optional trailing B.
 func ParseBytes(s string) (int64, error) {

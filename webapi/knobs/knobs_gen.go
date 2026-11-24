@@ -15,6 +15,106 @@ import (
 var IdleTimeout = config.DefineDuration("HTTP_API_IDLE_TIMEOUT", time.Duration(120000000000) /* 120s */, config.Startup,
 	"How long a keep-alive connection may sit idle before the server closes it, as a Go duration.")
 
+// OAuth2AuthURL is HTTP_API_OAUTH2_AUTH_URL.
+//
+// The provider's authorization endpoint, used when discovery is not
+// configured or did not answer.
+var OAuth2AuthURL = config.DefineString("HTTP_API_OAUTH2_AUTH_URL", "", config.Startup,
+	"The provider's authorization endpoint, used when discovery is not configured or did not answer.")
+
+// OAuth2ClientID is HTTP_API_OAUTH2_CLIENT_ID.
+//
+// The client id this server registered with that identity provider.
+var OAuth2ClientID = config.DefineString("HTTP_API_OAUTH2_CLIENT_ID", "", config.Startup,
+	"The client id this server registered with that identity provider.")
+
+// OAuth2ClientSecretFile is HTTP_API_OAUTH2_CLIENT_SECRET_FILE.
+//
+// File holding the client secret for that registration. Read as root
+// where the ordinary read is denied, since a secret staged on an
+// access point is usually root-owned and this daemon has dropped
+// privilege by then. An unreadable file is a warning and no secret,
+// not a refusal to start.
+var OAuth2ClientSecretFile = config.DefineString("HTTP_API_OAUTH2_CLIENT_SECRET_FILE", "", config.Startup,
+	"File holding the client secret for that registration. Read as root where the ordinary read is denied, since a secret staged on an access point is usually root-owned and this daemon has dropped privilege by then. An unreadable file is a warning and no secret, not a refusal to start.")
+
+// OAuth2DBPath is HTTP_API_OAUTH2_DB_PATH.
+//
+// Deprecated and ignored. The application database is
+// HTTP_API_DB_PATH; the legacy oauth.db schema conflicts with the
+// unified migration, so setting this is reported and has no effect.
+var OAuth2DBPath = config.DefineString("HTTP_API_OAUTH2_DB_PATH", "", config.Startup,
+	"Deprecated and ignored. The application database is HTTP_API_DB_PATH; the legacy oauth.db schema conflicts with the unified migration, so setting this is reported and has no effect.")
+
+// OAuth2GroupsClaim is HTTP_API_OAUTH2_GROUPS_CLAIM.
+//
+// Which claim in the token carries the user's groups, for the settings
+// that gate access on group membership.
+var OAuth2GroupsClaim = config.DefineString("HTTP_API_OAUTH2_GROUPS_CLAIM", "groups", config.Startup,
+	"Which claim in the token carries the user's groups, for the settings that gate access on group membership.")
+
+// OAuth2IDP is HTTP_API_OAUTH2_IDP.
+//
+// An external identity provider to sign users in through, as the base
+// URL of its OIDC discovery document. Discovery supplies the
+// authorization, token and userinfo endpoints; the explicit
+// HTTP_API_OAUTH2_*_URL settings are the fallback when it fails, which
+// is logged as a warning rather than refused.
+var OAuth2IDP = config.DefineString("HTTP_API_OAUTH2_IDP", "", config.Startup,
+	"An external identity provider to sign users in through, as the base URL of its OIDC discovery document. Discovery supplies the authorization, token and userinfo endpoints; the explicit HTTP_API_OAUTH2_*_URL settings are the fallback when it fails, which is logged as a warning rather than refused.")
+
+// OAuth2Issuer is HTTP_API_OAUTH2_ISSUER.
+//
+// The issuer this server names in its own OAuth2 documents. Unset, it
+// is derived from the externally-visible URL, assuming https.
+var OAuth2Issuer = config.DefineString("HTTP_API_OAUTH2_ISSUER", "", config.Startup,
+	"The issuer this server names in its own OAuth2 documents. Unset, it is derived from the externally-visible URL, assuming https.")
+
+// OAuth2RedirectURL is HTTP_API_OAUTH2_REDIRECT_URL.
+//
+// Where the provider sends the user back to. Unset, it is the issuer
+// followed by this server's callback path, which is the right answer
+// whenever the issuer is how users reach it.
+var OAuth2RedirectURL = config.DefineString("HTTP_API_OAUTH2_REDIRECT_URL", "", config.Startup,
+	"Where the provider sends the user back to. Unset, it is the issuer followed by this server's callback path, which is the right answer whenever the issuer is how users reach it.")
+
+// OAuth2Requirements is HTTP_API_OAUTH2_REQUIREMENTS.
+//
+// Login policy as a ClassAd expression over the token's claims. It is
+// parsed at startup and a malformed one stops the server, rather than
+// failing at somebody's first login.
+var OAuth2Requirements = config.DefineString("HTTP_API_OAUTH2_REQUIREMENTS", "", config.Startup,
+	"Login policy as a ClassAd expression over the token's claims. It is parsed at startup and a malformed one stops the server, rather than failing at somebody's first login.")
+
+// OAuth2Scopes is HTTP_API_OAUTH2_SCOPES.
+//
+// Scopes requested at sign-in, space separated as RFC 6749 writes
+// them, e.g. "openid profile email org.cilogon.userinfo". Unset uses
+// the built-in defaults.
+var OAuth2Scopes = config.DefineWords("HTTP_API_OAUTH2_SCOPES", nil, config.Startup,
+	"Scopes requested at sign-in, space separated as RFC 6749 writes them, e.g. \"openid profile email org.cilogon.userinfo\". Unset uses the built-in defaults.")
+
+// OAuth2TokenURL is HTTP_API_OAUTH2_TOKEN_URL.
+//
+// The provider's token endpoint, used when discovery is not configured
+// or did not answer.
+var OAuth2TokenURL = config.DefineString("HTTP_API_OAUTH2_TOKEN_URL", "", config.Startup,
+	"The provider's token endpoint, used when discovery is not configured or did not answer.")
+
+// OAuth2UserinfoURL is HTTP_API_OAUTH2_USERINFO_URL.
+//
+// The provider's userinfo endpoint, used when discovery is not
+// configured or did not answer.
+var OAuth2UserinfoURL = config.DefineString("HTTP_API_OAUTH2_USERINFO_URL", "", config.Startup,
+	"The provider's userinfo endpoint, used when discovery is not configured or did not answer.")
+
+// OAuth2UsernameClaim is HTTP_API_OAUTH2_USERNAME_CLAIM.
+//
+// Which claim names the account that owns the jobs, where the
+// provider's subject is not it.
+var OAuth2UsernameClaim = config.DefineString("HTTP_API_OAUTH2_USERNAME_CLAIM", "", config.Startup,
+	"Which claim names the account that owns the jobs, where the provider's subject is not it.")
+
 // ReadTimeout is HTTP_API_READ_TIMEOUT.
 //
 // How long a request may take to arrive in full, as a Go duration. A
@@ -286,6 +386,19 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 // for tests that check the table against the code.
 var All = []config.Knob{
 	IdleTimeout.Knob,
+	OAuth2AuthURL.Knob,
+	OAuth2ClientID.Knob,
+	OAuth2ClientSecretFile.Knob,
+	OAuth2DBPath.Knob,
+	OAuth2GroupsClaim.Knob,
+	OAuth2IDP.Knob,
+	OAuth2Issuer.Knob,
+	OAuth2RedirectURL.Knob,
+	OAuth2Requirements.Knob,
+	OAuth2Scopes.Knob,
+	OAuth2TokenURL.Knob,
+	OAuth2UserinfoURL.Knob,
+	OAuth2UsernameClaim.Knob,
 	ReadTimeout.Knob,
 	TLSCACert.Knob,
 	TLSCert.Knob,

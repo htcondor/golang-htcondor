@@ -292,3 +292,21 @@ func TestKnobLookupReportsPresence(t *testing.T) {
 		t.Errorf("absent list: %q, %v; want absent and the default", v, ok)
 	}
 }
+
+// OAuth2 scopes are space-delimited by RFC 6749, so reading them as a
+// comma-separated list would give one scope with commas in it.
+func TestWordsKnobSplitsOnWhitespace(t *testing.T) {
+	c := knobConfig(t, map[string]string{"W": "openid profile  email\torg.cilogon.userinfo"})
+	got := DefineWords("W", nil, Startup, "").Get(c)
+	if len(got) != 4 || got[0] != "openid" || got[3] != "org.cilogon.userinfo" {
+		t.Errorf("words = %q", got)
+	}
+	// A comma is part of a word here, not a separator -- which is what
+	// makes this a different kind from ListKnob.
+	if got := DefineWords("W", nil, Startup, "").Get(knobConfig(t, map[string]string{"W": "a,b"})); len(got) != 1 {
+		t.Errorf("words = %q, want one word", got)
+	}
+	if got := DefineWords("W", []string{"d"}, Startup, "").Get(knobConfig(t, nil)); len(got) != 1 || got[0] != "d" {
+		t.Errorf("default = %q", got)
+	}
+}

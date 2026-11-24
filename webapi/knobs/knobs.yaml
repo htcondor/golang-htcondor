@@ -68,6 +68,120 @@ knobs:
       How long a keep-alive connection may sit idle before the server
       closes it, as a Go duration.
 
+  - name: HTTP_API_OAUTH2_ISSUER
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The issuer this server names in its own OAuth2 documents. Unset,
+      it is derived from the externally-visible URL, assuming https.
+
+  - name: HTTP_API_OAUTH2_IDP
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      An external identity provider to sign users in through, as the
+      base URL of its OIDC discovery document. Discovery supplies the
+      authorization, token and userinfo endpoints; the explicit
+      HTTP_API_OAUTH2_*_URL settings are the fallback when it fails,
+      which is logged as a warning rather than refused.
+
+  - name: HTTP_API_OAUTH2_CLIENT_ID
+    type: string
+    default: ""
+    scope: startup
+    doc: The client id this server registered with that identity provider.
+
+  - name: HTTP_API_OAUTH2_CLIENT_SECRET_FILE
+    type: string
+    default: ""
+    scope: startup
+    secret: true
+    doc: >
+      File holding the client secret for that registration. Read as
+      root where the ordinary read is denied, since a secret staged on
+      an access point is usually root-owned and this daemon has dropped
+      privilege by then. An unreadable file is a warning and no secret,
+      not a refusal to start.
+
+  - name: HTTP_API_OAUTH2_AUTH_URL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The provider's authorization endpoint, used when discovery is not
+      configured or did not answer.
+
+  - name: HTTP_API_OAUTH2_TOKEN_URL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The provider's token endpoint, used when discovery is not
+      configured or did not answer.
+
+  - name: HTTP_API_OAUTH2_USERINFO_URL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The provider's userinfo endpoint, used when discovery is not
+      configured or did not answer.
+
+  - name: HTTP_API_OAUTH2_REDIRECT_URL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Where the provider sends the user back to. Unset, it is the
+      issuer followed by this server's callback path, which is the
+      right answer whenever the issuer is how users reach it.
+
+  - name: HTTP_API_OAUTH2_SCOPES
+    type: words
+    default: ""
+    scope: startup
+    doc: >
+      Scopes requested at sign-in, space separated as RFC 6749 writes
+      them, e.g. "openid profile email org.cilogon.userinfo". Unset
+      uses the built-in defaults.
+
+  - name: HTTP_API_OAUTH2_GROUPS_CLAIM
+    type: string
+    default: groups
+    scope: startup
+    doc: >
+      Which claim in the token carries the user's groups, for the
+      settings that gate access on group membership.
+
+  - name: HTTP_API_OAUTH2_USERNAME_CLAIM
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Which claim names the account that owns the jobs, where the
+      provider's subject is not it.
+
+  - name: HTTP_API_OAUTH2_REQUIREMENTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Login policy as a ClassAd expression over the token's claims. It
+      is parsed at startup and a malformed one stops the server, rather
+      than failing at somebody's first login.
+
+  - name: HTTP_API_OAUTH2_DB_PATH
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Deprecated and ignored. The application database is
+      HTTP_API_DB_PATH; the legacy oauth.db schema conflicts with the
+      unified migration, so setting this is reported and has no effect.
+
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

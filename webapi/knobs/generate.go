@@ -266,6 +266,16 @@ func literal(k knob) (def, ctor string, err error) {
 			return "", "", fmt.Errorf("%s: %q is not a size: %w", k.Name, k.Default, perr)
 		}
 		return fmt.Sprintf("%d /* %s */", n, k.Default), "DefineBytes", nil
+	case "words":
+		items := strings.Fields(k.Default)
+		if len(items) == 0 {
+			return "nil", "DefineWords", nil
+		}
+		var q []string
+		for _, w := range items {
+			q = append(q, fmt.Sprintf("%q", w))
+		}
+		return "[]string{" + strings.Join(q, ", ") + "}", "DefineWords", nil
 	case "list":
 		items, perr := config.ParseList(k.Default)
 		if perr != nil {
@@ -297,6 +307,8 @@ func knobType(kind string) string {
 		return "BytesKnob"
 	case "list":
 		return "ListKnob"
+	case "words":
+		return "WordsKnob"
 	}
 	return ""
 }
