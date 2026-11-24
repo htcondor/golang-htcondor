@@ -25,7 +25,10 @@ type knob struct {
 	Default string `yaml:"default"`
 	Scope   string `yaml:"scope"`
 	Doc     string `yaml:"doc"`
-	Secret  bool   `yaml:"secret"`
+	// Secret marks a setting that names or holds a credential. It is
+	// appended to the documentation, so the reference says so without
+	// each paragraph having to remember to.
+	Secret bool `yaml:"secret"`
 }
 
 // family is a group of settings repeated per named instance, with the
@@ -127,11 +130,12 @@ func Render(knobs []knob, families []family) ([]byte, error) {
 			scope = "config.Reconfig"
 		}
 		fmt.Fprintf(&b, "// %s is %s.\n//\n", ident, k.Name)
-		for _, line := range wrap(strings.Join(strings.Fields(k.Doc), " "), 68) {
+		doc := docText(k)
+		for _, line := range wrap(doc, 68) {
 			fmt.Fprintf(&b, "// %s\n", line)
 		}
 		fmt.Fprintf(&b, "var %s = config.%s(%q, %s, %s,\n\t%q)\n\n",
-			ident, ctor, k.Name, def, scope, strings.Join(strings.Fields(k.Doc), " "))
+			ident, ctor, k.Name, def, scope, doc)
 	}
 
 	for _, f := range families {
@@ -224,7 +228,7 @@ func renderFamily(b *bytes.Buffer, f family) error {
 			scope = "config.Reconfig"
 		}
 		method := Identifier("HTTP_API_" + k.Name)
-		sdoc := strings.Join(strings.Fields(k.Doc), " ")
+		sdoc := docText(k)
 		fmt.Fprintf(b, "// %s is %s%s_%s.\n//\n", method, f.Prefix, "<instance>", k.Name)
 		for _, line := range wrap(sdoc, 68) {
 			fmt.Fprintf(b, "// %s\n", line)
@@ -248,6 +252,17 @@ func validateSetting(f family, k knob) error {
 		return fmt.Errorf("%s/%s: scope must be startup or reconfig, not %q", f.Family, k.Name, k.Scope)
 	}
 	return nil
+}
+
+// docText is the documentation as the reference prints it: the
+// paragraph from the table, with a sentence added for a setting that
+// holds a credential.
+func docText(k knob) string {
+	doc := strings.Join(strings.Fields(k.Doc), " ")
+	if k.Secret {
+		doc += " Holds or names a credential: keep it readable only by the account the server runs as."
+	}
+	return doc
 }
 
 func validate(k knob) error {

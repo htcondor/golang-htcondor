@@ -91,3 +91,41 @@ func TestEveryKnobIsDocumented(t *testing.T) {
 		}
 	}
 }
+
+// A flag in the table that nothing consumes is a declaration with no
+// effect, which is the defect this table exists to prevent. secret:
+// true must reach what an operator reads.
+func TestSecretSettingsSaySo(t *testing.T) {
+	const marker = "Holds or names a credential"
+	spec, err := os.ReadFile("knobs.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSecret := strings.Count(string(spec), "secret: true")
+	if wantSecret == 0 {
+		t.Skip("no setting is marked secret")
+	}
+
+	var got int
+	for _, k := range knobs.All {
+		if strings.Contains(k.Doc(), marker) {
+			got++
+		}
+	}
+	// Family settings are not in All, so count only the plain ones and
+	// require at least one to carry the sentence; the generated file is
+	// what proves the rest.
+	if got == 0 {
+		t.Errorf("%d settings are marked secret: true and none of knobs.All says so", wantSecret)
+	}
+	gen, err := os.ReadFile("knobs_gen.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Twice per setting: once in the doc comment, once in the string
+	// handed to Define.
+	if n := strings.Count(string(gen), marker); n != wantSecret*2 {
+		t.Errorf("the marker appears %d times for %d secret settings; want %d",
+			n, wantSecret, wantSecret*2)
+	}
+}
