@@ -213,11 +213,21 @@ func userRecordFromAd(ad *classad.ClassAd) UserRecord {
 	return rec
 }
 
-// classadQuoteString renders s as a ClassAd string literal for use inside a
+// QuoteClassAdString renders s as a ClassAd string literal for use inside a
 // constraint expression.
-func classadQuoteString(s string) string {
+//
+// Exported because callers outside this package build constraints too, and the
+// alternative they reach for is fmt.Sprintf("%q"), which emits a GO string
+// literal: %q escapes a non-ASCII rune as \u00e9 and a control byte as \x01,
+// neither of which ClassAd's old-format parser reads back as the original
+// character. A constraint built that way silently matches nothing.
+func QuoteClassAdString(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
+
+// classadQuoteString is QuoteClassAdString under the name this package's own
+// callers already use.
+func classadQuoteString(s string) string { return QuoteClassAdString(s) }
 
 // UserRecordKind selects which of the schedd's two record types a command
 // acts on.
