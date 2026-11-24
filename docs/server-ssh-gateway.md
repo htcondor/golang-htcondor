@@ -76,7 +76,9 @@ waiting for and how long it has been waiting. Ctrl-C stops waiting; it does
 
 `ssh +jobs@gateway` is not a shell — it serves your finished jobs' output over
 SFTP, and takes work in the same way, so any client you already have reaches
-it:
+it. What follows is the reference; for a user walking the whole thing once —
+write a job, pack it, drop it, read the receipt, fetch the output — see
+[Submitting jobs over SFTP](sftp-job-submit.md):
 
 ```sh
 sftp -P 2222 +jobs@ap.example.edu
@@ -230,7 +232,7 @@ matters for exactly the case that produces them: `sftp -b` and `scp` close the
 channel when the command ends, so the answer is read by a later session. They
 are held in memory for a week, so a restart of the API server forgets them;
 the durable record of what was submitted is the cluster itself, which carries
-the template and the content digest as job attributes.
+the template it came from as `SFTPJobTemplate`.
 
 Values are refused rather than altered: a value containing `$`, `))`, a comma,
 a line break, or a row that is blank or starts with `#` is rejected naming the
@@ -293,7 +295,8 @@ SFTPJobTemplate` says which template a cluster came from.
 
 A template answers "run this known work over my data". `/submit/` answers the
 other half: you have a submit description and the files it names, and you want
-them run.
+them run. [Submitting jobs over SFTP](sftp-job-submit.md) walks a first one
+through step by step; this section is what it is doing.
 
 Put a submit description called `job.sub`, and every file it needs, in one
 archive, and drop the archive in:

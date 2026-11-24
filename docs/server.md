@@ -24,6 +24,7 @@ configured server. Each larger feature has a page of its own:
 | [Configuration reference](server-config.md) | Every `HTTP_API_*` setting |
 | [API surface](server-api.md) | Endpoint groupings and example calls |
 | [SSH gateway](server-ssh-gateway.md) | An SSH port that drops users into their jobs |
+| [Submitting jobs over SFTP](sftp-job-submit.md) | A user's walkthrough of the `+jobs` service: submit work and fetch output with an SFTP client |
 | [Interactive sessions and apps](server-interactive.md) | JupyterLab and VS Code sessions |
 | [Agents: MCP, site skills, chat](server-agents.md) | Enabling MCP, publishing site documentation to agents, the chat assistant |
 | [Metrics and usage statistics](server-metrics.md) | `/metrics`, what is counted, the admin Usage page |
