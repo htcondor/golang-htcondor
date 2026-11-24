@@ -445,6 +445,13 @@ func performDeviceCodeFlow(config *TokenFetchConfig) (*TokenInfo, error) {
 			tokenData.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 			tokenData.Set("device_code", deviceResp.DeviceCode)
 			tokenData.Set("client_id", config.ClientID)
+			// Dynamic registration hands back a secret even for a client
+			// that asked for token_endpoint_auth_method "none", so send it
+			// when we have one. The server does not require it yet; sending
+			// it now is what lets it start to.
+			if config.ClientSecret != "" {
+				tokenData.Set("client_secret", config.ClientSecret)
+			}
 
 			tokenReq, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(tokenData.Encode()))
 			if err != nil {

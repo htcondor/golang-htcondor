@@ -145,19 +145,18 @@ func TestDeviceCodeHandler(t *testing.T) {
 			t.Fatalf("Failed to expire device code: %v", err)
 		}
 
-		// Try to use expired code - it should return wrapped ErrExpiredToken
+		// An expired code must surface as ErrExpiredToken, which the token
+		// endpoint reports as RFC 8628's expired_token: it tells the client
+		// to start a new device authorization, where invalid_grant tells it
+		// to stop. This assertion used to accept either error, which is how
+		// the handler came to rewrite one into the other unnoticed.
 		session := &fosite.DefaultSession{}
 		_, err = handler.HandleDeviceAccessRequest(ctx, resp.DeviceCode, session)
 		if err == nil {
-			t.Error("Expected error for expired device code, got nil")
+			t.Fatal("Expected error for expired device code, got nil")
 		}
-		// The error is wrapped with ErrInvalidGrant in the handler
-		if !errors.Is(err, fosite.ErrInvalidGrant) && !errors.Is(err, ErrExpiredToken) {
-			// Check if it's a wrapped error
-			var fositeErr *fosite.RFC6749Error
-			if !errors.As(err, &fositeErr) || fositeErr.ErrorField != "invalid_grant" {
-				t.Errorf("Expected invalid_grant error for expired token, got: %v (type: %T)", err, err)
-			}
+		if !errors.Is(err, ErrExpiredToken) {
+			t.Errorf("Expected ErrExpiredToken for an expired device code, got: %v (type: %T)", err, err)
 		}
 	})
 
