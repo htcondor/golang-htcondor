@@ -34,9 +34,10 @@ var OAuth2ClientID = config.DefineString("HTTP_API_OAUTH2_CLIENT_ID", "", config
 // where the ordinary read is denied, since a secret staged on an
 // access point is usually root-owned and this daemon has dropped
 // privilege by then. An unreadable file is a warning and no secret,
-// not a refusal to start.
+// not a refusal to start. Holds or names a credential: keep it
+// readable only by the account the server runs as.
 var OAuth2ClientSecretFile = config.DefineString("HTTP_API_OAUTH2_CLIENT_SECRET_FILE", "", config.Startup,
-	"File holding the client secret for that registration. Read as root where the ordinary read is denied, since a secret staged on an access point is usually root-owned and this daemon has dropped privilege by then. An unreadable file is a warning and no secret, not a refusal to start.")
+	"File holding the client secret for that registration. Read as root where the ordinary read is denied, since a secret staged on an access point is usually root-owned and this daemon has dropped privilege by then. An unreadable file is a warning and no secret, not a refusal to start. Holds or names a credential: keep it readable only by the account the server runs as.")
 
 // OAuth2DBPath is HTTP_API_OAUTH2_DB_PATH.
 //
@@ -198,10 +199,11 @@ func (s ConnectorSettings) ClientID() config.StringKnob {
 // ClientSecretFile is HTTP_API_CONNECTOR_<instance>_CLIENT_SECRET_FILE.
 //
 // File holding the OAuth2 client secret. A connector with no readable
-// secret is refused rather than offered.
+// secret is refused rather than offered. Holds or names a credential:
+// keep it readable only by the account the server runs as.
 func (s ConnectorSettings) ClientSecretFile() config.StringKnob {
 	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_CLIENT_SECRET_FILE", "", config.Startup,
-		"File holding the OAuth2 client secret. A connector with no readable secret is refused rather than offered.")
+		"File holding the OAuth2 client secret. A connector with no readable secret is refused rather than offered. Holds or names a credential: keep it readable only by the account the server runs as.")
 }
 
 // AuthorizationURL is HTTP_API_CONNECTOR_<instance>_AUTHORIZATION_URL.
@@ -298,10 +300,11 @@ func (s PickerSettings) Connector() config.StringKnob {
 // APIKey is HTTP_API_PICKER_<instance>_API_KEY.
 //
 // The provider's developer key, where its chooser needs one to run in
-// the browser.
+// the browser. Holds or names a credential: keep it readable only by
+// the account the server runs as.
 func (s PickerSettings) APIKey() config.StringKnob {
 	return config.DefineString("HTTP_API_PICKER_"+s.id+"_API_KEY", "", config.Startup,
-		"The provider's developer key, where its chooser needs one to run in the browser.")
+		"The provider's developer key, where its chooser needs one to run in the browser. Holds or names a credential: keep it readable only by the account the server runs as.")
 }
 
 // AppID is HTTP_API_PICKER_<instance>_APP_ID.
