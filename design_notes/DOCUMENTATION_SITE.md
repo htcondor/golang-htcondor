@@ -2,8 +2,8 @@
 
 ## Status
 
-In progress. Stage 1a (the content model) and the first half of stage 1b
-are built; the rest is planned. Each stage below is meant to land on its own and be useful
+In progress. Stages 1a and 1b are built, and stage 2 has begun; the
+rest is planned. Each stage below is meant to land on its own and be useful
 before the next one starts.
 
 Stage 1a, as built: `docs/` is three audience directories, every page
@@ -421,11 +421,14 @@ not a user what to do with it. There is no user-facing prose in it to
 move, so a user page about the chat assistant has to be written rather
 than extracted. That is stage 4.
 
-`multi-ap.md` is a different problem again, and not an audience one: 625
-lines carrying three headings and nineteen bold lead-ins, one of which
-needs an explicit `<a id>` to be linkable at all. It needs a structural
-pass -- deciding which lead-ins are sections -- which is its own change
-with its own review.
+`multi-ap.md` was a different problem again, and not an audience one:
+625 lines carrying three headings and nineteen bold lead-ins, one of
+which needed an explicit `<a id>` to be linkable at all. It now has
+twenty-nine headings; every lead-in that opened a paragraph is a
+section, grouped under six of them. The explicit anchor is gone, since
+`### Two hubs` slugs to the id it was standing in for. No prose moved:
+the only words that changed are a trailing period dropped from each
+label that became a heading.
 
 **2. Knob YAML, generated accessors, lint.** The largest stage and the
 one that pays for itself on landing: three real defects are waiting
