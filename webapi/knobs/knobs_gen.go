@@ -134,7 +134,7 @@ var SpoolBufferDir = config.DefineString("HTTP_API_SPOOL_BUFFER_DIR", "", config
 //
 // CA bundle used to verify client certificates. Unset asks for no
 // client certificate.
-var TLSCACert = config.DefineString("HTTP_API_TLS_CA_CERT", "", config.Reconfig,
+var TLSCACert = config.DefineString("HTTP_API_TLS_CA_CERT", "", config.Startup,
 	"CA bundle used to verify client certificates. Unset asks for no client certificate.")
 
 // TLSCert is HTTP_API_TLS_CERT.
@@ -142,14 +142,14 @@ var TLSCACert = config.DefineString("HTTP_API_TLS_CA_CERT", "", config.Reconfig,
 // PEM certificate for serving HTTPS directly, rather than behind a
 // terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables
 // TLS.
-var TLSCert = config.DefineString("HTTP_API_TLS_CERT", "", config.Reconfig,
+var TLSCert = config.DefineString("HTTP_API_TLS_CERT", "", config.Startup,
 	"PEM certificate for serving HTTPS directly, rather than behind a terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables TLS.")
 
 // TLSKey is HTTP_API_TLS_KEY.
 //
 // Private key for HTTP_API_TLS_CERT. Keep it readable only by the
 // account the server runs as.
-var TLSKey = config.DefineString("HTTP_API_TLS_KEY", "", config.Reconfig,
+var TLSKey = config.DefineString("HTTP_API_TLS_KEY", "", config.Startup,
 	"Private key for HTTP_API_TLS_CERT. Keep it readable only by the account the server runs as.")
 
 // WriteTimeout is HTTP_API_WRITE_TIMEOUT.
@@ -175,7 +175,7 @@ func Connector(instance string) ConnectorSettings {
 }
 
 // ConnectorInstances is the parameter naming every Connector that exists.
-var ConnectorInstances = config.DefineList("HTTP_API_CONNECTORS", nil, config.Startup,
+var ConnectorInstances = config.DefineList("HTTP_API_CONNECTORS", nil, config.Reconfig,
 	"Names the Connector instances that exist. An external account users may connect, so a job can read their files from it. HTTP_API_CONNECTORS names the connectors offered; each is configured by the settings below with its id folded in, e.g. HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS for builtin:gdrive.")
 
 // Kind is HTTP_API_CONNECTOR_<instance>_KIND.
@@ -274,7 +274,7 @@ func Picker(instance string) PickerSettings {
 }
 
 // PickerInstances is the parameter naming every Picker that exists.
-var PickerInstances = config.DefineList("HTTP_API_PICKERS", nil, config.Startup,
+var PickerInstances = config.DefineList("HTTP_API_PICKERS", nil, config.Reconfig,
 	"Names the Picker instances that exist. A file chooser the submit page offers, so a user can pick input files out of a connected account instead of uploading them. HTTP_API_PICKERS names the choosers that exist; a chooser is configured by the settings below with its name folded in, e.g. HTTP_API_PICKER_LAB_A_API_KEY for the chooser named lab-a.")
 
 // Provider is HTTP_API_PICKER_<instance>_PROVIDER.
@@ -390,8 +390,10 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 		"The icon shown beside the app's name.")
 }
 
-// All is every declared knob, for the configuration reference and
-// for tests that check the table against the code.
+// All is every declared knob -- the settings above and each family's
+// enumerating parameter -- for the configuration reference and for tests
+// that check the table against the code. A family's per-instance settings
+// are not here: they have no name until an instance does.
 var All = []config.Knob{
 	IdleTimeout.Knob,
 	OAuth2AuthURL.Knob,
@@ -413,4 +415,6 @@ var All = []config.Knob{
 	TLSCert.Knob,
 	TLSKey.Knob,
 	WriteTimeout.Knob,
+	ConnectorInstances.Knob,
+	PickerInstances.Knob,
 }

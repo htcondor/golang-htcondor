@@ -42,6 +42,12 @@ type family struct {
 	// anyway would put a setting in the reference that nothing reads,
 	// which is the defect this table exists to prevent.
 	EnumeratedByDir bool `yaml:"enumerated_by_dir"`
+	// EnumeratedScope is the reload scope of the enumerating parameter,
+	// which is not always the scope of the settings it enumerates:
+	// connector and picker definitions are re-read wholesale on every
+	// reconfigure, so adding one takes effect without a restart even
+	// though each setting is read when the definition is built.
+	EnumeratedScope string `yaml:"enumerated_scope"`
 }
 
 type file struct {
@@ -134,10 +140,20 @@ func Render(knobs []knob, families []family) ([]byte, error) {
 		}
 	}
 
-	fmt.Fprintf(&b, "// All is every declared knob, for the configuration reference and\n"+
-		"// for tests that check the table against the code.\nvar All = []config.Knob{\n")
+	// All carries the family enumerating knobs too: HTTP_API_CONNECTORS
+	// and HTTP_API_PICKERS are ordinary settings an operator sets, and
+	// leaving them out would leave them out of the reference.
+	fmt.Fprintf(&b, "// All is every declared knob -- the settings above and each family's\n"+
+		"// enumerating parameter -- for the configuration reference and for tests\n"+
+		"// that check the table against the code. A family's per-instance settings\n"+
+		"// are not here: they have no name until an instance does.\nvar All = []config.Knob{\n")
 	for _, k := range knobs {
 		fmt.Fprintf(&b, "\t%s.Knob,\n", Identifier(k.Name))
+	}
+	for _, f := range families {
+		if f.EnumeratedBy != "" {
+			fmt.Fprintf(&b, "\t%sInstances.Knob,\n", f.Family)
+		}
 	}
 	b.WriteString("}\n")
 
@@ -159,6 +175,9 @@ func renderFamily(b *bytes.Buffer, f family) error {
 			"come from somewhere other than a parameter", f.Family)
 	case f.EnumeratedBy != "" && f.EnumeratedByDir:
 		return fmt.Errorf("%s: enumerated_by and enumerated_by_dir are alternatives", f.Family)
+	case f.EnumeratedBy != "" && f.EnumeratedScope != "startup" && f.EnumeratedScope != "reconfig":
+		return fmt.Errorf("%s: enumerated_scope must be startup or reconfig, not %q",
+			f.Family, f.EnumeratedScope)
 	case len(f.Settings) == 0:
 		return fmt.Errorf("%s: no settings", f.Family)
 	case strings.TrimSpace(f.Doc) == "":
@@ -180,9 +199,13 @@ func renderFamily(b *bytes.Buffer, f family) error {
 		f.Family, f.Family, f.Family, typ, typ)
 
 	if f.EnumeratedBy != "" {
+		enumScope := "config.Startup"
+		if f.EnumeratedScope == "reconfig" {
+			enumScope = "config.Reconfig"
+		}
 		fmt.Fprintf(b, "// %sInstances is the parameter naming every %s that exists.\n"+
-			"var %sInstances = config.DefineList(%q, nil, config.Startup,\n\t%q)\n\n",
-			f.Family, f.Family, f.Family, f.EnumeratedBy,
+			"var %sInstances = config.DefineList(%q, nil, %s,\n\t%q)\n\n",
+			f.Family, f.Family, f.Family, f.EnumeratedBy, enumScope,
 			fmt.Sprintf("Names the %s instances that exist. %s", f.Family, doc))
 	}
 
