@@ -10,6 +10,20 @@
           "title": "User guide",
           "audience": "user",
           "order": 10
+        },
+        {
+          "path": "user/ssh.md",
+          "url": "/docs/user/ssh",
+          "title": "Shell access over SSH",
+          "audience": "user",
+          "order": 20
+        },
+        {
+          "path": "user/files.md",
+          "url": "/docs/user/files",
+          "title": "Files and jobs over SFTP",
+          "audience": "user",
+          "order": 30
         }
       ]
     },
