@@ -33,6 +33,8 @@ func TestRoutesReachingHTCondorAreScopeGated(t *testing.T) {
 		{http.MethodGet, "/api/v1/apps/", "queries the queue"},
 		{http.MethodPost, "/api/v1/chat", "its tools query and act on the queue"},
 		{http.MethodPost, "/api/v1/collector/advertise", "writes to the collector"},
+		{http.MethodPost, "/api/v1/templates", "saves a user template"},
+		{http.MethodDelete, "/api/v1/templates/anything", "deletes a user template"},
 		{http.MethodGet, "/api/v1/jobs", "control: a route that has always been gated"},
 	}
 
