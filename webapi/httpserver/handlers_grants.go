@@ -173,7 +173,17 @@ func groupGrants(rows []grantRow, caller string) []Grant {
 			when := row.expires.Time
 			g.ExpiresAt = &when
 		}
-		for _, s := range strings.Fields(strings.ReplaceAll(row.scopes, ",", " ")) {
+		// decodeStringList, not a whitespace split.
+		//
+		// granted_scopes is written with json.Marshal (see
+		// oauth2_storage.go), so the column holds ["openid","condor:/READ"]
+		// and splitting it on spaces yields the chips ["openid" and
+		// "condor:/READ"] -- brackets, quotes and all, straight onto the
+		// user's Connectors page. decodeStringList parses the JSON and
+		// falls back to splitting only when the row is not JSON, which is
+		// what the admin token listing has always done with this same
+		// column.
+		for _, s := range decodeStringList(row.scopes) {
 			if !seenScopes[row.clientID][s] {
 				seenScopes[row.clientID][s] = true
 				g.Scopes = append(g.Scopes, s)

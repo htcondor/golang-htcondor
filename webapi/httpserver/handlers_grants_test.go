@@ -31,15 +31,28 @@ func newGrantFixture(t *testing.T) *grantFixture {
 // Written straight to the table rather than driven through a full
 // authorization: what is under test is the listing and the revocation, and
 // a code exchange per row would make the setup the test.
+//
+// The scopes go in as JSON, because that is what the server writes --
+// oauth2_storage.go stores them with json.Marshal. This helper used to
+// insert the space-separated string the caller passed, which no code path
+// in this server produces, and the listing was then written to parse that
+// invented format. The chips on the Connectors page came out as
+// ["openid" and "condor:/READ"], brackets and quotes included, while
+// every test here passed. A fixture that writes what nothing writes
+// tests nothing.
 func (f *grantFixture) issueToken(t *testing.T, table, clientID, subject, requestID, scopes string, requested time.Time) {
 	t.Helper()
+	stored, err := json.Marshal(strings.Fields(scopes))
+	if err != nil {
+		t.Fatalf("marshal scopes: %v", err)
+	}
 	db := f.server.oauth2Provider.GetStorage().GetDB()
-	_, err := db.ExecContext(t.Context(),
+	_, err = db.ExecContext(t.Context(),
 		"INSERT INTO "+table+ //nolint:gosec // G202: fixed table name from the caller
 			" (signature, request_id, client_id, subject, scopes, granted_scopes, "+
 			"session_data, form_data, active, requested_at, expires_at) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-		"sig-"+table+"-"+requestID, requestID, clientID, subject, scopes, scopes,
+		"sig-"+table+"-"+requestID, requestID, clientID, subject, string(stored), string(stored),
 		"{}", "", requested, requested.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("insert into %s: %v", table, err)
@@ -296,5 +309,60 @@ func TestGrantsAreDocumented(t *testing.T) {
 	}
 	if _, ok := doc.Components.Schemas["Grant"]; !ok {
 		t.Error("the Grant schema is missing, so the listing's shape is undocumented")
+	}
+}
+
+// Scopes come back as bare names, whatever the column holds.
+//
+// This is the regression. granted_scopes is written with json.Marshal,
+// and the listing used to split it on whitespace -- so a chip on the
+// user's Connectors page read ["openid" and the last one read
+// "condor:/WRITE"], brackets and quotes and all. It survived because
+// the fixture above wrote a format the server never writes.
+//
+// Both encodings are driven, because the fallback is load-bearing: rows
+// written by an older fosite are space-separated, and dropping that path
+// would empty the column for anybody who has not re-authorized.
+func TestGrantScopesAreDecodedNotSplit(t *testing.T) {
+	for name, stored := range map[string]string{
+		"json":            `["openid","condor:/READ","condor:/WRITE"]`,
+		"space separated": "openid condor:/READ condor:/WRITE",
+		"comma separated": "openid,condor:/READ,condor:/WRITE",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGrantFixture(t)
+			db := f.server.oauth2Provider.GetStorage().GetDB()
+			_, err := db.ExecContext(t.Context(),
+				"INSERT INTO oauth2_access_tokens "+
+					"(signature, request_id, client_id, subject, scopes, granted_scopes, "+
+					"session_data, form_data, active, requested_at, expires_at) "+
+					"VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+				"sig-"+name, "req-"+name, "ssh-gateway", "alice", stored, stored,
+				"{}", "", time.Now().UTC(), time.Now().UTC().Add(time.Hour))
+			if err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+
+			got := f.grantsFor(t, "alice")
+			if len(got) != 1 {
+				t.Fatalf("listed %d grants, want 1", len(got))
+			}
+			want := []string{"openid", "condor:/READ", "condor:/WRITE"}
+			if len(got[0].Scopes) != len(want) {
+				t.Fatalf("scopes = %#v, want %#v", got[0].Scopes, want)
+			}
+			for i, w := range want {
+				if got[0].Scopes[i] != w {
+					t.Errorf("scope %d = %q, want %q", i, got[0].Scopes[i], w)
+				}
+			}
+			// The specific shape of the bug, named so a regression says
+			// what it is rather than just failing a comparison.
+			for _, s := range got[0].Scopes {
+				if strings.ContainsAny(s, `["]`) {
+					t.Errorf("scope %q carries JSON punctuation; the column was split, not decoded", s)
+				}
+			}
+		})
 	}
 }
