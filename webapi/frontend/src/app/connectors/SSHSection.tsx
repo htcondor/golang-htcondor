@@ -99,7 +99,7 @@ export function SSHSection() {
     <section className="space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-gray-900">
-          Your own machines over SSH
+          Connect over SSH
         </h2>
         <p className="mt-1 text-sm text-gray-500">
           A certificate lets a computer of yours reach a job over SSH without

@@ -67,7 +67,7 @@ test("a real certificate authority signs a real key", async ({ page, request }) 
   // The panel exists at all, which is the half the stubbed test could
   // not reach: with no gateway /api/v1/ssh/ca answers 503 and the panel
   // correctly hides itself, so this appearing proves a CA was minted.
-  await expect(page.getByText("Your own machines over SSH")).toBeVisible();
+  await expect(page.getByText("Connect over SSH")).toBeVisible();
 
   // What a user is given to trust, from the real CA.
   const body = page.locator("body");
@@ -127,7 +127,7 @@ test("an issued certificate can be withdrawn", async ({ page, request }) => {
 
   await loginAsAdmin(page, password);
   await page.goto("/connectors");
-  await expect(page.getByText("Your own machines over SSH")).toBeVisible();
+  await expect(page.getByText("Connect over SSH")).toBeVisible();
 
   // A key of its own, so this does not race the spec above over which
   // row is whose.
