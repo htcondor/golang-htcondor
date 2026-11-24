@@ -44,7 +44,7 @@ func TestKnobEmptyValueIsUnset(t *testing.T) {
 
 func TestKnobReadsConfiguredValues(t *testing.T) {
 	c := knobConfig(t, map[string]string{
-		"S": "set", "B": "false", "D": "5m", "Z": "2G", "L": "a, b c",
+		"S": "set", "B": "false", "D": "5m", "Z": "2G", "L": "a, b, c",
 	})
 	if got := DefineString("S", "x", Startup, "").Get(c); got != "set" {
 		t.Errorf("string = %q", got)
@@ -60,6 +60,16 @@ func TestKnobReadsConfiguredValues(t *testing.T) {
 	}
 	if got := DefineList("L", nil, Startup, "").Get(c); len(got) != 3 {
 		t.Errorf("list = %v", got)
+	}
+}
+
+// Whitespace is not a separator: these settings are documented as
+// comma-separated, and a name may contain a space.
+func TestListKnobDoesNotSplitOnSpaces(t *testing.T) {
+	c := knobConfig(t, map[string]string{"L": "my picker, other"})
+	got := DefineList("L", nil, Startup, "").Get(c)
+	if len(got) != 2 || got[0] != "my picker" {
+		t.Errorf("list = %q", got)
 	}
 }
 
@@ -202,5 +212,33 @@ func TestKnobCarriesItsDeclaration(t *testing.T) {
 	if k.Name() != "HTTP_API_READ_TIMEOUT" || k.Scope() != Reconfig ||
 		k.Doc() != "How long a read may take." || k.Default() != 30*time.Second {
 		t.Errorf("declaration not carried: %+v", k)
+	}
+}
+
+// A package that takes a narrow parameter interface rather than the
+// whole Config must still be able to read a knob; webapi/connectors
+// does exactly that.
+func TestKnobReadsThroughANarrowSource(t *testing.T) {
+	src := fakeSource{"S": "from the fake"}
+	if got := DefineString("S", "default", Startup, "").Get(src); got != "from the fake" {
+		t.Errorf("string = %q", got)
+	}
+	// A fake cannot be told about a malformed value, and must not be
+	// asked to be: this should fall back quietly, not panic.
+	if got := DefineDuration("D", time.Minute, Startup, "").Get(fakeSource{"D": "nope"}); got != time.Minute {
+		t.Errorf("duration = %v", got)
+	}
+}
+
+type fakeSource map[string]string
+
+func (f fakeSource) Get(key string) (string, bool) { v, ok := f[key]; return v, ok }
+
+// A typed nil *Config arrives as a non-nil Source, which is the shape
+// that would panic if it were not checked for.
+func TestKnobTypedNilConfig(t *testing.T) {
+	var c *Config
+	if got := DefineString("S", "d", Startup, "").Get(c); got != "d" {
+		t.Errorf("string = %q", got)
 	}
 }

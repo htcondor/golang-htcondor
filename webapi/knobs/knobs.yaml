@@ -67,3 +67,60 @@ knobs:
     doc: >
       How long a keep-alive connection may sit idle before the server
       closes it, as a Go duration.
+
+# Families: one group of parameters per named instance, with the name
+# folded into the middle of the parameter. The generator emits a
+# constructor taking the instance name and one accessor per setting, so
+# the template lives here and nothing spells a parameter name by hand.
+#
+#   family        the Go constructor's name
+#   prefix        what comes before the folded instance name
+#   enumerated_by the list parameter naming the instances that exist
+#   settings      as above, with name the suffix after the instance
+families:
+  - family: Picker
+    prefix: HTTP_API_PICKER_
+    enumerated_by: HTTP_API_PICKERS
+    doc: >
+      A file chooser the submit page offers, so a user can pick input
+      files out of a connected account instead of uploading them.
+      HTTP_API_PICKERS names the choosers that exist; a chooser is
+      configured by the settings below with its name folded in, e.g.
+      HTTP_API_PICKER_LAB_A_API_KEY for the chooser named lab-a.
+    settings:
+      - name: PROVIDER
+        type: string
+        default: ""
+        scope: startup
+        doc: >
+          Which shipped chooser to run. Defaults to the chooser's own
+          name, so the common case needs one line.
+      - name: CONNECTOR
+        type: string
+        default: ""
+        scope: startup
+        doc: >
+          The connector whose credential the chooser shows files with.
+          Without one the chooser is not offered.
+      - name: API_KEY
+        type: string
+        default: ""
+        scope: startup
+        secret: true
+        doc: >
+          The provider's developer key, where its chooser needs one to
+          run in the browser.
+      - name: APP_ID
+        type: string
+        default: ""
+        scope: startup
+        doc: >
+          The provider's application id, where its chooser needs one
+          alongside the developer key.
+      - name: ORIGIN
+        type: string
+        default: ""
+        scope: startup
+        doc: >
+          The origin the chooser is loaded from, when it is not the
+          provider's default.

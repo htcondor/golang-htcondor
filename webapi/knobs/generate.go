@@ -25,10 +25,22 @@ type knob struct {
 	Default string `yaml:"default"`
 	Scope   string `yaml:"scope"`
 	Doc     string `yaml:"doc"`
+	Secret  bool   `yaml:"secret"`
+}
+
+// family is a group of settings repeated per named instance, with the
+// name folded into the middle of the parameter.
+type family struct {
+	Family       string `yaml:"family"`
+	Prefix       string `yaml:"prefix"`
+	EnumeratedBy string `yaml:"enumerated_by"`
+	Doc          string `yaml:"doc"`
+	Settings     []knob `yaml:"settings"`
 }
 
 type file struct {
-	Knobs []knob `yaml:"knobs"`
+	Knobs    []knob   `yaml:"knobs"`
+	Families []family `yaml:"families"`
 }
 
 func main() {
@@ -50,7 +62,7 @@ func run(in, out string) error {
 	if err := yaml.Unmarshal(raw, &f); err != nil {
 		return fmt.Errorf("%s: %w", in, err)
 	}
-	src, err := Render(f.Knobs)
+	src, err := Render(f.Knobs, f.Families)
 	if err != nil {
 		return err
 	}
@@ -59,13 +71,21 @@ func run(in, out string) error {
 
 // Render is the whole generator, kept separate from the file handling
 // so a test can exercise it on a knob table of its own.
-func Render(knobs []knob) ([]byte, error) {
+func Render(knobs []knob, families []family) ([]byte, error) {
 	sort.Slice(knobs, func(i, j int) bool { return knobs[i].Name < knobs[j].Name })
+	sort.Slice(families, func(i, j int) bool { return families[i].Family < families[j].Family })
 
 	needsTime := false
 	for _, k := range knobs {
 		if k.Type == "duration" {
 			needsTime = true
+		}
+	}
+	for _, f := range families {
+		for _, k := range f.Settings {
+			if k.Type == "duration" {
+				needsTime = true
+			}
 		}
 	}
 
@@ -102,6 +122,12 @@ func Render(knobs []knob) ([]byte, error) {
 			ident, ctor, k.Name, def, scope, strings.Join(strings.Fields(k.Doc), " "))
 	}
 
+	for _, f := range families {
+		if err := renderFamily(&b, f); err != nil {
+			return nil, err
+		}
+	}
+
 	fmt.Fprintf(&b, "// All is every declared knob, for the configuration reference and\n"+
 		"// for tests that check the table against the code.\nvar All = []config.Knob{\n")
 	for _, k := range knobs {
@@ -110,6 +136,85 @@ func Render(knobs []knob) ([]byte, error) {
 	b.WriteString("}\n")
 
 	return format.Source(b.Bytes())
+}
+
+// renderFamily emits the instance constructor and one accessor per
+// setting. The instance name is folded once, in the constructor, so no
+// call site repeats the rule -- and no call site spells a parameter
+// name at all.
+func renderFamily(b *bytes.Buffer, f family) error {
+	switch {
+	case f.Family == "":
+		return fmt.Errorf("a family has no name")
+	case !strings.HasPrefix(f.Prefix, "HTTP_API_") || !strings.HasSuffix(f.Prefix, "_"):
+		return fmt.Errorf("%s: prefix must start with HTTP_API_ and end with _, got %q", f.Family, f.Prefix)
+	case f.EnumeratedBy == "":
+		return fmt.Errorf("%s: no enumerated_by; nothing would say which instances exist", f.Family)
+	case len(f.Settings) == 0:
+		return fmt.Errorf("%s: no settings", f.Family)
+	case strings.TrimSpace(f.Doc) == "":
+		return fmt.Errorf("%s: no doc", f.Family)
+	}
+
+	typ := f.Family + "Settings"
+	doc := strings.Join(strings.Fields(f.Doc), " ")
+
+	fmt.Fprintf(b, "// %s names the %s settings of one instance.\n//\n", typ, f.Family)
+	for _, line := range wrap(doc, 68) {
+		fmt.Fprintf(b, "// %s\n", line)
+	}
+	fmt.Fprintf(b, "type %s struct{ id string }\n\n", typ)
+
+	fmt.Fprintf(b, "// %s returns the settings of one %s instance. The name is\n"+
+		"// folded into the parameter form here, once, so no caller repeats it.\n"+
+		"func %s(instance string) %s {\n\treturn %s{config.InstanceID(instance)}\n}\n\n",
+		f.Family, f.Family, f.Family, typ, typ)
+
+	fmt.Fprintf(b, "// %sInstances is the parameter naming every %s that exists.\n"+
+		"var %sInstances = config.DefineList(%q, nil, config.Startup,\n\t%q)\n\n",
+		f.Family, f.Family, f.Family, f.EnumeratedBy,
+		fmt.Sprintf("Names the %s instances that exist. %s", f.Family, doc))
+
+	for _, k := range f.Settings {
+		sk := k
+		sk.Name = f.Prefix + "<instance>_" + k.Name
+		if err := validateSetting(f, k); err != nil {
+			return err
+		}
+		def, ctor, err := literal(sk)
+		if err != nil {
+			return err
+		}
+		scope := "config.Startup"
+		if k.Scope == "reconfig" {
+			scope = "config.Reconfig"
+		}
+		method := Identifier("HTTP_API_" + k.Name)
+		sdoc := strings.Join(strings.Fields(k.Doc), " ")
+		fmt.Fprintf(b, "// %s is %s%s_%s.\n//\n", method, f.Prefix, "<instance>", k.Name)
+		for _, line := range wrap(sdoc, 68) {
+			fmt.Fprintf(b, "// %s\n", line)
+		}
+		fmt.Fprintf(b, "func (s %s) %s() config.StringKnob {\n"+
+			"\treturn config.%s(%q+s.id+%q, %s, %s,\n\t\t%q)\n}\n\n",
+			typ, method, ctor, f.Prefix, "_"+k.Name, def, scope, sdoc)
+	}
+	return nil
+}
+
+func validateSetting(f family, k knob) error {
+	switch {
+	case k.Name == "":
+		return fmt.Errorf("%s: a setting has no name", f.Family)
+	case k.Type != "string":
+		return fmt.Errorf("%s/%s: only string settings are supported in a family so far, not %q",
+			f.Family, k.Name, k.Type)
+	case strings.TrimSpace(k.Doc) == "":
+		return fmt.Errorf("%s/%s: no doc", f.Family, k.Name)
+	case k.Scope != "startup" && k.Scope != "reconfig":
+		return fmt.Errorf("%s/%s: scope must be startup or reconfig, not %q", f.Family, k.Name, k.Scope)
+	}
+	return nil
 }
 
 func validate(k knob) error {

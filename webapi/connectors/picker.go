@@ -3,7 +3,11 @@ package connectors
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/htcondor/golang-htcondor/config"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Pickers: the browser file choosers an access point offers.
@@ -117,6 +121,10 @@ type Picker struct {
 	// is the pair that does not fit on a connector.
 	APIKey string
 	AppID  string
+	// shared, when set, says this chooser's name folds onto the same
+	// parameters as another's, which Problems reports on its own. It
+	// cannot be worked out from one Picker, so Pickers fills it in.
+	shared string
 	// Origin is where the page loads the chooser's adapter from. Empty
 	// means this server's own; a test points it at a stand-in so the
 	// production path and the tested path are the same path.
@@ -131,8 +139,13 @@ const pickerConfigPrefix = "HTTP_API_PICKER_"
 
 // PickerConfigKey is the full parameter name for one of a picker's
 // settings.
+//
+// The settings this package reads come from knobs.Picker, which spells
+// its own names; this remains for a caller naming a setting that is not
+// one of them. The fold from a chooser's name to the parameter form is
+// config.InstanceID, shared with every other family.
 func PickerConfigKey(name, setting string) string {
-	return pickerConfigPrefix + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_" + setting
+	return pickerConfigPrefix + config.InstanceID(name) + "_" + setting
 }
 
 // Pickers returns the choosers the configuration declares, by name.
@@ -144,51 +157,93 @@ func (c *ConfigSource) Pickers() []Picker {
 	if c == nil || c.params == nil {
 		return nil
 	}
-	raw, ok := c.params.Get("HTTP_API_PICKERS")
-	if !ok {
+	names := knobs.PickerInstances.Get(c.params)
+	if len(names) == 0 {
 		return nil
+	}
+
+	// Two names differing only by hyphen-versus-underscore fold onto
+	// one set of parameters, so neither chooser can be configured on
+	// its own: both would read the same connector and the same
+	// developer key while presenting as two. Nothing constrains a
+	// chooser's name, so unlike connectors this is reachable, and
+	// until now it produced two identically configured choosers on the
+	// submit page with no complaint anywhere.
+	// Dedupe first: a name written twice is one chooser, and feeding
+	// the repeat to the collision check would report it as two
+	// choosers fighting over one set of parameters.
+	distinct := make([]string, 0, len(names))
+	listed := map[string]bool{}
+	for _, n := range names {
+		if !listed[n] {
+			listed[n] = true
+			distinct = append(distinct, n)
+		}
+	}
+	names = distinct
+
+	collisions := config.InstanceCollisions(names)
+	shared := map[string]string{}
+	for id, group := range collisions {
+		for _, n := range group {
+			shared[n] = fmt.Sprintf(
+				"shares the configuration name %s%s_ with %s, so neither can be configured on its "+
+					"own; rename one of them",
+				pickerConfigPrefix, id, strings.Join(quoteEach(exclude(group, n)), " and "))
+		}
 	}
 
 	var out []Picker
 	seen := map[string]bool{}
-	for _, name := range splitList(raw) {
+	for _, name := range names {
 		if seen[name] {
 			continue
 		}
 		seen[name] = true
 
-		p := Picker{Name: name}
-		p.Provider, _ = c.pickerGet(name, "PROVIDER")
+		set := knobs.Picker(name)
+		p := Picker{Name: name, shared: shared[name]}
+		p.Provider = set.Provider().Get(c.params)
 		if p.Provider == "" {
 			// The name is the provider unless told otherwise, so the
 			// common case is one line.
 			p.Provider = name
 		}
-		if v, ok := c.pickerGet(name, "CONNECTOR"); ok {
+		if v := set.Connector().Get(c.params); v != "" {
 			id, err := ParseID(v)
 			if err != nil {
 				continue
 			}
 			p.Connector = id
 		}
-		p.APIKey, _ = c.pickerGet(name, "API_KEY")
-		p.AppID, _ = c.pickerGet(name, "APP_ID")
-		p.Origin, _ = c.pickerGet(name, "ORIGIN")
+		p.APIKey = set.APIKey().Get(c.params)
+		p.AppID = set.AppID().Get(c.params)
+		p.Origin = set.Origin().Get(c.params)
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func (c *ConfigSource) pickerGet(name, setting string) (string, bool) {
-	v, ok := c.params.Get(PickerConfigKey(name, setting))
-	if !ok {
-		return "", false
+// exclude returns names without one of them, for naming the others in
+// a collision message.
+func exclude(names []string, drop string) []string {
+	var out []string
+	for _, n := range names {
+		if n != drop {
+			out = append(out, n)
+		}
 	}
-	if v = strings.TrimSpace(v); v == "" {
-		return "", false
+	return out
+}
+
+// quoteEach quotes names for a message.
+func quoteEach(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, strconv.Quote(n))
 	}
-	return v, true
+	return out
 }
 
 // Problems reports what would stop this chooser working, for the admin
@@ -199,6 +254,12 @@ func (c *ConfigSource) pickerGet(name, setting string) (string, bool) {
 // console is the only other place the reason appears.
 func (p Picker) Problems() []string {
 	var out []string
+	if p.shared != "" {
+		// Reported first and on its own: with two choosers reading one
+		// set of parameters, every other complaint about either is
+		// downstream of that.
+		return []string{p.shared}
+	}
 	def, ok := p.Def()
 	if !ok {
 		return []string{fmt.Sprintf("no chooser ships for the provider %q; known: %s",
