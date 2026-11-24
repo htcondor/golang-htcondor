@@ -6,6 +6,7 @@ import (
 
 	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Reconfigure: what a running htcondor-api does with SIGHUP (or condor_reconfig,
@@ -27,11 +28,28 @@ type reconfigParam struct {
 	// name is the bare parameter name. Lookup goes through config.Get, so
 	// the daemon's subsystem and -local-name scoping applies, exactly as it
 	// did when the value was first read at startup.
+	//
+	// Prefer fromKnob for a setting the knob table declares: the name
+	// then comes from the declaration, and TestReconfigScopesMatchTheKnobs
+	// checks that this table and the declared reload scope agree.
 	name string
 	// apply installs a new value on the running server. Nil means the
 	// parameter is read only at startup and a change requires a restart.
 	apply func(reconfigTarget, string)
 }
+
+// fromKnob makes a restart-required entry for a declared setting: the
+// daemon reads it once at startup, so a reconfigure reports it rather
+// than applying it.
+func fromKnob(k config.Knob) reconfigParam {
+	return reconfigParam{name: k.Name()}
+}
+
+// A dynamic entry for a declared setting would be
+// reconfigParam{name: k.Name(), apply: ...}; there is no such setting
+// yet, because the settings converted so far are all read at startup.
+// TestReconfigScopesMatchTheKnobs is what will say so when one is
+// declared scope: reconfig and listed without an apply.
 
 // reconfigTarget is the running server a reconfigure updates. It is an
 // interface, not *httpserver.Server, so the table and its bookkeeping can be
@@ -332,8 +350,19 @@ var reconfigParams = []reconfigParam{
 	{name: "HTTP_API_LISTEN_ADDR"},
 	{name: "HTTP_API_SIGNING_KEY"},
 	{name: "HTTP_API_KEK_FILE"},
-	{name: "HTTP_API_TLS_CERT"},
-	{name: "HTTP_API_TLS_KEY"},
+	fromKnob(knobs.TLSCert.Knob),
+	fromKnob(knobs.TLSKey.Knob),
+	// Read at startup like the pair above and, until now, listed
+	// nowhere: a change to it did nothing and nothing said so.
+	fromKnob(knobs.TLSCACert.Knob),
+
+	// The HTTP server's timeouts, captured when it was built.
+	fromKnob(knobs.ReadTimeout.Knob),
+	fromKnob(knobs.WriteTimeout.Knob),
+	fromKnob(knobs.IdleTimeout.Knob),
+
+	// Where an upload buffers. Read once when the handler is built.
+	fromKnob(knobs.SpoolBufferDir.Knob),
 
 	// Whether MCP serves OAuth2 at all. It decides which routes the mux
 	// is built with and whether the provider is constructed, both of
@@ -341,9 +370,15 @@ var reconfigParams = []reconfigParam{
 	{name: "HTTP_API_MCP_OAUTH2"},
 
 	// OAuth2 / IDP wiring, captured when the provider was constructed.
-	{name: "HTTP_API_OAUTH2_ISSUER"},
-	{name: "HTTP_API_OAUTH2_IDP"},
-	{name: "HTTP_API_OAUTH2_CLIENT_ID"},
+	fromKnob(knobs.OAuth2Issuer.Knob),
+	fromKnob(knobs.OAuth2IDP.Knob),
+	fromKnob(knobs.OAuth2ClientID.Knob),
+	// Discovery's fallbacks and the redirect, read with the rest of
+	// the provider wiring and previously listed nowhere.
+	fromKnob(knobs.OAuth2AuthURL.Knob),
+	fromKnob(knobs.OAuth2TokenURL.Knob),
+	fromKnob(knobs.OAuth2UserinfoURL.Knob),
+	fromKnob(knobs.OAuth2RedirectURL.Knob),
 	{name: "HTTP_API_OAUTH2_CLIENT_SECRET_FILE"},
 	{name: "HTTP_API_OAUTH2_SCOPES"},
 	{name: "HTTP_API_OAUTH2_USERNAME_CLAIM"},

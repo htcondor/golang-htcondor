@@ -21,7 +21,7 @@ knobs:
   - name: HTTP_API_TLS_CERT
     type: string
     default: ""
-    scope: reconfig
+    scope: startup
     doc: >
       PEM certificate for serving HTTPS directly, rather than behind a
       terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables
@@ -30,7 +30,7 @@ knobs:
   - name: HTTP_API_TLS_KEY
     type: string
     default: ""
-    scope: reconfig
+    scope: startup
     doc: >
       Private key for HTTP_API_TLS_CERT. Keep it readable only by the
       account the server runs as.
@@ -38,7 +38,7 @@ knobs:
   - name: HTTP_API_TLS_CA_CERT
     type: string
     default: ""
-    scope: reconfig
+    scope: startup
     doc: >
       CA bundle used to verify client certificates. Unset asks for no
       client certificate.
@@ -205,6 +205,9 @@ families:
   - family: Picker
     prefix: HTTP_API_PICKER_
     enumerated_by: HTTP_API_PICKERS
+    # Definitions are re-read wholesale on every reconfigure, so
+    # adding one needs no restart.
+    enumerated_scope: reconfig
     doc: >
       A file chooser the submit page offers, so a user can pick input
       files out of a connected account instead of uploading them.
@@ -252,6 +255,9 @@ families:
   - family: Connector
     prefix: HTTP_API_CONNECTOR_
     enumerated_by: HTTP_API_CONNECTORS
+    # Definitions are re-read wholesale on every reconfigure, so
+    # adding one needs no restart.
+    enumerated_scope: reconfig
     doc: >
       An external account users may connect, so a job can read their
       files from it. HTTP_API_CONNECTORS names the connectors offered;
