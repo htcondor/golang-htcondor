@@ -415,9 +415,15 @@ func newMetricsdAdapter(reg *metricsd.Registry) *metricsdAdapter {
 func (a *metricsdAdapter) Describe(_ chan<- *prometheus.Desc) {}
 
 func (a *metricsdAdapter) Collect(ch chan<- prometheus.Metric) {
-	// metricsd's Collect doesn't accept a context-with-deadline; the
-	// registry runs its own caching + per-collector timeouts. A bare
-	// background context is fine here.
+	// The registry gives each collector its own deadline
+	// (metricsd.DefaultCollectTimeout), so a collector host that stops
+	// answering costs this scrape rather than the exporter.
+	//
+	// This comment used to claim that already, and it was not true:
+	// nothing anywhere bounded a collection, and because cedar keys its
+	// read fast path on Done() == nil, a background context meant the
+	// read could not even be cancelled. The claim is what stopped anyone
+	// looking. It is true now.
 	metrics, err := a.registry.Collect(context.Background())
 	if err != nil {
 		return

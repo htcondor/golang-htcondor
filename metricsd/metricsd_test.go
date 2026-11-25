@@ -3,6 +3,7 @@ package metricsd
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -266,5 +267,95 @@ func TestProcessCollector(t *testing.T) {
 	}
 	if !foundGoroutines {
 		t.Error("Goroutines metric not found")
+	}
+}
+
+// stalledCollector is a collector host that completes its handshake and
+// then goes quiet: it returns only when its context ends.
+type stalledCollector struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (c *stalledCollector) Name() string { return "stalled" }
+
+func (c *stalledCollector) Collect(ctx context.Context) ([]Metric, error) {
+	c.once.Do(func() { close(c.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestCollectBoundsEachCollector: a collector that never answers must
+// not hold the collection open.
+//
+// A pool collector runs a streaming CEDAR query, and an unbounded
+// context there is not merely "no timeout" -- cedar keys its read fast
+// path on Done() == nil, so the read cannot be cancelled either. A
+// collector host that finishes the TCP handshake and then goes quiet
+// wedged the call for as long as the kernel kept ACKing, stranding the
+// scrape goroutine, a Gather worker and the query producer, plus a
+// socket and an authenticated session, once per scrape.
+//
+// The same function is the body of the background refresher's tick loop,
+// which is sequential, so one wedged tick also meant the cache was never
+// refreshed again. That is why the bound lives here rather than at the
+// callers.
+func TestCollectBoundsEachCollector(t *testing.T) {
+	r := NewRegistry()
+	r.SetQueryInterval(0) // no background refresher; this test owns the call
+	r.SetCollectTimeout(150 * time.Millisecond)
+	stalled := &stalledCollector{started: make(chan struct{})}
+	r.Register(stalled)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Collect(context.Background())
+		done <- err
+	}()
+
+	select {
+	case <-stalled.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the collector was never called")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Collect returned %v; a stalled collector is skipped, not an error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Collect never returned: a stalled collector still holds the collection open")
+	}
+}
+
+// A healthy collector is not cut short by the bound, and its metrics
+// still come back -- so the deadline is a deadline and not a cap on
+// doing any work.
+func TestCollectDoesNotCutShortAHealthyCollector(t *testing.T) {
+	r := NewRegistry()
+	r.SetQueryInterval(0)
+	r.SetCollectTimeout(5 * time.Second)
+	r.Register(&slowButFineCollector{delay: 50 * time.Millisecond})
+
+	metrics, err := r.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(metrics) != 1 {
+		t.Fatalf("got %d metrics, want 1", len(metrics))
+	}
+}
+
+type slowButFineCollector struct{ delay time.Duration }
+
+func (c *slowButFineCollector) Name() string { return "slow" }
+
+func (c *slowButFineCollector) Collect(ctx context.Context) ([]Metric, error) {
+	select {
+	case <-time.After(c.delay):
+		return []Metric{{Name: "slow_metric", Type: MetricTypeGauge, Value: 1}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
