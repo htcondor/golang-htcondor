@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -29,6 +30,19 @@ type knob struct {
 	// appended to the documentation, so the reference says so without
 	// each paragraph having to remember to.
 	Secret bool `yaml:"secret"`
+	// See is where the setting is explained at length. The reference
+	// prints it as a link, which the documentation tests then check
+	// resolves; a Go doc comment gets the title alone, since a
+	// relative path means nothing from there and a path in two places
+	// is a path that goes stale in one of them.
+	See []seeAlso `yaml:"see"`
+}
+
+// seeAlso is one cross-reference: the section's title, and its URL
+// relative to the page the reference is generated into.
+type seeAlso struct {
+	Text string `yaml:"text"`
+	URL  string `yaml:"url"`
 }
 
 // family is a group of settings repeated per named instance, with the
@@ -51,6 +65,11 @@ type family struct {
 	// reconfigure, so adding one takes effect without a restart even
 	// though each setting is read when the definition is built.
 	EnumeratedScope string `yaml:"enumerated_scope"`
+	// EnumeratedDoc is the enumerating parameter's own paragraph.
+	// Required wherever there is one: falling back to the family's
+	// would print the same prose twice, side by side, since the two
+	// entries sort next to each other.
+	EnumeratedDoc string `yaml:"enumerated_doc"`
 }
 
 type file struct {
@@ -61,14 +80,15 @@ type file struct {
 func main() {
 	in := flag.String("in", "knobs.yaml", "knob table to read")
 	out := flag.String("out", "knobs_gen.go", "Go file to write")
+	docs := flag.String("docs", "", "Markdown page whose generated region to rewrite; empty writes no reference")
 	flag.Parse()
-	if err := run(*in, *out); err != nil {
+	if err := run(*in, *out, *docs); err != nil {
 		fmt.Fprintln(os.Stderr, "knobs:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in, out string) error {
+func run(in, out, docs string) error {
 	raw, err := os.ReadFile(in)
 	if err != nil {
 		return err
@@ -81,7 +101,13 @@ func run(in, out string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(out, src, 0o644)
+	if err := os.WriteFile(out, src, 0o644); err != nil {
+		return err
+	}
+	if docs == "" {
+		return nil
+	}
+	return rewriteDocs(docs, f.Knobs, f.Families)
 }
 
 // Render is the whole generator, kept separate from the file handling
@@ -182,10 +208,16 @@ func renderFamily(b *bytes.Buffer, f family) error {
 	case f.EnumeratedBy != "" && f.EnumeratedScope != "startup" && f.EnumeratedScope != "reconfig":
 		return fmt.Errorf("%s: enumerated_scope must be startup or reconfig, not %q",
 			f.Family, f.EnumeratedScope)
+	case f.EnumeratedBy != "" && strings.TrimSpace(f.EnumeratedDoc) == "":
+		return fmt.Errorf("%s: enumerated_by needs enumerated_doc, the paragraph for %s itself",
+			f.Family, f.EnumeratedBy)
 	case len(f.Settings) == 0:
 		return fmt.Errorf("%s: no settings", f.Family)
 	case strings.TrimSpace(f.Doc) == "":
 		return fmt.Errorf("%s: no doc", f.Family)
+	}
+	if err := noMarkdown(f.Family, f.Doc+f.EnumeratedDoc); err != nil {
+		return err
 	}
 
 	typ := f.Family + "Settings"
@@ -209,8 +241,7 @@ func renderFamily(b *bytes.Buffer, f family) error {
 		}
 		fmt.Fprintf(b, "// %sInstances is the parameter naming every %s that exists.\n"+
 			"var %sInstances = config.DefineList(%q, nil, %s,\n\t%q)\n\n",
-			f.Family, f.Family, f.Family, f.EnumeratedBy, enumScope,
-			fmt.Sprintf("Names the %s instances that exist. %s", f.Family, doc))
+			f.Family, f.Family, f.Family, f.EnumeratedBy, enumScope, enumDoc(f))
 	}
 
 	for _, k := range f.Settings {
@@ -240,6 +271,14 @@ func renderFamily(b *bytes.Buffer, f family) error {
 	return nil
 }
 
+// enumDoc is the documentation of a family's enumerating parameter.
+// Both the Go declaration and the reference print it, so it is written
+// once: two spellings of one setting is the drift this table exists to
+// prevent.
+func enumDoc(f family) string {
+	return strings.Join(strings.Fields(f.EnumeratedDoc), " ")
+}
+
 func validateSetting(f family, k knob) error {
 	switch {
 	case k.Name == "":
@@ -251,16 +290,29 @@ func validateSetting(f family, k knob) error {
 	case k.Scope != "startup" && k.Scope != "reconfig":
 		return fmt.Errorf("%s/%s: scope must be startup or reconfig, not %q", f.Family, k.Name, k.Scope)
 	}
-	return nil
+	if err := noMarkdown(f.Family+"/"+k.Name, k.Doc); err != nil {
+		return err
+	}
+	return validateSee(k)
 }
 
-// docText is the documentation as the reference prints it: the
-// paragraph from the table, with a sentence added for a setting that
-// holds a credential.
-func docText(k knob) string {
+// docParagraph is the documentation both outputs share: the paragraph
+// from the table, with a sentence added for a setting that holds a
+// credential.
+func docParagraph(k knob) string {
 	doc := strings.Join(strings.Fields(k.Doc), " ")
 	if k.Secret {
 		doc += " Holds or names a credential: keep it readable only by the account the server runs as."
+	}
+	return doc
+}
+
+// docText is the documentation as a Go doc comment prints it: the
+// paragraph, and each cross-reference named rather than linked.
+func docText(k knob) string {
+	doc := docParagraph(k)
+	for _, s := range k.See {
+		doc += fmt.Sprintf(" See %q in the operator guide.", s.Text)
 	}
 	return doc
 }
@@ -275,6 +327,36 @@ func validate(k knob) error {
 		return fmt.Errorf("%s: no doc; a knob without one cannot appear in the reference", k.Name)
 	case k.Scope != "startup" && k.Scope != "reconfig":
 		return fmt.Errorf("%s: scope must be startup or reconfig, not %q", k.Name, k.Scope)
+	}
+	if err := noMarkdown(k.Name, k.Doc); err != nil {
+		return err
+	}
+	return validateSee(k)
+}
+
+// validateSee rejects a half-written cross-reference. One with no text
+// renders as an empty link and one with no URL renders as a link to
+// the page itself, neither of which any test would catch.
+// noMarkdown rejects a backtick in a documentation paragraph. The
+// table is prose that both a Go doc comment and the reference print,
+// and the reference adds its own code spans; a backtick here would
+// reach the comment as a literal and be doubled in the reference.
+func noMarkdown(what, doc string) error {
+	if strings.Contains(doc, "`") {
+		return fmt.Errorf("%s: the documentation holds a backtick; write the parameter "+
+			"name plainly and the reference sets it as code", what)
+	}
+	return nil
+}
+
+func validateSee(k knob) error {
+	for _, s := range k.See {
+		switch {
+		case strings.TrimSpace(s.Text) == "":
+			return fmt.Errorf("%s: a see entry has no text", k.Name)
+		case strings.TrimSpace(s.URL) == "":
+			return fmt.Errorf("%s: see %q has no url", k.Name, s.Text)
+		}
 	}
 	return nil
 }
@@ -393,4 +475,193 @@ func wrap(s string, width int) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// --- the configuration reference -------------------------------------
+//
+// The same table that declares the knobs prints them, so a setting
+// cannot be read by the server and missing from what an operator
+// reads. The output replaces a marked region of a Markdown page rather
+// than being a page of its own, so the prose around it -- which no
+// table can generate -- stays where it is.
+
+const (
+	docsBegin = "<!-- BEGIN GENERATED SETTINGS: edit webapi/knobs/knobs.yaml, then run `make knobs` -->"
+	docsEnd   = "<!-- END GENERATED SETTINGS -->"
+)
+
+// rewriteDocs replaces the marked region of path with the reference.
+// Absent markers are an error: appending to the end of a page nobody
+// prepared would put the reference somewhere arbitrary.
+func rewriteDocs(path string, knobs []knob, families []family) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	body := string(raw)
+	i := strings.Index(body, docsBegin)
+	j := strings.Index(body, docsEnd)
+	switch {
+	case i < 0:
+		return fmt.Errorf("%s: no %q marker", path, docsBegin)
+	case j < 0:
+		return fmt.Errorf("%s: no %q marker", path, docsEnd)
+	case j < i:
+		return fmt.Errorf("%s: the end marker comes before the begin marker", path)
+	}
+	ref, err := RenderDocs(knobs, families)
+	if err != nil {
+		return err
+	}
+	out := body[:i] + docsBegin + "\n\n" + ref + body[j:]
+	return os.WriteFile(path, []byte(out), 0o644)
+}
+
+// docEntry is one thing the reference prints, kept with the name it
+// sorts under so plain settings and families interleave alphabetically
+// -- a reader looking a parameter up does not know which it is.
+type docEntry struct {
+	key  string
+	text string
+}
+
+// RenderDocs is the reference body: everything between the markers.
+func RenderDocs(knobs []knob, families []family) (string, error) {
+	var entries []docEntry
+	for _, k := range knobs {
+		if err := validate(k); err != nil {
+			return "", err
+		}
+		entries = append(entries, docEntry{k.Name, docKnob("###", k.Name, k)})
+	}
+	for _, f := range families {
+		text, err := docFamily(f)
+		if err != nil {
+			return "", err
+		}
+		if f.EnumeratedBy != "" {
+			entries = append(entries, docEntry{f.EnumeratedBy, docKnob("###", f.EnumeratedBy, knob{
+				Name:  f.EnumeratedBy,
+				Type:  "list",
+				Scope: f.EnumeratedScope,
+				Doc:   enumDoc(f),
+			})})
+		}
+		entries = append(entries, docEntry{f.Prefix, text})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString(e.text)
+	}
+	return b.String(), nil
+}
+
+// docKnob prints one setting: the parameter as a heading, a line of
+// what the code does with it, and the paragraph from the table.
+func docKnob(level, name string, k knob) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s `%s`\n\n", level, name)
+	fmt.Fprintf(&b, "**%s.** %s %s\n\n", docType(k.Type), docDefault(k), docScope(k.Scope))
+	for _, line := range wrap(codeSpans(docParagraph(k)), 70) {
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("\n")
+	if refs := docSeeAlso(k); refs != "" {
+		for _, line := range wrap(refs, 70) {
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// docFamily prints a family: what an instance is, where the instance
+// names come from, and one entry per per-instance setting.
+func docFamily(f family) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "### `%s<instance>_*`\n\n", f.Prefix)
+	for _, line := range wrap(codeSpans(strings.Join(strings.Fields(f.Doc), " ")), 70) {
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("\n")
+	// Nothing is said here about where the instance names come from
+	// when a parameter lists them: the family's own paragraph names
+	// that parameter, and its entry sits directly above this one.
+	// That there is no such parameter is not said anywhere else.
+	if f.EnumeratedByDir {
+		b.WriteString("The instances are discovered rather than listed in a parameter, " +
+			"so there is no setting that names them.\n\n")
+	}
+	settings := append([]knob(nil), f.Settings...)
+	sort.Slice(settings, func(i, j int) bool { return settings[i].Name < settings[j].Name })
+	for _, k := range settings {
+		if err := validateSetting(f, k); err != nil {
+			return "", err
+		}
+		b.WriteString(docKnob("####", f.Prefix+"<instance>_"+k.Name, k))
+	}
+	return b.String(), nil
+}
+
+// paramRe finds a parameter name in a documentation paragraph, so the
+// reference can set it as code without the table carrying Markdown
+// that a Go doc comment would then have to print. It matches the
+// template spelling too, HTTP_API_PICKER_<instance>_*.
+var paramRe = regexp.MustCompile(`HTTP_API_[A-Za-z0-9_<>]*\*?`)
+
+// codeSpans sets each parameter name in a paragraph as code. Safe to
+// apply once and only once, which validate guarantees by rejecting a
+// backtick in the table.
+func codeSpans(s string) string {
+	return paramRe.ReplaceAllString(s, "`$0`")
+}
+
+// docSeeAlso is the reference's cross-reference line, empty for a
+// setting with none.
+func docSeeAlso(k knob) string {
+	var parts []string
+	for _, s := range k.See {
+		parts = append(parts, fmt.Sprintf("[%s](%s)", s.Text, s.URL))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "See " + strings.Join(parts, " and ") + "."
+}
+
+// docType names the kind of value an operator writes.
+func docType(kind string) string {
+	switch kind {
+	case "string":
+		return "String"
+	case "bool":
+		return "Boolean"
+	case "duration":
+		return "Duration"
+	case "bytes":
+		return "Size"
+	case "list":
+		return "Comma-separated list"
+	case "words":
+		return "Space-separated list"
+	}
+	return kind
+}
+
+// docDefault says what applies when the setting is absent.
+func docDefault(k knob) string {
+	if strings.TrimSpace(k.Default) == "" {
+		return "Unset by default."
+	}
+	return fmt.Sprintf("Default `%s`.", k.Default)
+}
+
+// docScope says what installing a change takes.
+func docScope(scope string) string {
+	if scope == "reconfig" {
+		return "A change is installed by `condor_reconfig`."
+	}
+	return "Changing it needs a restart."
 }

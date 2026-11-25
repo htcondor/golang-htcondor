@@ -13,6 +13,9 @@
 #            reconfigure installs it on the running server)
 #   doc      one paragraph, written for an operator; this is what the
 #            configuration reference prints
+#   see      optional cross-references, each a text and a url relative
+#            to docs/operator/config.md; the reference prints them as
+#            links and the documentation tests check they resolve
 #
 # Migration in progress: most settings are still read as strings
 # elsewhere. See design_notes/DOCUMENTATION_SITE.md.
@@ -134,9 +137,17 @@ knobs:
     default: ""
     scope: startup
     doc: >
-      Where the provider sends the user back to. Unset, it is the
-      issuer followed by this server's callback path, which is the
-      right answer whenever the issuer is how users reach it.
+      Where the provider sends the user back to, which has to be a
+      redirect URI registered with it. Unset, it is the issuer followed
+      by this server's callback path, which is the right answer
+      whenever the issuer is how users reach it:
+      /mcp/oauth2/callback on a server whose only surface is MCP,
+      /oauth2/callback everywhere else. Both paths are served wherever
+      MCP is on, so an authorization started before an upgrade still
+      lands; but what has to be registered at the provider is the URI
+      this server sends, so a build that gains the web UI needs
+      /oauth2/callback added there -- or this set, to keep sending the
+      old one.
 
   - name: HTTP_API_OAUTH2_SCOPES
     type: words
@@ -145,7 +156,13 @@ knobs:
     doc: >
       Scopes requested at sign-in, space separated as RFC 6749 writes
       them, e.g. "openid profile email org.cilogon.userinfo". Unset
-      uses the built-in defaults.
+      uses the built-in defaults. Every scope has to be approved for
+      this client at the provider: CILogon rejects an unapproved scope
+      outright, where it used to ignore it silently, and that refusal
+      fails every login. offline_access is added to whatever is set
+      here unless HTTP_API_UPSTREAM_REFRESH is off; that one this
+      server adds itself, so a refusal of it is absorbed rather than
+      failing logins.
 
   - name: HTTP_API_OAUTH2_GROUPS_CLAIM
     type: string
@@ -160,17 +177,24 @@ knobs:
     default: ""
     scope: startup
     doc: >
-      Which claim names the account that owns the jobs, where the
-      provider's subject is not it.
+      Which claim names the account that owns the jobs, e.g. eppn,
+      where the provider's subject is not it. Unset uses the subject.
+    see:
+      - text: Local identity mapping
+        url: auth.md#local-identity-mapping
 
   - name: HTTP_API_OAUTH2_REQUIREMENTS
     type: string
     default: ""
     scope: startup
     doc: >
-      Login policy as a ClassAd expression over the token's claims. It
-      is parsed at startup and a malformed one stops the server, rather
-      than failing at somebody's first login.
+      Login policy as a ClassAd expression over the token's claims; a
+      login proceeds only where it evaluates true. It is parsed at
+      startup and a malformed one stops the server, rather than failing
+      at somebody's first login.
+    see:
+      - text: Local identity mapping
+        url: auth.md#local-identity-mapping
 
   - name: HTTP_API_OAUTH2_DB_PATH
     type: string
@@ -200,14 +224,22 @@ knobs:
 #   family        the Go constructor's name
 #   prefix        what comes before the folded instance name
 #   enumerated_by the list parameter naming the instances that exist
+#   enumerated_doc that parameter's own paragraph, required with it --
+#                 repeating the family's would print the same prose
+#                 twice, side by side, in the reference
 #   settings      as above, with name the suffix after the instance
 families:
   - family: Picker
     prefix: HTTP_API_PICKER_
     enumerated_by: HTTP_API_PICKERS
-    # Definitions are re-read wholesale on every reconfigure, so
-    # adding one needs no restart.
+    # SetConnectorConfig replaces the whole source from a freshly
+    # loaded configuration on every reconfigure, so every setting
+    # below is installed by one -- not just the parameter that names
+    # the instances.
     enumerated_scope: reconfig
+    enumerated_doc: >
+      Names the file choosers this access point offers. Each is then
+      configured by the HTTP_API_PICKER_<instance>_* settings.
     doc: >
       A file chooser the submit page offers, so a user can pick input
       files out of a connected account instead of uploading them.
@@ -218,21 +250,21 @@ families:
       - name: PROVIDER
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: >
           Which shipped chooser to run. Defaults to the chooser's own
           name, so the common case needs one line.
       - name: CONNECTOR
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: >
           The connector whose credential the chooser shows files with.
           Without one the chooser is not offered.
       - name: API_KEY
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         secret: true
         doc: >
           The provider's developer key, where its chooser needs one to
@@ -240,14 +272,14 @@ families:
       - name: APP_ID
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: >
           The provider's application id, where its chooser needs one
           alongside the developer key.
       - name: ORIGIN
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: >
           The origin the chooser is loaded from, when it is not the
           provider's default.
@@ -255,9 +287,13 @@ families:
   - family: Connector
     prefix: HTTP_API_CONNECTOR_
     enumerated_by: HTTP_API_CONNECTORS
-    # Definitions are re-read wholesale on every reconfigure, so
-    # adding one needs no restart.
+    # As above: a reconfigure rebuilds every definition, so each
+    # setting below is installed by one.
     enumerated_scope: reconfig
+    enumerated_doc: >
+      Names the external accounts this access point offers to connect.
+      Each is then configured by the
+      HTTP_API_CONNECTOR_<instance>_* settings.
     doc: >
       An external account users may connect, so a job can read their
       files from it. HTTP_API_CONNECTORS names the connectors offered;
@@ -267,19 +303,19 @@ families:
       - name: KIND
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: >
           Which shipped connector definition to use, for an id that is
           not itself one.
       - name: CLIENT_ID
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: The OAuth2 client id this access point registered with the provider.
       - name: CLIENT_SECRET_FILE
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         secret: true
         doc: >
           File holding the OAuth2 client secret. A connector with no
@@ -287,34 +323,34 @@ families:
       - name: AUTHORIZATION_URL
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: The provider's authorization endpoint, for a connector that is not a shipped one.
       - name: TOKEN_URL
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: The provider's token endpoint, for a connector that is not a shipped one.
       - name: SCOPES
         type: list
         default: ""
-        scope: startup
+        scope: reconfig
         doc: The scopes requested when a user connects this account.
       - name: GROUPS
         type: list
         default: ""
-        scope: startup
+        scope: reconfig
         doc: >
           Group(s) whose members may connect this account. Unset offers
           it to everyone who may sign in.
       - name: TRANSFER
         type: string
         default: ""
-        scope: startup
+        scope: reconfig
         doc: How a job fetches from this account, where the connector supports more than one way.
       - name: ENABLED
         type: bool
         default: "true"
-        scope: startup
+        scope: reconfig
         doc: >
           Whether the connector is offered at all. Default true, so a
           connector is turned off by setting this rather than by

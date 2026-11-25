@@ -73,6 +73,20 @@ wholesale on every reconfigure; and eight declared settings appeared in
 means a change to them does nothing and nothing says so. A test now
 checks the declaration against the table in both directions.
 
+**The scope test has a blind spot exactly where the scope was wrong a
+second time.** `TestReconfigScopesMatchTheKnobs` walks `knobs.All`,
+which by construction excludes a family's per-instance settings --
+they have no name until an instance does. All fourteen connector and
+picker per-instance settings were declared `startup`, and
+`SetConnectorConfig` replaces the whole source from a freshly loaded
+configuration on every reconfigure, so every one of them is installed
+by a reconfigure. The declaration was right for the parameter that
+names the instances and wrong for each setting underneath it, and the
+test that exists to catch precisely that could not see them. Nothing
+surfaced it until the reference began printing the scope for settings
+the test does not cover; printing a claim to an operator is a check
+that no test in this repo was performing.
+
 **The cheap drift test is weaker than this note first claimed.**
 `HTTP_API_SPOOL_BUFFER_DIR` is read in exactly one place,
 `runDemoMode`, so a check that matches parameter names against the code
@@ -501,6 +515,24 @@ one package plus its mechanical rewrite; the templated families; the
 stock-knob generator from `param_info.in`; the lint, switched on
 per-directory. A grep-based drift test can ship on day one and retires
 when the lint covers everything.
+
+*The generated reference has landed*, out of order with the rest of the
+stage and deliberately so: at 22 declared settings of roughly 240 it
+covers a fraction, but from here every setting converted documents
+itself. Left until the conversion was finished, the whole exercise
+would have paid nothing out until the last setting moved. It writes
+into a marked region of `docs/operator/config.md` rather than a page of
+its own, so the prose no table can generate stays where it is, and the
+settings not yet in the table keep their hand-written rows below it.
+Three checks came with it: the region is current, every declared
+setting has an entry, and no declared setting also has a hand-written
+row -- that last one being what stops the two halves describing one
+setting differently while they coexist. Converting those four rows
+needed a `see:` field, because three of them carried a cross-reference
+into another page and a paragraph that a Go doc comment also prints
+cannot hold a relative Markdown link; the reference renders it as a
+link that the documentation tests then check resolves, and the comment
+gets the title alone.
 
 **3. OpenAPI out of the Go string.** *Done, ahead of stage 2's
 completion, because it depended on nothing.* The document is

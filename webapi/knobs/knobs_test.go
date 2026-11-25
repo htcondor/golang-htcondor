@@ -1,9 +1,11 @@
 package knobs_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -128,4 +130,106 @@ func TestSecretSettingsSaySo(t *testing.T) {
 		t.Errorf("the marker appears %d times for %d secret settings; want %d",
 			n, wantSecret, wantSecret*2)
 	}
+}
+
+// referencePath is the page whose generated region the knob table
+// prints into.
+const referencePath = "../../docs/operator/config.md"
+
+// The reference is generated. Regenerate it with `make knobs`.
+//
+// Run against a copy rather than comparing a rendered region, so the
+// marker handling is exercised too: a page whose markers were lost in
+// an edit has to fail here rather than silently stop being updated.
+func TestReferenceIsCurrent(t *testing.T) {
+	want, err := os.ReadFile(referencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	copyTo := filepath.Join(dir, "config.md")
+	// G703: copyTo is a fixed basename under this test's own t.TempDir().
+	//nolint:gosec
+	if err := os.WriteFile(copyTo, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// G204: a fixed command; the paths are this test's own temp files.
+	//nolint:gosec
+	cmd := exec.CommandContext(t.Context(), "go", "run", "./generate.go",
+		"-out", filepath.Join(dir, "knobs_gen.go"), "-docs", copyTo)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("running the generator: %v\n%s", err, b)
+	}
+	got, err := os.ReadFile(copyTo) //nolint:gosec // G304: this test's own temp file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("%s is out of date; run `make knobs`", referencePath)
+	}
+}
+
+// Every declared setting has to reach the page, as its own entry. The
+// generator writes them all, so this fails only if the generated
+// region stopped being where the reference is -- which is the whole
+// point of generating it.
+func TestEveryKnobIsInTheReference(t *testing.T) {
+	page, err := os.ReadFile(referencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(page)
+	for _, k := range knobs.All {
+		if !strings.Contains(body, "### `"+k.Name()+"`\n") {
+			t.Errorf("%s is declared but has no entry in %s", k.Name(), referencePath)
+		}
+	}
+}
+
+// A setting documented in both halves of the page is two descriptions
+// of one thing, which is what generating the reference is meant to
+// end. A hand-written row for a declared setting is therefore an
+// error: fold its prose into knobs.yaml and delete the row.
+func TestNoKnobIsDocumentedTwice(t *testing.T) {
+	page, err := os.ReadFile(referencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	for _, k := range knobs.All {
+		declared[k.Name()] = true
+	}
+
+	hand, err := handWrittenPart(string(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := regexp.MustCompile(`HTTP_API_[A-Z0-9_]+`)
+	for _, line := range strings.Split(hand, "\n") {
+		if !strings.HasPrefix(line, "| ") {
+			continue
+		}
+		// The first cell is what the row documents; a name in the
+		// prose of some other row is a cross-reference, not a second
+		// description.
+		cell, _, _ := strings.Cut(strings.TrimPrefix(line, "| "), "|")
+		for _, n := range name.FindAllString(cell, -1) {
+			if declared[n] {
+				t.Errorf("%s is declared in knobs.yaml and also has a hand-written row: "+
+					"fold the row's prose into the table and delete the row", n)
+			}
+		}
+	}
+}
+
+// handWrittenPart is the page with the generated region removed.
+func handWrittenPart(body string) (string, error) {
+	const begin = "<!-- BEGIN GENERATED SETTINGS"
+	const end = "<!-- END GENERATED SETTINGS -->"
+	i := strings.Index(body, begin)
+	j := strings.Index(body, end)
+	if i < 0 || j < i {
+		return "", fmt.Errorf("%s has no generated region", referencePath)
+	}
+	return body[:i] + body[j+len(end):], nil
 }
