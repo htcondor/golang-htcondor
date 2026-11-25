@@ -4725,8 +4725,20 @@ func (sf *SubmitFile) pushMacroContext(jobID JobID, queueVars map[string]string)
 		sf.cfg.Set("Step", strconv.Itoa(jobID.Proc))
 	}
 
+	// $(Row) is $(ItemIndex) -- condor_submit declares them as one macro
+	// (both "Row" and "ItemIndex" map to UnliveRowMacroDef in
+	// SubmitMacroDefaults) bound to the same item_index. So Row follows
+	// whatever ItemIndex resolved to above rather than carrying its own
+	// default: an iterator that reports one necessarily reports the other.
+	//
+	// Defaulting it to the proc id instead made Row count procs for every
+	// iterator that does not spell it out -- "queue 2 x in (a b)" gave
+	// 0,1,2,3 where condor_submit gives 0,0,1,1 -- which is $(Process),
+	// not $(Row).
 	if row, ok := queueVars["Row"]; ok {
 		sf.cfg.Set("Row", row)
+	} else if itemIndex, ok := queueVars["ItemIndex"]; ok {
+		sf.cfg.Set("Row", itemIndex)
 	} else {
 		sf.cfg.Set("Row", strconv.Itoa(jobID.Proc))
 	}

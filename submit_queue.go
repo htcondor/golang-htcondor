@@ -31,9 +31,19 @@ func (s *simpleIterator) Next() bool {
 	return false
 }
 
+// Values: a bare "queue N" iterates STEPS of a single item, not items.
+//
+// condor_submit derives both numbers from one counter --
+// item_index = iter_index / step_size and step = iter_index % step_size,
+// where step_size is the N of "queue N" (SubmitStepFromQArgs::next_impl).
+// With no itemdata there is one item, so iter_index never reaches N and
+// item_index stays 0 for every proc while step counts 0..N-1. Reporting
+// the proc counter as ItemIndex instead made $(ItemIndex) and $(Row)
+// count procs, which is what $(Process) is for.
 func (s *simpleIterator) Values() map[string]string {
 	return map[string]string{
-		"ItemIndex": fmt.Sprintf("%d", s.current-1),
+		"ItemIndex": "0",
+		"Step":      fmt.Sprintf("%d", s.current-1),
 	}
 }
 
