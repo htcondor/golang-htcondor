@@ -1373,11 +1373,17 @@ func loadAccessControlGroups(cfg *config.Config, config *mcpConfig, logger *logg
 	// The two cross-user privileges. Logged at the same level as the
 	// others, because "who can see and change everyone's jobs" is
 	// exactly what an operator wants to find in the startup log.
-	if adminGroup, ok := cfg.Get("HTTP_API_MCP_ADMIN_GROUP"); ok && adminGroup != "" {
+	// Both settings are obsolete and deliberately absent from the
+	// documentation, so these are the only reads of them. staticcheck
+	// reports a read of a deprecated variable, which is the point: a
+	// new one has to be written deliberately and say why.
+	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+	if adminGroup := knobs.MCPAdminGroup.Get(cfg); adminGroup != "" {
 		config.mcpAdminGroup = adminGroup
 		logger.Info(logging.DestinationHTTP, "MCP admin group: members may READ every user's jobs", "group", adminGroup)
 	}
-	if superGroup, ok := cfg.Get("HTTP_API_MCP_SUPERUSER_GROUP"); ok && superGroup != "" {
+	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+	if superGroup := knobs.MCPSuperuserGroup.Get(cfg); superGroup != "" {
 		config.mcpSuperuserGroup = superGroup
 		logger.Info(logging.DestinationHTTP, "MCP superuser group: members may CHANGE any user's jobs", "group", superGroup)
 	}
@@ -2230,7 +2236,8 @@ func getHTTPConfig(cfg *config.Config, logger *logging.Logger) (listenAddrResult
 	if !flagWasSet("listen") {
 		addr, ok := cfg.Get("HTTP_API_LISTEN_ADDR")
 		if !ok || strings.TrimSpace(addr) == "" {
-			if alias, aliasOK := cfg.Get("HTTP_API_LISTEN"); aliasOK && strings.TrimSpace(alias) != "" {
+			//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+			if alias := knobs.Listen.Get(cfg); strings.TrimSpace(alias) != "" {
 				addr, ok = alias, true
 				logger.Warn(logging.DestinationHTTP,
 					"HTTP_API_LISTEN is an alias; the setting is named HTTP_API_LISTEN_ADDR",

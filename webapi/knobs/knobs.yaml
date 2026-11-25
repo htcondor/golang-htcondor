@@ -13,6 +13,10 @@
 #            reconfigure installs it on the running server)
 #   doc      one paragraph, written for an operator; this is what the
 #            configuration reference prints
+#   obsolete optional; marks a setting that still works but should not
+#            be used. It is left out of the reference entirely, and the
+#            generated declaration is marked Deprecated so staticcheck
+#            reports every read. superseded_by names its replacement.
 #   see      optional cross-references, each a text and a url relative
 #            to docs/operator/config.md; the reference prints them as
 #            links and the documentation tests check they resolve
@@ -214,6 +218,42 @@ knobs:
       Where an archive dropped in the SSH gateway's /submit/, or posted
       to the REST upload endpoints, is buffered while it is unpacked.
       Unset holds it in memory instead, under a much smaller ceiling.
+
+
+  - name: HTTP_API_LISTEN
+    type: string
+    default: ""
+    scope: startup
+    obsolete:
+      superseded_by: HTTP_API_LISTEN_ADDR
+    doc: >
+      An older spelling of the listen address, honored when
+      HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is
+      used. HTTP_API_LISTEN_ADDR wins where both are set.
+
+  # The two cross-user MCP privileges. Obsolete, so they are declared
+  # here -- the table is the only place a setting may be spelled -- and
+  # left out of the reference on purpose.
+  - name: HTTP_API_MCP_ADMIN_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete:
+      superseded_by: HTTP_API_WEBUI_ADMIN_GROUP
+    doc: >
+      Group(s) whose members may read every user's jobs through MCP.
+      Read as a raw string and split downstream, so a change to how
+      lists are parsed does not change who is privileged.
+
+  - name: HTTP_API_MCP_SUPERUSER_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete:
+      superseded_by: HTTP_API_SUPERUSER_GROUP
+    doc: >
+      Group(s) whose members may change any user's jobs through MCP.
+      Read as a raw string and split downstream, as above.
 
 
 # Families: one group of parameters per named instance, with the name

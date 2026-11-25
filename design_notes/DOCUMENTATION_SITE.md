@@ -534,6 +534,25 @@ cannot hold a relative Markdown link; the reference renders it as a
 link that the documentation tests then check resolves, and the comment
 gets the title alone.
 
+*Not every undocumented setting wants documenting.* Some are
+deliberately undocumented because they are obsolete and their use is to
+be discouraged, which the table now says with `obsolete:`. Such a
+setting is declared like any other -- the table is the only place a
+name may be spelled -- and then left out of the reference entirely,
+because documenting it, even as obsolete, is how somebody finds it and
+decides to use it. The people who need to know are the ones who already
+have it set, and `knobs.Obsolete` is what lets the daemon tell them.
+Three things make the marker do work rather than describe an intention:
+the generated declaration carries Go's own `Deprecated:` paragraph, so
+staticcheck reports every read and the one place allowed to read it
+carries a `//nolint` saying why; a test checks the name appears nowhere
+under `docs/`; and `superseded_by`, where it is set, has to name a
+setting some page does mention, since a pointer into nothing is worse
+than no pointer. That last pair is why the check matches whole
+parameter names -- `HTTP_API_LISTEN` is a prefix of the current
+`HTTP_API_LISTEN_ADDR`, and a substring match read every page
+documenting the current setting as documenting the obsolete one.
+
 **3. OpenAPI out of the Go string.** *Done, ahead of stage 2's
 completion, because it depended on nothing.* The document is
 `webapi/httpserver/openapi.json`, embedded with `go:embed`;

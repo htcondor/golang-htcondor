@@ -36,6 +36,21 @@ type knob struct {
 	// relative path means nothing from there and a path in two places
 	// is a path that goes stale in one of them.
 	See []seeAlso `yaml:"see"`
+	// Obsolete marks a setting that still works but should not be
+	// used. The reference leaves it out entirely -- documenting it is
+	// how an operator finds it -- and the generated declaration is
+	// marked Deprecated, which staticcheck reports at every read, so
+	// the one place allowed to read it has to say so out loud.
+	Obsolete *obsolete `yaml:"obsolete"`
+}
+
+// obsolete says a setting is on its way out, and what to use instead.
+type obsolete struct {
+	// SupersededBy names the setting that replaces this one. Optional,
+	// since not everything obsolete has a single successor, but where
+	// it is set a test checks the name is one the reference documents:
+	// a pointer into nothing is worse than no pointer.
+	SupersededBy string `yaml:"superseded_by"`
 }
 
 // seeAlso is one cross-reference: the section's title, and its URL
@@ -160,6 +175,16 @@ func Render(knobs []knob, families []family) ([]byte, error) {
 		for _, line := range wrap(doc, 68) {
 			fmt.Fprintf(&b, "// %s\n", line)
 		}
+		// Go's own deprecation marker, in its own paragraph where the
+		// tooling looks for it: staticcheck then reports every read of
+		// this variable, so a read has to be deliberate and annotated.
+		if k.Obsolete != nil {
+			b.WriteString("//\n")
+			for _, line := range wrap("Deprecated: "+
+				strings.TrimPrefix(obsoleteSentence(k), "Obsolete: "), 68) {
+				fmt.Fprintf(&b, "// %s\n", line)
+			}
+		}
 		fmt.Fprintf(&b, "var %s = config.%s(%q, %s, %s,\n\t%q)\n\n",
 			ident, ctor, k.Name, def, scope, doc)
 	}
@@ -183,6 +208,20 @@ func Render(knobs []knob, families []family) ([]byte, error) {
 	for _, f := range families {
 		if f.EnumeratedBy != "" {
 			fmt.Fprintf(&b, "\t%sInstances.Knob,\n", f.Family)
+		}
+	}
+	b.WriteString("}\n\n")
+
+	// Obsolete is emitted even when empty, so a consumer that filters
+	// on it compiles whether or not anything is currently marked.
+	b.WriteString("// Obsolete maps each obsolete setting to the setting that replaces\n" +
+		"// it, or to the empty string where nothing single replaces it. It is\n" +
+		"// what the reference leaves out and what a test checks stays out of\n" +
+		"// the documentation; a daemon can also use it to report a setting an\n" +
+		"// operator still has in their configuration.\nvar Obsolete = map[string]string{\n")
+	for _, k := range knobs {
+		if k.Obsolete != nil {
+			fmt.Fprintf(&b, "\t%q: %q,\n", k.Name, k.Obsolete.SupersededBy)
 		}
 	}
 	b.WriteString("}\n")
@@ -311,10 +350,22 @@ func docParagraph(k knob) string {
 // paragraph, and each cross-reference named rather than linked.
 func docText(k knob) string {
 	doc := docParagraph(k)
+	if k.Obsolete != nil {
+		doc = obsoleteSentence(k) + " " + doc
+	}
 	for _, s := range k.See {
 		doc += fmt.Sprintf(" See %q in the operator guide.", s.Text)
 	}
 	return doc
+}
+
+// obsoleteSentence is how an obsolete setting introduces itself,
+// wherever its documentation is printed.
+func obsoleteSentence(k knob) string {
+	if k.Obsolete.SupersededBy != "" {
+		return fmt.Sprintf("Obsolete: superseded by %s.", k.Obsolete.SupersededBy)
+	}
+	return "Obsolete: do not use it in new configuration."
 }
 
 func validate(k knob) error {
@@ -330,6 +381,15 @@ func validate(k knob) error {
 	}
 	if err := noMarkdown(k.Name, k.Doc); err != nil {
 		return err
+	}
+	if o := k.Obsolete; o != nil {
+		switch {
+		case o.SupersededBy == k.Name:
+			return fmt.Errorf("%s: superseded_by names the setting itself", k.Name)
+		case o.SupersededBy != "" && !strings.HasPrefix(o.SupersededBy, "HTTP_API_"):
+			return fmt.Errorf("%s: superseded_by must name an HTTP_API_ setting, got %q",
+				k.Name, o.SupersededBy)
+		}
 	}
 	return validateSee(k)
 }
@@ -531,6 +591,13 @@ func RenderDocs(knobs []knob, families []family) (string, error) {
 	for _, k := range knobs {
 		if err := validate(k); err != nil {
 			return "", err
+		}
+		// An obsolete setting is left out of the reference entirely.
+		// Documenting it, even as obsolete, is how somebody finds it
+		// and decides to use it; the people who need to know are the
+		// ones who already have it set, and the daemon can tell them.
+		if k.Obsolete != nil {
+			continue
 		}
 		entries = append(entries, docEntry{k.Name, docKnob("###", k.Name, k)})
 	}

@@ -45,11 +45,11 @@ func fromKnob(k config.Knob) reconfigParam {
 	return reconfigParam{name: k.Name()}
 }
 
-// A dynamic entry for a declared setting would be
-// reconfigParam{name: k.Name(), apply: ...}; there is no such setting
-// yet, because the settings converted so far are all read at startup.
-// TestReconfigScopesMatchTheKnobs is what will say so when one is
-// declared scope: reconfig and listed without an apply.
+// A dynamic entry for a declared setting is written out rather than
+// built by fromKnob, because it carries an apply as well as the name:
+// see the two MCP group entries below. TestReconfigScopesMatchTheKnobs
+// is what says so when one is declared scope: reconfig and listed
+// without an apply.
 
 // reconfigTarget is the running server a reconfigure updates. It is an
 // interface, not *httpserver.Server, so the table and its bookkeeping can be
@@ -227,12 +227,17 @@ var reconfigParams = []reconfigParam{
 		name:  "HTTP_API_MCP_WRITE_GROUP",
 		apply: func(s reconfigTarget, v string) { s.SetMCPWriteGroups(v) },
 	},
+	// Declared, and obsolete: the name comes from the table so the two
+	// cannot drift, and staticcheck reports the read for the reason it
+	// does at the startup read in main.go.
 	{
-		name:  "HTTP_API_MCP_ADMIN_GROUP",
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		name:  knobs.MCPAdminGroup.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetMCPAdminGroups(v) },
 	},
 	{
-		name:  "HTTP_API_MCP_SUPERUSER_GROUP",
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		name:  knobs.MCPSuperuserGroup.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetMCPSuperuserGroups(v) },
 	},
 	// Reloaded unconditionally in reconfigure() as well; this entry is what
@@ -348,6 +353,12 @@ var reconfigParams = []reconfigParam{
 
 	// Listener and credentials, all bound or opened during startup.
 	{name: "HTTP_API_LISTEN_ADDR"},
+	// The older spelling of the same thing, listed so a change to it is
+	// reported as needing a restart rather than silently ignored. An
+	// operator still using the alias is the one most likely to be
+	// surprised.
+	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+	fromKnob(knobs.Listen.Knob),
 	{name: "HTTP_API_SIGNING_KEY"},
 	{name: "HTTP_API_KEK_FILE"},
 	fromKnob(knobs.TLSCert.Knob),

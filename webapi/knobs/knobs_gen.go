@@ -15,6 +15,38 @@ import (
 var IdleTimeout = config.DefineDuration("HTTP_API_IDLE_TIMEOUT", time.Duration(120000000000) /* 120s */, config.Startup,
 	"How long a keep-alive connection may sit idle before the server closes it, as a Go duration.")
 
+// Listen is HTTP_API_LISTEN.
+//
+// Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of
+// the listen address, honored when HTTP_API_LISTEN_ADDR is unset and
+// reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins
+// where both are set.
+//
+// Deprecated: superseded by HTTP_API_LISTEN_ADDR.
+var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
+	"Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of the listen address, honored when HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins where both are set.")
+
+// MCPAdminGroup is HTTP_API_MCP_ADMIN_GROUP.
+//
+// Obsolete: superseded by HTTP_API_WEBUI_ADMIN_GROUP. Group(s) whose
+// members may read every user's jobs through MCP. Read as a raw string
+// and split downstream, so a change to how lists are parsed does not
+// change who is privileged.
+//
+// Deprecated: superseded by HTTP_API_WEBUI_ADMIN_GROUP.
+var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.Reconfig,
+	"Obsolete: superseded by HTTP_API_WEBUI_ADMIN_GROUP. Group(s) whose members may read every user's jobs through MCP. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
+
+// MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
+//
+// Obsolete: superseded by HTTP_API_SUPERUSER_GROUP. Group(s) whose
+// members may change any user's jobs through MCP. Read as a raw string
+// and split downstream, as above.
+//
+// Deprecated: superseded by HTTP_API_SUPERUSER_GROUP.
+var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
+	"Obsolete: superseded by HTTP_API_SUPERUSER_GROUP. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
+
 // OAuth2AuthURL is HTTP_API_OAUTH2_AUTH_URL.
 //
 // The provider's authorization endpoint, used when discovery is not
@@ -414,6 +446,9 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 // are not here: they have no name until an instance does.
 var All = []config.Knob{
 	IdleTimeout.Knob,
+	Listen.Knob,
+	MCPAdminGroup.Knob,
+	MCPSuperuserGroup.Knob,
 	OAuth2AuthURL.Knob,
 	OAuth2ClientID.Knob,
 	OAuth2ClientSecretFile.Knob,
@@ -435,4 +470,15 @@ var All = []config.Knob{
 	WriteTimeout.Knob,
 	ConnectorInstances.Knob,
 	PickerInstances.Knob,
+}
+
+// Obsolete maps each obsolete setting to the setting that replaces
+// it, or to the empty string where nothing single replaces it. It is
+// what the reference leaves out and what a test checks stays out of
+// the documentation; a daemon can also use it to report a setting an
+// operator still has in their configuration.
+var Obsolete = map[string]string{
+	"HTTP_API_LISTEN":              "HTTP_API_LISTEN_ADDR",
+	"HTTP_API_MCP_ADMIN_GROUP":     "HTTP_API_WEBUI_ADMIN_GROUP",
+	"HTTP_API_MCP_SUPERUSER_GROUP": "HTTP_API_SUPERUSER_GROUP",
 }
