@@ -30,6 +30,12 @@ type knob struct {
 	// appended to the documentation, so the reference says so without
 	// each paragraph having to remember to.
 	Secret bool `yaml:"secret"`
+	// DefaultDoc is what the reference prints in place of the literal
+	// default, for a setting whose "unset" behaviour is not a value
+	// this table holds: several token lifespans are read as zero and
+	// the duration is substituted downstream, so the literal is 0s and
+	// the answer an operator wants is 1h. Written as a whole sentence.
+	DefaultDoc string `yaml:"default_doc"`
 	// See is where the setting is explained at length. The reference
 	// prints it as a link, which the documentation tests then check
 	// resolves; a Go doc comment gets the title alone, since a
@@ -382,6 +388,10 @@ func validate(k knob) error {
 	if err := noMarkdown(k.Name, k.Doc); err != nil {
 		return err
 	}
+	if d := strings.TrimSpace(k.DefaultDoc); d != "" && !strings.HasSuffix(d, ".") {
+		return fmt.Errorf("%s: default_doc is a whole sentence and ends with a period, got %q",
+			k.Name, d)
+	}
 	if o := k.Obsolete; o != nil {
 		switch {
 		case o.SupersededBy == k.Name:
@@ -719,6 +729,9 @@ func docType(kind string) string {
 
 // docDefault says what applies when the setting is absent.
 func docDefault(k knob) string {
+	if d := strings.Join(strings.Fields(k.DefaultDoc), " "); d != "" {
+		return d
+	}
 	if strings.TrimSpace(k.Default) == "" {
 		return "Unset by default."
 	}

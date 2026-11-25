@@ -367,6 +367,30 @@ var reconfigParams = []reconfigParam{
 	// nowhere: a change to it did nothing and nothing said so.
 	fromKnob(knobs.TLSCACert.Knob),
 
+	// The built-in identity provider, stood up once at startup: turning
+	// it on or off, and the issuer and token lifetimes it stamps into
+	// everything it has already signed.
+	fromKnob(knobs.EnableIDP.Knob),
+	fromKnob(knobs.IDPIssuer.Knob),
+	fromKnob(knobs.IDPAccessTokenLifespan.Knob),
+	fromKnob(knobs.IDPRefreshTokenLifespan.Knob),
+
+	// The same for the OAuth2 authorization server this one is. The
+	// lifespans are handed to the provider when it is built, so a
+	// change reaches nothing already issued and nothing issued next
+	// either until a restart.
+	fromKnob(knobs.OAuth2AccessTokenLifespan.Knob),
+	fromKnob(knobs.OAuth2RefreshTokenLifespan.Knob),
+	fromKnob(knobs.OAuth2MaxGrantLifetime.Knob),
+
+	// The retention sweep's window, read when the sweeper is started.
+	fromKnob(knobs.TokenRetention.Knob),
+
+	// Whether the user header is trusted from anywhere, decided when
+	// the handler is built. Listed so that turning it off in the
+	// configuration and reconfiguring does not look like it worked.
+	fromKnob(knobs.UserHeaderTrustAny.Knob),
+
 	// The HTTP server's timeouts, captured when it was built.
 	fromKnob(knobs.ReadTimeout.Knob),
 	fromKnob(knobs.WriteTimeout.Knob),

@@ -1332,7 +1332,17 @@ func loadSkillsReloadInterval(cfg *config.Config, logger *logging.Logger) time.D
 	return d
 }
 
-func loadTokenLifespan(cfg *config.Config, key string, logger *logging.Logger) time.Duration {
+// loadTokenLifespan reads a token lifespan strictly: absent means zero,
+// which each consumer substitutes its own default for, and anything
+// that is not a positive duration refuses to start.
+//
+// It reads the raw value through the knob's name rather than
+// DurationKnob.Get, which reports a malformed value and falls back to
+// the default. Falling back is right for a timeout and wrong for a
+// token lifetime: a typo would silently issue tokens with a lifetime
+// nobody chose.
+func loadTokenLifespan(cfg *config.Config, k config.DurationKnob, logger *logging.Logger) time.Duration {
+	key := k.Name()
 	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
@@ -1726,15 +1736,15 @@ func loadOAuth2Config(cfg *config.Config, config *mcpConfig, listenAddrFromConfi
 	loadAccessControlGroups(cfg, config, logger)
 
 	// Load token lifespans (zero means "use the httpserver-package default")
-	config.oauth2AccessTokenLifespan = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN", logger)
+	config.oauth2AccessTokenLifespan = loadTokenLifespan(cfg, knobs.OAuth2AccessTokenLifespan, logger)
 	if config.oauth2AccessTokenLifespan > 0 {
 		logger.Info(logging.DestinationHTTP, "OAuth2 access token lifespan", "duration", config.oauth2AccessTokenLifespan)
 	}
-	config.oauth2RefreshTokenLifespan = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN", logger)
+	config.oauth2RefreshTokenLifespan = loadTokenLifespan(cfg, knobs.OAuth2RefreshTokenLifespan, logger)
 	if config.oauth2RefreshTokenLifespan > 0 {
 		logger.Info(logging.DestinationHTTP, "OAuth2 refresh token lifespan", "duration", config.oauth2RefreshTokenLifespan)
 	}
-	config.oauth2MaxGrantLifetime = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_MAX_GRANT_LIFETIME", logger)
+	config.oauth2MaxGrantLifetime = loadTokenLifespan(cfg, knobs.OAuth2MaxGrantLifetime, logger)
 	if config.oauth2MaxGrantLifetime > 0 {
 		logger.Info(logging.DestinationHTTP, "OAuth2 maximum grant idle time", "duration", config.oauth2MaxGrantLifetime)
 	}
@@ -2318,15 +2328,7 @@ func splitCommaList(v string) []string {
 // HTCondor's config parser treats as boolean-true: "true", "1",
 // "yes", "on").
 func loadUserHeaderTrustAnyUnsafe(cfg *config.Config) bool {
-	v, ok := cfg.Get("HTTP_API_USER_HEADER_TRUST_ANY")
-	if !ok {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "true", "1", "yes", "on":
-		return true
-	}
-	return false
+	return knobs.UserHeaderTrustAny.Get(cfg)
 }
 
 // setupCollector creates collector from CLI flag or config
@@ -2540,7 +2542,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 
 	// Check if IDP should be enabled
 	enableIDP := false
-	if idpEnable, ok := cfg.Get("HTTP_API_ENABLE_IDP"); ok && idpEnable == "true" {
+	if knobs.EnableIDP.Get(cfg) {
 		enableIDP = true
 		log.Println("Built-in IDP enabled via configuration")
 	}
@@ -2552,15 +2554,15 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	var idpAccessLifespan, idpRefreshLifespan time.Duration
 	if enableIDP {
 		// Load IDP issuer
-		if issuer, ok := cfg.Get("HTTP_API_IDP_ISSUER"); ok && issuer != "" {
+		if issuer := knobs.IDPIssuer.Get(cfg); issuer != "" {
 			idpIssuer = issuer
 		} else {
 			idpIssuer = loadOAuth2Issuer(cfg, listenAddrFromConfig)
 		}
 		log.Printf("IDP issuer: %s", idpIssuer)
 
-		idpAccessLifespan = loadTokenLifespan(cfg, "HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN", logger)
-		idpRefreshLifespan = loadTokenLifespan(cfg, "HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN", logger)
+		idpAccessLifespan = loadTokenLifespan(cfg, knobs.IDPAccessTokenLifespan, logger)
+		idpRefreshLifespan = loadTokenLifespan(cfg, knobs.IDPRefreshTokenLifespan, logger)
 	}
 
 	// Compute HTTP base URL for MCP file download links
@@ -4427,7 +4429,10 @@ func loadUpstreamRefresh(cfg *config.Config, logger *logging.Logger) string {
 // A bare number is refused rather than read as nanoseconds, which is what
 // ParseDuration would do with "90" and is never what anybody means.
 func loadTokenRetention(cfg *config.Config, logger *logging.Logger) string {
-	raw, ok := cfg.Get("HTTP_API_TOKEN_RETENTION")
+	// The raw string, not a typed read: the value is a duration or the
+	// word "off", which no knob type parses, and the strictness below
+	// is the point.
+	raw, ok := cfg.Get(knobs.TokenRetention.Name())
 	if !ok {
 		return ""
 	}

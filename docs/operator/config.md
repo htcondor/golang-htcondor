@@ -109,12 +109,59 @@ one.
 How a job fetches from this account, where the connector supports more
 than one way.
 
+### `HTTP_API_ENABLE_IDP`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Run the built-in identity provider, so this server signs users in
+itself instead of sending them to an external one. Off by default. The
+provider shares the unified application database; the separate
+`HTTP_API_IDP_DB_PATH` it once had is no longer read.
+
 ### `HTTP_API_IDLE_TIMEOUT`
 
 **Duration.** Default `120s`. Changing it needs a restart.
 
 How long a keep-alive connection may sit idle before the server closes
 it, as a Go duration.
+
+### `HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues access tokens that live one hour. Changing it needs a restart.
+
+How long an access token the built-in identity provider issues stays
+valid, as a Go duration. A value that is not a duration, or is not
+positive, refuses to start rather than being quietly ignored -- a
+token lifetime is not something to get wrong silently. Read only when
+`HTTP_API_ENABLE_IDP` is on.
+
+### `HTTP_API_IDP_ISSUER`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The issuer the built-in identity provider names in its own documents.
+Unset derives it the same way `HTTP_API_OAUTH2_ISSUER` is derived,
+from the externally-visible URL. Read only when `HTTP_API_ENABLE_IDP`
+is on.
+
+### `HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues refresh tokens that live 30 days. Changing it needs a restart.
+
+How long a refresh token the built-in identity provider issues stays
+valid. It has to be at least the access token lifespan, or the
+provider refuses to start: a refresh token that dies first makes every
+refresh fail after the access token expires. Read only when
+`HTTP_API_ENABLE_IDP` is on, and refused the same way as above when it
+is not a positive duration.
+
+### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues access tokens that live one hour. Changing it needs a restart.
+
+How long an access token this server issues as an OAuth2 authorization
+server stays valid, as a Go duration. Refused the same way as the
+identity provider's when it is not a positive duration.
 
 ### `HTTP_API_OAUTH2_AUTH_URL`
 
@@ -172,6 +219,20 @@ is logged as a warning rather than refused.
 The issuer this server names in its own OAuth2 documents. Unset, it is
 derived from the externally-visible URL, assuming https.
 
+### `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME`
+
+**Duration.** Unset lets a grant go 30 days unused. Changing it needs a restart.
+
+How long a grant may go unused before the user has to consent again.
+Measured from the grant's last use rather than from consent, so a
+client that refreshes inside the window keeps its grant indefinitely,
+which is what lets an unattended integration keep working; an
+abandoned grant still expires. What bounds a grant in active use is
+the revocation oracles, not this.
+
+See [Refresh-grant
+re-authorization](auth.md#refresh-grant-re-authorization).
+
 ### `HTTP_API_OAUTH2_REDIRECT_URL`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -186,6 +247,18 @@ upgrade still lands; but what has to be registered at the provider is
 the URI this server sends, so a build that gains the web UI needs
 /oauth2/callback added there -- or this set, to keep sending the old
 one.
+
+### `HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues refresh tokens that live 30 days. Changing it needs a restart.
+
+How long one refresh token this server issues stays valid. Every
+refresh resets it, which is why `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME`
+exists: without a cap, a client that keeps refreshing keeps its grant
+forever.
+
+See [Refresh-grant
+re-authorization](auth.md#refresh-grant-re-authorization).
 
 ### `HTTP_API_OAUTH2_REQUIREMENTS`
 
@@ -371,6 +444,29 @@ TLS.
 
 Private key for `HTTP_API_TLS_CERT`. Keep it readable only by the
 account the server runs as.
+
+### `HTTP_API_TOKEN_RETENTION`
+
+**String.** Unset keeps dead token rows for 90 days. Changing it needs a restart.
+
+How long rows for dead OAuth2 tokens are kept before being swept, as a
+duration with a unit, or off (equivalently 0) to keep them forever. A
+bare number is refused rather than read as nanoseconds, which is what
+parsing "90" would otherwise mean and is never what anybody intends;
+so is anything else that does not parse, and the server refuses to
+start rather than sweeping on a figure nobody chose. Only rows that
+are already dead -- revoked or expired -- are ever removed, because a
+live grant is somebody's session whatever its age.
+
+### `HTTP_API_USER_HEADER_TRUST_ANY`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Accept the user header from any source address. For demonstration and
+testing only: with it on, anything that can reach this server can
+claim to be any user, so it undoes authentication rather than relaxing
+it. Off by default, and the server logs a warning for as long as it is
+on. Leave it off anywhere a real person has an account.
 
 ### `HTTP_API_WRITE_TIMEOUT`
 
