@@ -86,6 +86,11 @@ type QueueStatement struct {
 	// whitespace, `from` keeps each line whole as a row of columns -- and
 	// nothing downstream can tell them apart from Items alone.
 	ItemsFrom bool
+	// Matching says the statement is the `matching` form, so File holds a
+	// glob pattern rather than a filename. Guessing that from the text --
+	// looking for glob metacharacters -- read a pattern that happens to
+	// have none as an itemdata file.
+	Matching bool
 	File     string   // Filename for "from" clause
 	Slice    string   // Slice specification like [1:10]
 }
@@ -563,32 +568,36 @@ queue_statement:
 	{
 		// "queue matching pattern"
 		$$ = &QueueStatement{
-			Count: 0, // Determined by matches
-			File:  $3, // Pattern stored in File field
+			Count:    0, // Determined by matches
+			Matching: true,
+			File:     $3, // Pattern stored in File field
 		}
 	}
 	| QUEUE MATCHING STRING
 	{
 		// "queue matching pattern" (with quoted pattern)
 		$$ = &QueueStatement{
-			Count: 0, // Determined by matches
-			File:  $3, // Pattern stored in File field
+			Count:    0, // Determined by matches
+			Matching: true,
+			File:     $3, // Pattern stored in File field
 		}
 	}
 	| QUEUE queue_count MATCHING IDENT
 	{
 		// "queue N matching pattern"
 		$$ = &QueueStatement{
-			Count: $2,
-			File:  $4, // Pattern stored in File field
+			Count:    $2,
+			Matching: true,
+			File:     $4, // Pattern stored in File field
 		}
 	}
 	| QUEUE queue_count MATCHING STRING
 	{
 		// "queue N matching pattern" (with quoted pattern)
 		$$ = &QueueStatement{
-			Count: $2,
-			File:  $4, // Pattern stored in File field
+			Count:    $2,
+			Matching: true,
+			File:     $4, // Pattern stored in File field
 		}
 	}
 

@@ -291,29 +291,33 @@ func (f *fileIterator) Values() map[string]string {
 	// Parse line into variable values
 	line := f.lines[f.lineIdx]
 
-	if len(f.varNames) == 1 {
-		values[f.varNames[0]] = line
-	} else {
-		// Split by comma or whitespace
-		var parts []string
-		if strings.Contains(line, ",") {
-			parts = strings.Split(line, ",")
+	// Cut into columns by the one splitter, which is a port of
+	// SubmitForeachArgs::split_item.
+	//
+	// This had a splitter of its own -- the whole line for a single
+	// variable, otherwise strings.Split on ',' when the line held a comma
+	// and strings.Fields when it did not, one field per variable -- and it
+	// disagreed with HTCondor on rows that are perfectly ordinary:
+	//
+	//   - commas and whitespace are separators in the SAME pass, so
+	//     "a, b c" is three columns, not two;
+	//   - the LAST variable takes everything left over, separators and
+	//     all, rather than one field with the rest discarded;
+	//   - an ASCII US byte in the row is autodetected as the separator and
+	//     turns whitespace splitting off, which is how a row with spaces
+	//     inside a value is written.
+	//
+	// The single-variable case went through the same divergence by a
+	// different route: it is only right because one column means "the
+	// whole trimmed row", which is what splitItemColumns returns anyway --
+	// minus the trailing newline and surrounding whitespace this did not
+	// remove.
+	parts := splitItemColumns(line, len(f.varNames))
+	for i, varName := range f.varNames {
+		if i < len(parts) {
+			values[varName] = parts[i]
 		} else {
-			parts = strings.Fields(line)
-		}
-
-		// Trim whitespace from each part
-		for i := range parts {
-			parts[i] = strings.TrimSpace(parts[i])
-		}
-
-		// Assign to variables
-		for i, varName := range f.varNames {
-			if i < len(parts) {
-				values[varName] = parts[i]
-			} else {
-				values[varName] = ""
-			}
+			values[varName] = ""
 		}
 	}
 
@@ -468,10 +472,12 @@ func createIteratorFromQueue(qs *config.QueueStatement, access queueFileAccess) 
 	hasFile := qs.File != ""
 
 	if !hasItems && !hasFile {
-		// Simple: queue [N]. Loop variables with no items behind them --
-		// `queue x in ()` -- are this case too: HTCondor queues the count
-		// and leaves every loop variable expanding to nothing, rather than
-		// queueing nothing at all.
+		// Simple: queue [N]. An item list that was written but is empty --
+		// `queue x in ()` -- is this case too, and deliberately so:
+		// SubmitStepFromQArgs::next_impl materializes the first iteration
+		// even when no row can be selected, "pretend[ing] there is a
+		// single empty item called Item", so condor_submit queues `count`
+		// jobs with the loop variables unset rather than none.
 		return newSimpleIterator(count), nil
 	}
 
@@ -481,18 +487,18 @@ func createIteratorFromQueue(qs *config.QueueStatement, access queueFileAccess) 
 	}
 
 	if hasFile && !hasItems {
-		// Could be either "from file" or "matching pattern"
-		// We distinguish by checking if VarNames is empty (matching) or not (from)
-		// Actually, both can have VarNames. The distinction is in how the parser
-		// set up the QueueStatement. For "matching", File contains the pattern.
-		// For "from", File contains the filename.
-
 		if err := access.permit(qs.File); err != nil {
 			return nil, err
 		}
 
-		// Let's check if the File looks like a glob pattern
-		if strings.ContainsAny(qs.File, "*?[]") {
+		// Which form it is comes from the statement, not from what the
+		// pattern happens to look like. Testing File for glob
+		// metacharacters meant `queue matching results` -- a pattern with
+		// none -- was OPENED AND READ as an itemdata file: the job count
+		// became the file's line count and the loop variable took the
+		// file's contents instead of each matched name. Nothing failed;
+		// the submission was simply about something else.
+		if qs.Matching {
 			// Matching form: queue [N] [var] matching pattern
 			return newMatchingIterator(qs.VarNames, qs.File, count)
 		}
