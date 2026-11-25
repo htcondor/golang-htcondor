@@ -7,7 +7,7 @@
 #
 # Fields:
 #   name     the configuration parameter, HTTP_API_*
-#   type     string | bool | duration | bytes | list
+#   type     string | bool | int | duration | bytes | list | words
 #   default  what applies when the setting is absent
 #   scope    startup (a change needs a restart) | reconfig (a
 #            reconfigure installs it on the running server)
@@ -379,6 +379,101 @@ knobs:
       relaxing it. Off by default, and the server logs a warning for as
       long as it is on. Leave it off anywhere a real person has an
       account.
+
+
+  # Container builds. All read once at startup; the sizes are MiB,
+  # matching what the build_container tool argument takes.
+  - name: HTTP_API_BUILD_REQUIREMENTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      ClassAd expression selecting the slots a container build may run
+      on, for a site where no schedd transform does it. A site picks its
+      build machines by its own convention and the tool cannot guess
+      it, so an unconfigured server submits an ordinary job and relies
+      on the caller naming a destination.
+
+  - name: HTTP_API_BUILD_EXTRA_SUBMIT
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Extra submit-file lines added to every container build job, for
+      whatever else a site's build slots need.
+
+  - name: HTTP_API_BUILD_STAGING_BASE
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Where built images are published when the caller gives a bare
+      name. Unset means every call has to name its own destination. It
+      may be a template: {user} expands to the authenticated caller and
+      {initial} to the first letter of that name, so a per-user staging
+      area can be written osdf:///chtc/staging/{initial}/{user}. A base
+      with no placeholder is used verbatim.
+
+  - name: HTTP_API_BUILD_DEFAULT_CPUS
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset requests 8 CPUs.
+    doc: >
+      CPUs a container build requests when the caller does not say. A
+      value that is not a whole number, or is negative, is reported and
+      ignored rather than refusing to start: the rest of the server has
+      nothing to do with container builds, and a typo in a build
+      setting should not take the API down.
+
+  - name: HTTP_API_BUILD_DEFAULT_MEMORY_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset requests 16384 MiB (16 GiB).
+    doc: >
+      Memory in MiB a container build requests when the caller does not
+      say. Ignored with a report when it is not a non-negative whole
+      number, as above.
+
+  - name: HTTP_API_BUILD_DEFAULT_DISK_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset requests 30720 MiB (30 GiB).
+    doc: >
+      Disk in MiB a container build requests when the caller does not
+      say. Ignored with a report when it is not a non-negative whole
+      number, as above.
+
+  - name: HTTP_API_BUILD_MAX_CPUS
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset leaves CPUs uncapped.
+    doc: >
+      Most CPUs one container build may request; a larger request is
+      clamped to it rather than refused. Worth setting, because build
+      slots are large -- CHTC's are 128-core, 256 GB machines -- and an
+      agent asking for plenty should not be able to claim a whole one.
+
+  - name: HTTP_API_BUILD_MAX_MEMORY_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset leaves memory uncapped.
+    doc: >
+      Most memory in MiB one container build may request, clamped
+      rather than refused, for the reason above.
+
+  - name: HTTP_API_BUILD_MAX_DISK_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset leaves disk uncapped.
+    doc: >
+      Most disk in MiB one container build may request, clamped rather
+      than refused, for the reason above.
 
 
 # Families: one group of parameters per named instance, with the name

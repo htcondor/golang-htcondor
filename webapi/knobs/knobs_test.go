@@ -68,7 +68,8 @@ func TestDefineIsConfinedToGeneratedCode(t *testing.T) {
 			return err
 		}
 		for _, ctor := range []string{"config.DefineString(", "config.DefineBool(",
-			"config.DefineDuration(", "config.DefineBytes(", "config.DefineList("} {
+			"config.DefineDuration(", "config.DefineBytes(", "config.DefineList(",
+			"config.DefineInt(", "config.DefineWords("} {
 			if strings.Contains(string(b), ctor) {
 				t.Errorf("%s calls %s; declare the knob in knobs.yaml instead", path, ctor)
 			}

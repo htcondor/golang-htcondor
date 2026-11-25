@@ -32,6 +32,83 @@ code uses rather than a second copy of them. Alphabetical by parameter.
 
 <!-- BEGIN GENERATED SETTINGS: edit webapi/knobs/knobs.yaml, then run `make knobs` -->
 
+### `HTTP_API_BUILD_DEFAULT_CPUS`
+
+**Whole number.** Unset requests 8 CPUs. Changing it needs a restart.
+
+CPUs a container build requests when the caller does not say. A value
+that is not a whole number, or is negative, is reported and ignored
+rather than refusing to start: the rest of the server has nothing to
+do with container builds, and a typo in a build setting should not
+take the API down.
+
+### `HTTP_API_BUILD_DEFAULT_DISK_MB`
+
+**Whole number.** Unset requests 30720 MiB (30 GiB). Changing it needs a restart.
+
+Disk in MiB a container build requests when the caller does not say.
+Ignored with a report when it is not a non-negative whole number, as
+above.
+
+### `HTTP_API_BUILD_DEFAULT_MEMORY_MB`
+
+**Whole number.** Unset requests 16384 MiB (16 GiB). Changing it needs a restart.
+
+Memory in MiB a container build requests when the caller does not say.
+Ignored with a report when it is not a non-negative whole number, as
+above.
+
+### `HTTP_API_BUILD_EXTRA_SUBMIT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Extra submit-file lines added to every container build job, for
+whatever else a site's build slots need.
+
+### `HTTP_API_BUILD_MAX_CPUS`
+
+**Whole number.** Unset leaves CPUs uncapped. Changing it needs a restart.
+
+Most CPUs one container build may request; a larger request is clamped
+to it rather than refused. Worth setting, because build slots are
+large -- CHTC's are 128-core, 256 GB machines -- and an agent asking
+for plenty should not be able to claim a whole one.
+
+### `HTTP_API_BUILD_MAX_DISK_MB`
+
+**Whole number.** Unset leaves disk uncapped. Changing it needs a restart.
+
+Most disk in MiB one container build may request, clamped rather than
+refused, for the reason above.
+
+### `HTTP_API_BUILD_MAX_MEMORY_MB`
+
+**Whole number.** Unset leaves memory uncapped. Changing it needs a restart.
+
+Most memory in MiB one container build may request, clamped rather
+than refused, for the reason above.
+
+### `HTTP_API_BUILD_REQUIREMENTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+ClassAd expression selecting the slots a container build may run on,
+for a site where no schedd transform does it. A site picks its build
+machines by its own convention and the tool cannot guess it, so an
+unconfigured server submits an ordinary job and relies on the caller
+naming a destination.
+
+### `HTTP_API_BUILD_STAGING_BASE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where built images are published when the caller gives a bare name.
+Unset means every call has to name its own destination. It may be a
+template: {user} expands to the authenticated caller and {initial} to
+the first letter of that name, so a per-user staging area can be
+written osdf:///chtc/staging/{initial}/{user}. A base with no
+placeholder is used verbatim.
+
 ### `HTTP_API_CONNECTORS`
 
 **Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.

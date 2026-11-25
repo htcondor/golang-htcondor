@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -450,6 +451,12 @@ func literal(k knob) (def, ctor string, err error) {
 			return "", "", fmt.Errorf("%s: %q is not a duration: %w", k.Name, k.Default, perr)
 		}
 		return fmt.Sprintf("time.Duration(%d) /* %s */", int64(d), k.Default), "DefineDuration", nil
+	case "int":
+		n, perr := strconv.ParseInt(strings.TrimSpace(k.Default), 10, 64)
+		if perr != nil {
+			return "", "", fmt.Errorf("%s: %q is not a whole number", k.Name, k.Default)
+		}
+		return fmt.Sprintf("%d", n), "DefineInt", nil
 	case "bytes":
 		n, perr := config.ParseBytes(k.Default)
 		if perr != nil {
@@ -493,6 +500,8 @@ func knobType(kind string) string {
 		return "BoolKnob"
 	case "duration":
 		return "DurationKnob"
+	case "int":
+		return "IntKnob"
 	case "bytes":
 		return "BytesKnob"
 	case "list":
@@ -507,7 +516,7 @@ func knobType(kind string) string {
 // as TLSCACert rather than TlsCaCert.
 var initialisms = map[string]string{
 	"API": "API", "CA": "CA", "DB": "DB", "ID": "ID", "IDP": "IDP",
-	"MCP": "MCP", "OAUTH2": "OAuth2", "SSH": "SSH", "TLS": "TLS",
+	"MB": "MB", "MCP": "MCP", "OAUTH2": "OAuth2", "SSH": "SSH", "TLS": "TLS",
 	"UI": "UI", "URL": "URL", "AP": "AP", "KEK": "KEK", "CPUS": "CPUs",
 }
 
@@ -717,6 +726,8 @@ func docType(kind string) string {
 		return "Boolean"
 	case "duration":
 		return "Duration"
+	case "int":
+		return "Whole number"
 	case "bytes":
 		return "Size"
 	case "list":

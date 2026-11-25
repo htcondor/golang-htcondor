@@ -8,6 +8,83 @@ import (
 	"github.com/htcondor/golang-htcondor/config"
 )
 
+// BuildDefaultCPUs is HTTP_API_BUILD_DEFAULT_CPUS.
+//
+// CPUs a container build requests when the caller does not say. A
+// value that is not a whole number, or is negative, is reported and
+// ignored rather than refusing to start: the rest of the server has
+// nothing to do with container builds, and a typo in a build setting
+// should not take the API down.
+var BuildDefaultCPUs = config.DefineInt("HTTP_API_BUILD_DEFAULT_CPUS", 0, config.Startup,
+	"CPUs a container build requests when the caller does not say. A value that is not a whole number, or is negative, is reported and ignored rather than refusing to start: the rest of the server has nothing to do with container builds, and a typo in a build setting should not take the API down.")
+
+// BuildDefaultDiskMB is HTTP_API_BUILD_DEFAULT_DISK_MB.
+//
+// Disk in MiB a container build requests when the caller does not say.
+// Ignored with a report when it is not a non-negative whole number, as
+// above.
+var BuildDefaultDiskMB = config.DefineInt("HTTP_API_BUILD_DEFAULT_DISK_MB", 0, config.Startup,
+	"Disk in MiB a container build requests when the caller does not say. Ignored with a report when it is not a non-negative whole number, as above.")
+
+// BuildDefaultMemoryMB is HTTP_API_BUILD_DEFAULT_MEMORY_MB.
+//
+// Memory in MiB a container build requests when the caller does not
+// say. Ignored with a report when it is not a non-negative whole
+// number, as above.
+var BuildDefaultMemoryMB = config.DefineInt("HTTP_API_BUILD_DEFAULT_MEMORY_MB", 0, config.Startup,
+	"Memory in MiB a container build requests when the caller does not say. Ignored with a report when it is not a non-negative whole number, as above.")
+
+// BuildExtraSubmit is HTTP_API_BUILD_EXTRA_SUBMIT.
+//
+// Extra submit-file lines added to every container build job, for
+// whatever else a site's build slots need.
+var BuildExtraSubmit = config.DefineString("HTTP_API_BUILD_EXTRA_SUBMIT", "", config.Startup,
+	"Extra submit-file lines added to every container build job, for whatever else a site's build slots need.")
+
+// BuildMaxCPUs is HTTP_API_BUILD_MAX_CPUS.
+//
+// Most CPUs one container build may request; a larger request is
+// clamped to it rather than refused. Worth setting, because build
+// slots are large -- CHTC's are 128-core, 256 GB machines -- and an
+// agent asking for plenty should not be able to claim a whole one.
+var BuildMaxCPUs = config.DefineInt("HTTP_API_BUILD_MAX_CPUS", 0, config.Startup,
+	"Most CPUs one container build may request; a larger request is clamped to it rather than refused. Worth setting, because build slots are large -- CHTC's are 128-core, 256 GB machines -- and an agent asking for plenty should not be able to claim a whole one.")
+
+// BuildMaxDiskMB is HTTP_API_BUILD_MAX_DISK_MB.
+//
+// Most disk in MiB one container build may request, clamped rather
+// than refused, for the reason above.
+var BuildMaxDiskMB = config.DefineInt("HTTP_API_BUILD_MAX_DISK_MB", 0, config.Startup,
+	"Most disk in MiB one container build may request, clamped rather than refused, for the reason above.")
+
+// BuildMaxMemoryMB is HTTP_API_BUILD_MAX_MEMORY_MB.
+//
+// Most memory in MiB one container build may request, clamped rather
+// than refused, for the reason above.
+var BuildMaxMemoryMB = config.DefineInt("HTTP_API_BUILD_MAX_MEMORY_MB", 0, config.Startup,
+	"Most memory in MiB one container build may request, clamped rather than refused, for the reason above.")
+
+// BuildRequirements is HTTP_API_BUILD_REQUIREMENTS.
+//
+// ClassAd expression selecting the slots a container build may run on,
+// for a site where no schedd transform does it. A site picks its build
+// machines by its own convention and the tool cannot guess it, so an
+// unconfigured server submits an ordinary job and relies on the caller
+// naming a destination.
+var BuildRequirements = config.DefineString("HTTP_API_BUILD_REQUIREMENTS", "", config.Startup,
+	"ClassAd expression selecting the slots a container build may run on, for a site where no schedd transform does it. A site picks its build machines by its own convention and the tool cannot guess it, so an unconfigured server submits an ordinary job and relies on the caller naming a destination.")
+
+// BuildStagingBase is HTTP_API_BUILD_STAGING_BASE.
+//
+// Where built images are published when the caller gives a bare name.
+// Unset means every call has to name its own destination. It may be a
+// template: {user} expands to the authenticated caller and {initial}
+// to the first letter of that name, so a per-user staging area can be
+// written osdf:///chtc/staging/{initial}/{user}. A base with no
+// placeholder is used verbatim.
+var BuildStagingBase = config.DefineString("HTTP_API_BUILD_STAGING_BASE", "", config.Startup,
+	"Where built images are published when the caller gives a bare name. Unset means every call has to name its own destination. It may be a template: {user} expands to the authenticated caller and {initial} to the first letter of that name, so a per-user staging area can be written osdf:///chtc/staging/{initial}/{user}. A base with no placeholder is used verbatim.")
+
 // EnableIDP is HTTP_API_ENABLE_IDP.
 //
 // Run the built-in identity provider, so this server signs users in
@@ -539,6 +616,15 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 // that check the table against the code. A family's per-instance settings
 // are not here: they have no name until an instance does.
 var All = []config.Knob{
+	BuildDefaultCPUs.Knob,
+	BuildDefaultDiskMB.Knob,
+	BuildDefaultMemoryMB.Knob,
+	BuildExtraSubmit.Knob,
+	BuildMaxCPUs.Knob,
+	BuildMaxDiskMB.Knob,
+	BuildMaxMemoryMB.Knob,
+	BuildRequirements.Knob,
+	BuildStagingBase.Knob,
 	EnableIDP.Knob,
 	IdleTimeout.Knob,
 	IDPAccessTokenLifespan.Knob,

@@ -827,37 +827,33 @@ func loadDagmanEnvironment(cfg *config.Config, logger *logging.Logger) map[strin
 // Sizes are MiB, matching what an operator would write and what the tool
 // argument takes. Read once at startup; restart to pick up changes.
 func loadBuildConfig(cfg *config.Config, logger *logging.Logger) mcpserver.BuildConfig {
-	get := func(key string) string {
-		v, _ := cfg.Get(key)
-		return v
-	}
-	// A malformed number is logged and ignored rather than failing
-	// startup: the rest of the server is unrelated to container builds,
-	// and a typo in a cap should not take the API down.
-	num := func(key string) int {
-		raw := strings.TrimSpace(get(key))
-		if raw == "" {
-			return 0
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
+	// A value that is not a whole number is reported by the knob error
+	// handler and the default applies. A negative one parses, so it is
+	// refused here: zero means "the built-in default" to the three
+	// defaults and "uncapped" to the three caps, and a negative number
+	// is neither. Either way the rest of the server is unrelated to
+	// container builds, and a typo in a cap should not take the API
+	// down.
+	num := func(k config.IntKnob) int {
+		n := k.Get(cfg)
+		if n < 0 {
 			logger.Warn(logging.DestinationGeneral,
-				"Ignoring a container-build setting that is not a non-negative integer",
-				"setting", key, "value", raw)
+				"Ignoring a container-build setting that is negative",
+				"setting", k.Name(), "value", n)
 			return 0
 		}
-		return n
+		return int(n)
 	}
 	return mcpserver.BuildConfig{
-		ExtraSubmit:     get("HTTP_API_BUILD_EXTRA_SUBMIT"),
-		Requirements:    strings.TrimSpace(get("HTTP_API_BUILD_REQUIREMENTS")),
-		StagingBase:     strings.TrimSpace(get("HTTP_API_BUILD_STAGING_BASE")),
-		DefaultCpus:     num("HTTP_API_BUILD_DEFAULT_CPUS"),
-		DefaultMemoryMB: num("HTTP_API_BUILD_DEFAULT_MEMORY_MB"),
-		DefaultDiskMB:   num("HTTP_API_BUILD_DEFAULT_DISK_MB"),
-		MaxCpus:         num("HTTP_API_BUILD_MAX_CPUS"),
-		MaxMemoryMB:     num("HTTP_API_BUILD_MAX_MEMORY_MB"),
-		MaxDiskMB:       num("HTTP_API_BUILD_MAX_DISK_MB"),
+		ExtraSubmit:     knobs.BuildExtraSubmit.Get(cfg),
+		Requirements:    strings.TrimSpace(knobs.BuildRequirements.Get(cfg)),
+		StagingBase:     strings.TrimSpace(knobs.BuildStagingBase.Get(cfg)),
+		DefaultCpus:     num(knobs.BuildDefaultCPUs),
+		DefaultMemoryMB: num(knobs.BuildDefaultMemoryMB),
+		DefaultDiskMB:   num(knobs.BuildDefaultDiskMB),
+		MaxCpus:         num(knobs.BuildMaxCPUs),
+		MaxMemoryMB:     num(knobs.BuildMaxMemoryMB),
+		MaxDiskMB:       num(knobs.BuildMaxDiskMB),
 	}
 }
 
