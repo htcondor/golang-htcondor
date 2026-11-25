@@ -65,7 +65,12 @@ type SubmitFile struct {
 	// capitalization into the job attribute; see
 	// setCustomResourceRequests.
 	assigned map[string]string
-	universe int
+	// cfgAssigned is the subset of assigned that the configuration
+	// actually executed an assignment for -- so it excludes a name that
+	// appears only in a conditional branch which did not run. See
+	// assignedCommand.
+	cfgAssigned map[string]string
+	universe    int
 	// params answers the configuration knobs condor_submit reads with
 	// param(); nil means HTCondor's built-in defaults. See SubmitParams.
 	params SubmitParams
@@ -338,6 +343,7 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 	sf := &SubmitFile{
 		cfg:         cfg,
 		assigned:    unionAssigned(assignedNames(configStmts), cfg.AssignedNames()),
+		cfgAssigned: cfg.AssignedNames(),
 		universe:    UniverseVanilla, // Default
 		queueCount:  1,               // Default if no queue statement
 		params:      opts.Params,
@@ -5142,7 +5148,26 @@ func (sf *SubmitFile) assignedCommand(key string) (string, bool) {
 	if sf == nil {
 		return "", false
 	}
-	if _, ok := sf.assigned[strings.ToUpper(key)]; !ok {
+	upper := strings.ToUpper(key)
+	if _, ok := sf.assigned[upper]; !ok {
+		return "", false
+	}
+	// Named, but on a path that did not run: a command assigned only
+	// inside a conditional branch the executor skipped. The file wrote no
+	// value for it, and cfg.Get would answer with the param_info default
+	// of a knob that happens to share the name -- MaxTransferInputMB =
+	// -1, MountUnderScratch = "/tmp,/var/tmp", UserLog = the LOG knob --
+	// where condor_submit on the same file writes nothing at all.
+	//
+	// assignedNames counts untaken branches deliberately, and still
+	// should: its job is to keep a name the submitter wrote from being
+	// answered out of the configuration. Its doc comment reasoned that
+	// cfg could not tell "the file set this" from "param_info has a
+	// default of the same name", which was true until Config started
+	// recording what it assigned. Now it can, so the gate can be exact
+	// instead of generous: mentioned-but-not-executed reads as absent,
+	// which writes no attribute rather than the knob's default.
+	if _, executed := sf.cfgAssigned[upper]; !executed {
 		return "", false
 	}
 	return sf.cfg.Get(key)
