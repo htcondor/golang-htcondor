@@ -115,6 +115,23 @@ type Config struct {
 	// nil when the Config was built with SkipDefaults, in which case
 	// "is this a default?" has no meaning and IsDefault reports false.
 	builtinDefaults map[string]string
+	// assignedByExec records every name an executed assignment statement
+	// set, keyed upper-cased and holding the spelling the file used.
+	//
+	// Recorded in insertMacro, the one chokepoint both the statement
+	// executor and the line reader pass through, and cleared again when
+	// the built-ins are snapshotted -- so it means "a file or a caller
+	// said this" rather than "a value of this name exists". The
+	// param_info seeding goes to putValue directly and is never recorded
+	// at all. That distinction is the whole point: a set that could not
+	// tell a file's assignment from a compiled-in default would resurrect
+	// the defaults that submit's assigned-name gate exists to suppress.
+	//
+	// It exists because an included file's assignments never appear as
+	// statements to the caller: includeFile re-enters the LINE reader
+	// (parseAndExecute -> parseMacros), not the statement executor, so
+	// nothing above this layer ever sees them. See AssignedNames.
+	assignedByText map[string]string
 	// hosts answers the host-name lookups for HOSTNAME and FULL_HOSTNAME,
 	// remembering canonical names for the life of this Config.
 	hosts *memoHosts
@@ -509,6 +526,25 @@ func (c *Config) initBuiltins() {
 	// file, environment variable, or caller Set can land, so IsDefault can
 	// later separate "HTCondor ships this" from "this site chose this".
 	c.snapshotBuiltins()
+	// The built-ins are not assignments anybody made. Clearing here is
+	// what keeps insertMacro's record meaning "a file or a caller set
+	// this", the same line snapshotBuiltins draws for IsDefault.
+	c.assignedByText = nil
+}
+
+// recordAssigned notes that something outside the built-ins set this
+// name, keeping the first spelling used. See assignedByText.
+func (c *Config) recordAssigned(name string) {
+	key := strings.ToUpper(strings.TrimSpace(name))
+	if key == "" {
+		return
+	}
+	if c.assignedByText == nil {
+		c.assignedByText = make(map[string]string)
+	}
+	if _, seen := c.assignedByText[key]; !seen {
+		c.assignedByText[key] = name
+	}
 }
 
 // snapshotBuiltins records the current values as the built-in baseline.

@@ -337,7 +337,7 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 
 	sf := &SubmitFile{
 		cfg:         cfg,
-		assigned:    assignedNames(configStmts),
+		assigned:    unionAssigned(assignedNames(configStmts), cfg.AssignedNames()),
 		universe:    UniverseVanilla, // Default
 		queueCount:  1,               // Default if no queue statement
 		params:      opts.Params,
@@ -5022,6 +5022,29 @@ func (sf *SubmitFile) setExtendedJobExprs(ad *classad.ClassAd) error {
 	}
 
 	return nil
+}
+
+// unionAssigned merges the names a statement walk found with the names
+// the configuration actually executed.
+//
+// Both are needed, and neither is a superset of the other. The walk
+// counts names in conditional branches that did not execute, which is
+// deliberate (see assignedNames) and which the executor cannot know
+// about. The executor knows the names an `include`d file assigned, which
+// never appear as statements to a caller at all, because includeFile
+// re-enters the parser and executes them in place.
+//
+// The walk's spelling wins on a collision: it is the one in the file the
+// user is looking at.
+func unionAssigned(walked, executed map[string]string) map[string]string {
+	out := make(map[string]string, len(walked)+len(executed))
+	for k, v := range executed {
+		out[k] = v
+	}
+	for k, v := range walked {
+		out[k] = v
+	}
+	return out
 }
 
 // assignedNames collects every name the submit file assigns, including

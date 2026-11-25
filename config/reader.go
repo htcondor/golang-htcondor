@@ -370,6 +370,7 @@ func (c *Config) parseConfigLine(line string, depth int, hereName, hereTag *stri
 // insertMacro is insert_macro: store a value, expanding references to the
 // name itself against its previous value when it is already defined.
 func (c *Config) insertMacro(name, value string) error {
+	c.recordAssigned(name)
 	if _, ok := c.resolveKey(name); ok {
 		v, err := c.expandSelfMacro(value, name)
 		if err != nil {
