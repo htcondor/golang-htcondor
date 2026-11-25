@@ -1036,27 +1036,29 @@ func firstConfigValue(cfg *config.Config, knob string) string {
 // complaint: these knobs all treat zero as "take the default", so a
 // typo degrades to the default rather than refusing to start a server
 // over one line of tuning.
-func configSeconds(cfg *config.Config, name string, logger *logging.Logger) time.Duration {
-	v := strings.TrimSpace(firstConfigValue(cfg, name))
-	if v == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
+// configSeconds reads a setting written as a whole number of seconds,
+// which is not a Go duration: these predate the duration-shaped
+// settings and are left in their own units rather than changing what an
+// operator already has written.
+//
+// Zero is returned for absent, malformed and negative alike, and each
+// consumer substitutes its own default for zero. A malformed value is
+// already reported by the knob error handler; a negative one parses, so
+// it is reported here.
+func configSeconds(cfg *config.Config, k config.IntKnob, logger *logging.Logger) time.Duration {
+	n := k.Get(cfg)
+	if n < 0 {
 		if logger != nil {
-			logger.Error(logging.DestinationHTTP, "configuration value is not a whole number of seconds; using the default",
-				"parameter", name, "value", v)
+			logger.Error(logging.DestinationHTTP, "configuration value is a negative number of seconds; using the default",
+				"parameter", k.Name(), "value", n)
 		}
 		return 0
 	}
 	return time.Duration(n) * time.Second
 }
 
-func loadSubmitFileLines(cfg *config.Config, knob string) string {
-	if v, ok := cfg.Get(knob); ok {
-		return v
-	}
-	return ""
+func loadSubmitFileLines(cfg *config.Config, k config.StringKnob) string {
+	return k.Get(cfg)
 }
 
 // (User-templates DB path resolution was removed: the templates store
@@ -2818,12 +2820,12 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		VSCodeImage:                 firstConfigValue(cfg, "HTTP_API_VSCODE_IMAGE"),
 		Build:                       loadBuildConfig(cfg, logger),
 		DBMirrorTokenSubject:        firstConfigValue(cfg, "HTTP_API_DBMIRROR_TOKEN_SUBJECT"),
-		SubmitFileDefaults:          loadSubmitFileLines(cfg, "HTTP_API_SUBMIT_FILE_DEFAULTS"),
-		SubmitFileOverrides:         loadSubmitFileLines(cfg, "HTTP_API_SUBMIT_FILE_OVERRIDES"),
-		IdempotencyKeyCheck:         firstConfigValue(cfg, "HTTP_API_IDEMPOTENCY_KEY_CHECK"),
-		IdempotencyKeyRetention:     configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_RETENTION", logger),
-		IdempotencyKeyTimeout:       configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_TIMEOUT", logger),
-		IdempotencyKeyHistoryWindow: configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW", logger),
+		SubmitFileDefaults:          loadSubmitFileLines(cfg, knobs.SubmitFileDefaults),
+		SubmitFileOverrides:         loadSubmitFileLines(cfg, knobs.SubmitFileOverrides),
+		IdempotencyKeyCheck:         knobs.IdempotencyKeyCheck.Get(cfg),
+		IdempotencyKeyRetention:     configSeconds(cfg, knobs.IdempotencyKeyRetention, logger),
+		IdempotencyKeyTimeout:       configSeconds(cfg, knobs.IdempotencyKeyTimeout, logger),
+		IdempotencyKeyHistoryWindow: configSeconds(cfg, knobs.IdempotencyKeyHistoryWindow, logger),
 		TemplateGlobalPath:          loadTemplateGlobalPath(cfg),
 		HTCondorConfig:              cfg,
 		// LLM/chat configuration. Optional; the chat endpoint

@@ -476,6 +476,82 @@ knobs:
       than refused, for the reason above.
 
 
+  # Submit-file policy and the idempotency-key guarantee. All read once
+  # at startup.
+  - name: HTTP_API_SUBMIT_FILE_DEFAULTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Submit-file lines added to every submission, but only where the
+      submit file is silent, so a user who sets the same command keeps
+      their own value. Written as HTCondor configuration, so several
+      lines need that syntax for a multi-line value. Operator-only
+      configuration, spliced in as written.
+
+  - name: HTTP_API_SUBMIT_FILE_OVERRIDES
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Submit-file lines added to every submission that win over
+      whatever the submit file says. For requirements that are not the
+      user's to opt out of -- an access point that will not have a log
+      written outside the home directory, say. Otherwise as above:
+      HTCondor configuration syntax, operator-only, spliced in as
+      written.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_CHECK
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset is AUTO.
+    doc: >
+      How much of the idempotency-key guarantee this access point
+      enforces. NONE does not check at all; QUEUE checks the live job
+      queue; FULL checks the queue and the mirrored history, which is
+      what makes a key reused after its job finished still a duplicate;
+      AUTO is FULL where an htcondordb mirror is configured and QUEUE
+      where none is. OFF and FALSE read as NONE, TRUE as FULL. Anything
+      else is reported and AUTO applies.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_RETENTION
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset keeps a key claimed for one hour.
+    doc: >
+      How long, in whole seconds, a key this server submitted stays
+      claimed in memory. It covers the window in which a finished job is
+      in neither the live queue nor the mirrored history yet, so it
+      wants to be longer than the gap between the schedd writing a job
+      out and the mirror carrying it. A value that is not a
+      non-negative whole number is reported and the default applies.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_TIMEOUT
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset bounds the lookups at 10 seconds.
+    doc: >
+      How long, in whole seconds, the queue and history lookups get
+      between them. A keyed submission waits on them, so this is also
+      the longest the check can delay one. Reported and defaulted the
+      same way as above when it is not a non-negative whole number.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset consults the whole history.
+    doc: >
+      How far back, in whole seconds, the history lookup reads, as a
+      floor on EnteredHistoryTime. It trades the guarantee for the cost
+      of the read: a key reused after the window reads as unused. Unset
+      consults the whole history, which is what the index is there for,
+      so set this only where that read is measurably too expensive.
+
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

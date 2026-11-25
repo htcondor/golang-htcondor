@@ -446,18 +446,18 @@ var reconfigParams = []reconfigParam{
 	{name: "HTTP_API_POOL_QUERY_EXTRA_ATTRS"},
 
 	// Submit-time policy, compiled into the submit policy at startup.
-	{name: "HTTP_API_SUBMIT_FILE_DEFAULTS"},
-	{name: "HTTP_API_SUBMIT_FILE_OVERRIDES"},
+	fromKnob(knobs.SubmitFileDefaults.Knob),
+	fromKnob(knobs.SubmitFileOverrides.Knob),
 
 	// Idempotency-key enforcement, folded into the Guard at startup.
 	// Restart-only on purpose rather than for want of a setter: the
 	// Guard holds the claims, and rebuilding it would drop every key
 	// claimed in the retention window -- turning a reconfig into a
 	// window in which a retry is accepted twice.
-	{name: "HTTP_API_IDEMPOTENCY_KEY_CHECK"},
-	{name: "HTTP_API_IDEMPOTENCY_KEY_RETENTION"},
-	{name: "HTTP_API_IDEMPOTENCY_KEY_TIMEOUT"},
-	{name: "HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW"},
+	fromKnob(knobs.IdempotencyKeyCheck.Knob),
+	fromKnob(knobs.IdempotencyKeyRetention.Knob),
+	fromKnob(knobs.IdempotencyKeyTimeout.Knob),
+	fromKnob(knobs.IdempotencyKeyHistoryWindow.Knob),
 	{name: "HTTP_API_INTERACTIVE_REQUIREMENTS"},
 	{name: "HTTP_API_DAGMAN_PATH"},
 	{name: "HTTP_API_DAGMAN_ENVIRONMENT"},

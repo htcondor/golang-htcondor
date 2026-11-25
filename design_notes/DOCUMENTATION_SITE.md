@@ -517,9 +517,11 @@ per-directory. A grep-based drift test can ship on day one and retires
 when the lint covers everything.
 
 *The generated reference has landed*, out of order with the rest of the
-stage and deliberately so: at 22 declared settings of roughly 240 it
-covers a fraction, but from here every setting converted documents
-itself. Left until the conversion was finished, the whole exercise
+stage and deliberately so: it covered a fraction when it landed -- 22
+declared settings of roughly 240 -- but from here every setting
+converted documents itself. Forty-seven are declared as of this
+writing, with 169 names still read as string literals outside generated
+code. Left until the conversion was finished, the whole exercise
 would have paid nothing out until the last setting moved. It writes
 into a marked region of `docs/operator/config.md` rather than a page of
 its own, so the prose no table can generate stays where it is, and the

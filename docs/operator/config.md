@@ -195,6 +195,48 @@ itself instead of sending them to an external one. Off by default. The
 provider shares the unified application database; the separate
 `HTTP_API_IDP_DB_PATH` it once had is no longer read.
 
+### `HTTP_API_IDEMPOTENCY_KEY_CHECK`
+
+**String.** Unset is AUTO. Changing it needs a restart.
+
+How much of the idempotency-key guarantee this access point enforces.
+NONE does not check at all; QUEUE checks the live job queue; FULL
+checks the queue and the mirrored history, which is what makes a key
+reused after its job finished still a duplicate; AUTO is FULL where an
+htcondordb mirror is configured and QUEUE where none is. OFF and FALSE
+read as NONE, TRUE as FULL. Anything else is reported and AUTO
+applies.
+
+### `HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW`
+
+**Whole number.** Unset consults the whole history. Changing it needs a restart.
+
+How far back, in whole seconds, the history lookup reads, as a floor
+on EnteredHistoryTime. It trades the guarantee for the cost of the
+read: a key reused after the window reads as unused. Unset consults
+the whole history, which is what the index is there for, so set this
+only where that read is measurably too expensive.
+
+### `HTTP_API_IDEMPOTENCY_KEY_RETENTION`
+
+**Whole number.** Unset keeps a key claimed for one hour. Changing it needs a restart.
+
+How long, in whole seconds, a key this server submitted stays claimed
+in memory. It covers the window in which a finished job is in neither
+the live queue nor the mirrored history yet, so it wants to be longer
+than the gap between the schedd writing a job out and the mirror
+carrying it. A value that is not a non-negative whole number is
+reported and the default applies.
+
+### `HTTP_API_IDEMPOTENCY_KEY_TIMEOUT`
+
+**Whole number.** Unset bounds the lookups at 10 seconds. Changing it needs a restart.
+
+How long, in whole seconds, the queue and history lookups get between
+them. A keyed submission waits on them, so this is also the longest
+the check can delay one. Reported and defaulted the same way as above
+when it is not a non-negative whole number.
+
 ### `HTTP_API_IDLE_TIMEOUT`
 
 **Duration.** Default `120s`. Changing it needs a restart.
@@ -499,6 +541,26 @@ What the app is called in the navigation, instead of its bundle id.
 Where an archive dropped in the SSH gateway's /submit/, or posted to
 the REST upload endpoints, is buffered while it is unpacked. Unset
 holds it in memory instead, under a much smaller ceiling.
+
+### `HTTP_API_SUBMIT_FILE_DEFAULTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Submit-file lines added to every submission, but only where the submit
+file is silent, so a user who sets the same command keeps their own
+value. Written as HTCondor configuration, so several lines need that
+syntax for a multi-line value. Operator-only configuration, spliced in
+as written.
+
+### `HTTP_API_SUBMIT_FILE_OVERRIDES`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Submit-file lines added to every submission that win over whatever the
+submit file says. For requirements that are not the user's to opt out
+of -- an access point that will not have a log written outside the
+home directory, say. Otherwise as above: HTCondor configuration
+syntax, operator-only, spliced in as written.
 
 ### `HTTP_API_TLS_CA_CERT`
 
