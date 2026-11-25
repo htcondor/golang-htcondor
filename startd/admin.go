@@ -117,12 +117,24 @@ type AdminOptions struct {
 	// touches a machine repeatedly reuses the session.
 	Cache *security.SessionCache
 	// SecurityConfig builds the config for a command when no capability
-	// is available. Nil leaves it to cedar's defaults.
+	// is available.
+	//
+	// Nil, with no capability, is an error: cedar performs no handshake
+	// at all when its Security is nil, so the command would reach the
+	// execute point as neither an authenticated request nor a command
+	// number. An Admin that may run without a capability has to be given
+	// one of these -- see connect.
 	SecurityConfig func(ctx context.Context, command int, peer string) (*security.SecurityConfig, error)
 }
 
-// NewAdmin builds an Admin that authenticates with this process's own
-// credentials. The execute point must authorize this identity directly.
+// NewAdmin builds an Admin that authenticates with whatever
+// opts.SecurityConfig builds -- this process's own credentials, when the
+// caller points it at the configured defaults. The execute point must
+// authorize that identity directly.
+//
+// Without opts.SecurityConfig the Admin has no credential to present and
+// every command fails; this package will not reach for the process's own
+// on a caller's behalf. See AdminOptions.SecurityConfig.
 func NewAdmin(addr string, opts *AdminOptions) *Admin {
 	a := &Admin{addr: addr}
 	if opts != nil {
@@ -136,8 +148,10 @@ func NewAdmin(addr string, opts *AdminOptions) *Admin {
 //
 // The address comes from MyAddress. The capability, when the ad carries
 // one, is imported as a security session and used for every command;
-// when it does not, the Admin falls back to this process's credentials
-// and requireCapability decides whether that is acceptable.
+// when it does not, the Admin falls back to opts.SecurityConfig and
+// requireCapability decides whether that is acceptable. With no
+// capability and no opts.SecurityConfig there is nothing to fall back
+// to, and commands fail rather than going out unauthenticated.
 //
 // A capability that is present but unusable is an error rather than a
 // silent fallback. Quietly connecting as this process instead would
@@ -205,6 +219,29 @@ func (a *Admin) connect(ctx context.Context, command int) (*client.HTCondorClien
 			return nil, fmt.Errorf("startd: building the security config: %w", err)
 		}
 	}
+	// Neither a capability nor a builder: refuse rather than dial.
+	//
+	// cedar skips the handshake entirely when Security is nil, and it is
+	// the handshake that carries the command integer -- the real command
+	// rides inside the DC_AUTHENTICATE ad, not on the wire ahead of the
+	// payload. So a nil config does not produce a weakly-authenticated
+	// command, it produces no command at all: the peer reads the request
+	// ad's leading expression count as a command number and refuses, and
+	// the operator is told to fix an authorization that was never
+	// consulted.
+	//
+	// Deliberately an error rather than a default built here. A library
+	// that quietly reached for this process's own credentials would hand
+	// them to whatever called it next, including a path acting for a
+	// user; keeping the decision at the call site keeps it reviewable,
+	// and a caller that injects SecurityConfig routes it through
+	// htcondor.GetSecurityConfigOrDefault, which re-checks per command
+	// that the context really is this daemon's own work.
+	if sec == nil {
+		return nil, fmt.Errorf("startd: no administrative capability for %s and no SecurityConfig in AdminOptions: "+
+			"a command would carry neither credentials nor a command number", a.addr)
+	}
+
 	hc, err := client.ConnectAndAuthenticate(ctx, a.addr, sec)
 	if err != nil {
 		return nil, fmt.Errorf("startd: connecting to %s for command %d: %w", a.addr, command, err)

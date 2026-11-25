@@ -12,6 +12,7 @@ import (
 	"github.com/htcondor/cedar/security"
 
 	htcondor "github.com/htcondor/golang-htcondor"
+	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/startd"
 )
 
@@ -50,6 +51,18 @@ type PoolActuator struct {
 	// Graceful vacates a claim by retiring it, which lets a job take
 	// its soft-kill signal and checkpoint if it can. False kills it.
 	Graceful bool
+	// Config is the HTCondor configuration the no-capability fallback
+	// reads its SEC_* settings and credentials from; nil is the
+	// process-wide default.
+	//
+	// The fallback presents this daemon's own identity, so it is built
+	// through htcondor.GetSecurityConfigOrDefault rather than assembled
+	// here: that is what re-checks, per command, that the context is
+	// this daemon's own work and not a request being served for a user.
+	// A context marked for a user is refused there instead of being
+	// escalated. The controller marks its context once, at startup, for
+	// exactly this reason.
+	Config *config.Config
 	// Now is overridable for tests; nil means time.Now.
 	Now func() time.Time
 	// OnReload is called after each read of the pool, outside the
@@ -226,7 +239,18 @@ func (a *PoolActuator) adminOptions() *startd.AdminOptions {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.cache == nil {
-		a.cache = &startd.AdminOptions{Cache: security.NewSessionCache()}
+		a.cache = &startd.AdminOptions{
+			Cache: security.NewSessionCache(),
+			// Without this an execute point that publishes no
+			// capability gets a command with no credentials and no
+			// command number at all, which the startd refuses with
+			// what reads like an authorization failure -- sending the
+			// operator to ALLOW_ADMINISTRATOR for a handshake that
+			// never happened. See startd.AdminOptions.SecurityConfig.
+			SecurityConfig: func(ctx context.Context, command int, peer string) (*security.SecurityConfig, error) {
+				return htcondor.GetSecurityConfigOrDefault(ctx, a.Config, command, "CLIENT", peer)
+			},
+		}
 	}
 	return a.cache
 }
