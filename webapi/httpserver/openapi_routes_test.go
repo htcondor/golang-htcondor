@@ -84,7 +84,7 @@ func concrete(template string) string {
 func TestEveryDocumentedPathIsRouted(t *testing.T) {
 	srv := routedServerForContract(t)
 	for _, p := range openAPIPaths(t) {
-		req := httptest.NewRequest(http.MethodGet, concrete(p), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, concrete(p), nil)
 		_, pattern := srv.mux.Handler(req)
 		// The SPA (or welcome page) is registered at "/", so it answers
 		// for anything unrouted. Matching it means nothing more
