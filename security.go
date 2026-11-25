@@ -709,11 +709,32 @@ func GetServerSecurityConfig(cfg *config.Config, command int, secContext string)
 	// The server's credential files (SSL key/cert, token signing keys) are read as
 	// root via droppriv, so they remain readable after the daemon drops to the
 	// condor account. GetSecurityConfig already wired the shared, reload-aware
-	// daemonCredentialCache; keep it (a SIGHUP Reload then covers server and client
-	// reads alike). Callers wire Reload via daemon.OnReconfig (see CredentialReloader).
+	// daemonCredentialCache; keep it, so one SIGHUP Reload covers server and
+	// client reads alike. daemon.Daemon calls ReloadCredentials for that.
 	sc.Credentials = daemonCredentialCache
 
 	return sc, nil
+}
+
+// ReloadCredentials drops every cached credential, so the next read picks up a
+// renewed certificate or a rotated signing key. daemon.Daemon calls it on
+// SIGHUP, beside ReloadCertificateMapFile.
+//
+// HTCondor has nothing to drop: it builds a fresh SSL_CTX inside each
+// authenticate() call, loading the certificate and key from disk every time,
+// and re-reads a token signing key per verification. This cache is an
+// optimisation over that, and without an invalidation hook it was a
+// correctness change -- credential bytes frozen at first read for the life of
+// the process, surviving condor_reconfig.
+//
+// Staleness on a certificate is fail-closed: a renewed cert is ignored and
+// handshakes keep failing until a restart. On a signing key it is fail-OPEN,
+// which is the reason this is wired rather than left to callers: after
+// SEC_PASSWORD_DIRECTORY/POOL is regenerated -- the response to a suspected key
+// compromise -- a Go daemon went on verifying against the cached retired key,
+// and went on honouring tokens signed with it, where C++ stops at once.
+func ReloadCredentials() {
+	daemonCredentialCache.Reload()
 }
 
 // CredentialReloader is implemented by a SecurityConfig.Credentials value (e.g.

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/config"
 )
 
@@ -238,5 +241,72 @@ func TestDaemonReconfigureRunsCallbacks(t *testing.T) {
 
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Errorf("OnReconfig called %d times after Reconfigure, want 1", got)
+	}
+}
+
+// TestReconfigureDropsCachedCredentials: a reconfig has to make the next
+// credential read go back to disk.
+//
+// HTCondor has nothing to drop -- it builds a fresh SSL_CTX inside each
+// authenticate() call and re-reads a token signing key per verification --
+// so the cache this package shares with cedar is an optimisation over
+// that, and until it was invalidated on SIGHUP it was a correctness
+// change: bytes frozen at first read for the life of the process.
+//
+// On a certificate that is fail-closed. On a signing key it is fail-open:
+// after SEC_PASSWORD_DIRECTORY/POOL is regenerated in response to a
+// suspected compromise, the daemon went on honouring tokens signed with
+// the retired key until it restarted.
+//
+// Driven through Reconfigure and the process-wide cache that
+// GetSecurityConfig actually hands to cedar, because that is the wiring
+// under test -- credential_reader_test.go calls Reload on a cache of its
+// own, which passes whether or not anything is wired.
+func TestReconfigureDropsCachedCredentials(t *testing.T) {
+	// A path unique to this run: the cache is a package-level singleton
+	// shared by every test in the process, so a collision could satisfy
+	// the assertion by accident.
+	path := filepath.Join(t.TempDir(), "signing-key")
+	if err := os.WriteFile(path, []byte("first-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newTestDaemon(t)
+	sc, err := htcondor.GetSecurityConfig(d.Config(), 60000, "CLIENT")
+	if err != nil {
+		t.Fatalf("GetSecurityConfig: %v", err)
+	}
+	if sc.Credentials == nil {
+		t.Fatal("no credential reader was wired, so there is nothing to invalidate")
+	}
+
+	got, err := sc.Credentials.ReadCredential(path)
+	if err != nil {
+		t.Fatalf("priming the cache: %v", err)
+	}
+	if string(got) != "first-key" {
+		t.Fatalf("first read = %q, want %q", got, "first-key")
+	}
+
+	// Rotate it in place, which is what regenerating a pool password does.
+	if err := os.WriteFile(path, []byte("second-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sc.Credentials.ReadCredential(path); err != nil {
+		t.Fatalf("cached read: %v", err)
+	} else if string(got) != "first-key" {
+		t.Fatalf("read after rotation = %q, want the cached %q -- "+
+			"the cache is not caching, so this test proves nothing", got, "first-key")
+	}
+
+	d.Reconfigure()
+
+	got, err = sc.Credentials.ReadCredential(path)
+	if err != nil {
+		t.Fatalf("read after reconfigure: %v", err)
+	}
+	if string(got) != "second-key" {
+		t.Errorf("read after reconfigure = %q, want %q: the rotated key is still being served",
+			got, "second-key")
 	}
 }

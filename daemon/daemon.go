@@ -721,6 +721,11 @@ func (d *Daemon) reconfigure() {
 	d.lastReconfig.Store(time.Now().Unix())
 	// HTCondor re-reads CERTIFICATE_MAPFILE after every reconfig.
 	htcondor.ReloadCertificateMapFile()
+	// And it reads the SSL host cert/key and token signing keys from disk on
+	// every handshake, so a reconfig has to drop what this process cached of
+	// them. Without this a rotated signing key went on being honoured until
+	// the daemon restarted.
+	htcondor.ReloadCredentials()
 	// Re-apply per-destination log levels from the reloaded config, so condor_reconfig
 	// changes log verbosity on the running daemon (the levels are held in a live atomic
 	// snapshot the installed handlers read).
