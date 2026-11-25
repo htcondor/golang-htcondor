@@ -887,9 +887,16 @@ func configureRemoteJobAd(procAd *classad.ClassAd, submitterSetLeaveInQueue bool
 		needsSpooling = true
 	}
 
-	// Check Input (stdin)
+	// Check the job's stdin file, through the same predicate the spool
+	// allow-set is built from so the two cannot disagree: a job held for
+	// an upload the allow-set would refuse is held forever.
+	//
+	// This read used to ask for "Input", an attribute the submit parser
+	// never writes -- it is "In" (ATTR_JOB_INPUT) -- so the branch never
+	// fired and a job whose only uploadable file was its stdin was
+	// released with an empty spool.
 	if !needsSpooling {
-		if val, ok := procAd.EvaluateAttrString("Input"); ok && val != "" {
+		if _, ok := stdinSpoolName(procAd); ok {
 			needsSpooling = true
 		}
 	}

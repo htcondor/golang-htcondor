@@ -196,7 +196,7 @@ func equalStringSlices(a, b []string) bool {
 	return slices.Equal(a, b)
 }
 
-func keysSorted(m map[string]bool) []string {
+func keysSorted[V any](m map[string]V) []string {
 	if len(m) == 0 {
 		return nil
 	}

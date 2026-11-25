@@ -429,7 +429,7 @@ func (s *Schedd) spoolJobFilesFromFS(ctx context.Context, jobAds []*classad.Clas
 
 	// Extract job IDs and file lists, and validate
 	jobIDs := make([]procID, len(jobAds))
-	fileLists := make([][]string, len(jobAds))
+	fileLists := make([][]spoolFile, len(jobAds))
 
 	for i, ad := range jobAds {
 		// Get ClusterId
@@ -477,14 +477,16 @@ func (s *Schedd) spoolJobFilesFromFS(ctx context.Context, jobAds []*classad.Clas
 			}
 			return fmt.Errorf("job ad %d (job %d.%d): no files to spool (TransferInput is empty and TransferExecutable is false or Cmd is unset)", i, clusterInt, procInt)
 		}
-		fileLists[i] = make([]string, 0, len(fileSet))
-		for f := range fileSet {
-			fileLists[i] = append(fileLists[i], f)
+		fileLists[i] = make([]spoolFile, 0, len(fileSet))
+		for source, wire := range fileSet {
+			fileLists[i] = append(fileLists[i], spoolFile{source: source, wire: wire})
 		}
 		// Sort so the wire order is deterministic across goroutine /
 		// map-iteration randomness — easier to reason about in logs and
 		// tests.
-		sort.Strings(fileLists[i])
+		sort.Slice(fileLists[i], func(a, b int) bool {
+			return fileLists[i][a].source < fileLists[i][b].source
+		})
 	}
 
 	// Prepare security config — pull from context so an HTTP-handler
@@ -583,7 +585,7 @@ func (s *Schedd) sendSingleFile(ctx context.Context, cedarStream *stream.Stream,
 // 3. EOM
 // 4. For each file: send CommandXferFile, filename, file data
 // 5. Send CommandFinished
-func (s *Schedd) sendJobFiles(ctx context.Context, cedarStream *stream.Stream, _ *classad.ClassAd, fsys fs.FS, fileList []string, _ procID) error {
+func (s *Schedd) sendJobFiles(ctx context.Context, cedarStream *stream.Stream, _ *classad.ClassAd, fsys fs.FS, fileList []spoolFile, _ procID) error {
 	// Use provided file list
 	inputFiles := fileList
 
@@ -591,18 +593,22 @@ func (s *Schedd) sendJobFiles(ctx context.Context, cedarStream *stream.Stream, _
 
 	// Build the send plan (intermediate/spool transfer). Each file is opened
 	// lazily against fsys as filetransfer.SendStream streams it.
+	//
+	// Read from the source path, sent under the wire name: for a
+	// relative input with a directory component the two differ, because
+	// the schedd flattens the committed ad to basenames unless the job
+	// set PreserveRelativePaths. See spoolWireName.
 	plan := filetransfer.SendPlan{FinalTransfer: false}
-	for _, filePath := range inputFiles {
-		info, err := fs.Stat(fsys, filePath)
+	for _, f := range inputFiles {
+		info, err := fs.Stat(fsys, f.source)
 		if err != nil {
-			return fmt.Errorf("failed to stat file %s: %w", filePath, err)
+			return fmt.Errorf("failed to stat file %s: %w", f.source, err)
 		}
-		name := filePath
 		plan.Files = append(plan.Files, filetransfer.FileSpec{
-			WireName: name,
+			WireName: f.wire,
 			Mode:     int64(info.Mode().Perm()),
 			Size:     info.Size(),
-			Open:     func() (io.ReadCloser, error) { return fsys.Open(name) },
+			Open:     func() (io.ReadCloser, error) { return fsys.Open(f.source) },
 		})
 	}
 
@@ -709,9 +715,12 @@ func (s *Schedd) spoolJobFilesFromTar(ctx context.Context, jobAds []*classad.Cla
 
 // jobInfo holds information about a job for tar processing
 type jobInfo struct {
-	ad         *classad.ClassAd
-	inputFiles map[string]bool // Set of files that should be transferred
-	index      int             // Index in the original jobAds array
+	ad *classad.ClassAd
+	// inputFiles maps each name the submitter may supply a file under
+	// to the name the spool transfer sends it on as. See
+	// inputFilesAndURLs and spoolWireName.
+	inputFiles map[string]string
+	index      int // Index in the original jobAds array
 	jobID      procID
 }
 
@@ -792,7 +801,7 @@ func IsSystemExecutablePath(cmd string) bool {
 
 // getInputFilesFromJobAd extracts the set of files that need to be transferred for a job.
 // This includes TransferInput and the executable if TransferExecutable is true.
-func getInputFilesFromJobAd(ad *classad.ClassAd) map[string]bool {
+func getInputFilesFromJobAd(ad *classad.ClassAd) map[string]string {
 	set, _ := inputFilesAndURLs(ad)
 	return set
 }
@@ -815,7 +824,7 @@ func getInputFilesFromJobAd(ad *classad.ClassAd) map[string]bool {
 // nothing to spool can say which it was: "TransferInput was empty" and
 // "TransferInput was nothing but URLs" need different answers from
 // whoever reads the error.
-func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
+func inputFilesAndURLs(ad *classad.ClassAd) (map[string]string, []string) {
 	var inputFiles []string
 
 	transferInputRaw, _ := ad.EvaluateAttrString("TransferInput")
@@ -823,15 +832,19 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 		inputFiles = parseFileList(transferInputRaw)
 	}
 
-	// Create set of input files for fast lookup
-	inputFileSet := make(map[string]bool)
+	// Keyed by the name the submitter supplies the file under -- the
+	// entry as TransferInput spells it, which is also the name it
+	// carries in an uploaded tar -- mapped to the name the spool
+	// transfer sends it under. The two differ for a relative entry with
+	// a directory component: see spoolWireName.
+	inputFileSet := make(map[string]string)
 	var urls []string
 	for _, f := range inputFiles {
 		if isURL(f) {
 			urls = append(urls, f)
 			continue
 		}
-		inputFileSet[f] = true
+		inputFileSet[f] = spoolWireName(ad, f)
 	}
 
 	// Also include the executable if TransferExecutable is true (the
@@ -860,10 +873,97 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 		}
 	}
 	if transferExe && cmdValue != "" && !IsSystemExecutablePath(cmdValue) {
-		inputFileSet[path.Base(cmdValue)] = true
+		inputFileSet[path.Base(cmdValue)] = path.Base(cmdValue)
+	}
+
+	// And the job's stdin file. C++ folds ATTR_JOB_INPUT into the
+	// transfer list alongside TransferInput (file_transfer.cpp,
+	// _SimpleInit's hasJobInput block, which both ends of the spool
+	// protocol and the shadow all reach), skipping only the null file.
+	// Without it a job whose stdin names a real file spools without it:
+	// the tar path drops the name as "not in the allow-set" and the FS
+	// path never sends it, both reporting success, and the job then
+	// fails its spool->execute input transfer on a file the submitter
+	// was told had uploaded.
+	//
+	// By basename, because the schedd rewrites ATTR_JOB_INPUT to its
+	// basename under the spool Iwd and uploads arrive by that name. The
+	// submit parser writes In = "/dev/null" for every job that names no
+	// stdin, hence the nullfile guard; a URL is the execute node's work,
+	// as it is for TransferInput.
+	//
+	// Gated on TransferIn: see stdinSpoolName.
+	if name, ok := stdinSpoolName(ad); ok {
+		inputFileSet[name] = name
 	}
 
 	return inputFileSet, urls
+}
+
+// stdinSpoolName returns the name a job's stdin file is spooled under,
+// and whether it is spooled at all.
+//
+// The one predicate for that question, because two callers ask it:
+// inputFilesAndURLs, building the set of names a spool will accept, and
+// configureRemoteJobAd, deciding whether to hold the job for a spool in
+// the first place. A job held for an upload that the allow-set then
+// refuses to accept is held forever, so these must not drift apart --
+// the same reason isURL is shared rather than reimplemented.
+//
+// Returns the basename, because the schedd rewrites ATTR_JOB_INPUT to
+// condor_basename under the spool Iwd (qmgmt.cpp rewriteSpooledJobAd)
+// and uploads arrive by that name.
+//
+// Not spooled when:
+//   - unset or empty;
+//   - the null file: the submit parser writes In = "/dev/null" for every
+//     job that names no stdin, so without this every job would look like
+//     it had one;
+//   - a URL, which the execute node fetches itself, as for TransferInput;
+//   - TransferIn is explicitly false. That is what decides whether the ad
+//     will name the basename at all -- the schedd's rewrite skips In in
+//     that case (the AttrXferBool gate in rewriteSpooledJobAd), leaving
+//     the submit-side path in the committed ad, so a basename in the
+//     allow-set would be a name the job never references. Deliberately
+//     narrower than C++'s transfer list, which adds In regardless of
+//     TransferIn: the two C++ sites differ, and only the rewrite governs
+//     the name a spooled file has to have.
+func stdinSpoolName(ad *classad.ClassAd) (string, bool) {
+	stdinPath, ok := ad.EvaluateAttrString("In")
+	if !ok || stdinPath == "" || nullfile.Is(stdinPath) || isURL(stdinPath) {
+		return "", false
+	}
+	if xfer, set := ad.EvaluateAttrBool("TransferIn"); set && !xfer {
+		return "", false
+	}
+	return path.Base(stdinPath), true
+}
+
+// spoolWireName returns the name a spooled input file is sent under,
+// which is not always the name TransferInput spells it with.
+//
+// The schedd rewrites its own copy of the job ad as it commits the
+// spool (qmgmt.cpp rewriteSpooledJobAd): TransferInput entries are
+// reduced to condor_basename and Iwd is repointed at the spool
+// directory, except that a RELATIVE entry keeps its path when the job
+// sets PreserveRelativePaths. C++ DoUpload sends the matching name --
+// condor_basename, prefixed by the entry's directory only in the
+// preserve case, where ExpandFileTransferList put that directory in the
+// transfer item's dest_dir.
+//
+// Sending the entry verbatim instead, as this package used to, agrees
+// with the schedd only for the preserve-relative-paths minority. For
+// the default, "subdir/input3.txt" is written to <spool>/subdir/ while
+// the committed ad names "input3.txt" in <spool>: the upload succeeds
+// (the receiver creates the parent directory), the spooling hold
+// clears, and the job is held at execute time on a missing input.
+func spoolWireName(ad *classad.ClassAd, entry string) string {
+	if !path.IsAbs(entry) {
+		if preserve, ok := ad.EvaluateAttrBool("PreserveRelativePaths"); ok && preserve {
+			return entry
+		}
+	}
+	return path.Base(entry)
 }
 
 // logSpoolAllowSet records the inputs that went into building a spool's
@@ -882,7 +982,7 @@ func inputFilesAndURLs(ad *classad.ClassAd) (map[string]bool, []string) {
 // template service call to find out which names a job would accept.
 // Logging there put a spool diagnostic in the daemon log for a
 // directory listing.
-func logSpoolAllowSet(ad *classad.ClassAd, set map[string]bool, urls []string) {
+func logSpoolAllowSet(ad *classad.ClassAd, set map[string]string, urls []string) {
 	transferInputRaw, _ := ad.EvaluateAttrString("TransferInput")
 	cmdValue, cmdPresent := ad.EvaluateAttrString("Cmd")
 	transferExe, transferExePresent := ad.EvaluateAttrBool("TransferExecutable")
@@ -968,14 +1068,26 @@ func validateSpoolEntryName(name string) error {
 	return fmt.Errorf("%w %q: %s", ErrInvalidTarEntry, name, reason)
 }
 
+// spoolFile is one file of an FS-backed spool: the path it is read from,
+// and the name it is sent under. They differ for a relative input with a
+// directory component -- see spoolWireName.
+type spoolFile struct {
+	source string
+	wire   string
+}
+
 // dirInAllowSet reports whether dir is an allowed input or the parent of
 // one, which is the only reason to create it in the spool.
-func dirInAllowSet(allowed map[string]bool, dir string) bool {
-	if allowed[dir] {
-		return true
-	}
-	for name := range allowed {
-		if strings.HasPrefix(name, dir+"/") {
+//
+// Judged against the names the files are SENT under, not the names they
+// arrive under: those differ for a relative entry with a directory
+// component, which is flattened to its basename unless the job sets
+// PreserveRelativePaths (see spoolWireName). A spool that flattens
+// "subdir/input3.txt" to "input3.txt" has no subdir for anything to go
+// in, so creating one would leave an empty directory behind.
+func dirInAllowSet(allowed map[string]string, dir string) bool {
+	for _, wire := range allowed {
+		if wire == dir || strings.HasPrefix(wire, dir+"/") {
 			return true
 		}
 	}
@@ -1186,8 +1298,15 @@ func (s *Schedd) sendJobFilesFromTar(ctx context.Context, cedarStream *stream.St
 			}
 		}
 
-		// Check if this file should be transferred
-		if currentJobInfo == nil || !currentJobInfo.inputFiles[fileName] {
+		// Check if this file should be transferred, and under which
+		// name: the tar names it as the submitter supplied it, which is
+		// not always the name the schedd will have rewritten the job ad
+		// to expect (spoolWireName).
+		var wireName string
+		if currentJobInfo != nil {
+			wireName = currentJobInfo.inputFiles[fileName]
+		}
+		if wireName == "" {
 			// File not in the input files list, skip it. Log a
 			// warning so the silent drop is visible when something
 			// references a file we never spool — e.g., the SPA
@@ -1215,7 +1334,7 @@ func (s *Schedd) sendJobFilesFromTar(ctx context.Context, cedarStream *stream.St
 		fileMode := header.FileInfo().Mode().Perm()
 
 		// Use the shared sendSingleFile function with tarReader as the file reader
-		if err := s.sendSingleFile(ctx, cedarStream, fileName, fileSize, int64(fileMode), tarReader, &peerGoesAheadAlways, fileIndex); err != nil {
+		if err := s.sendSingleFile(ctx, cedarStream, wireName, fileSize, int64(fileMode), tarReader, &peerGoesAheadAlways, fileIndex); err != nil {
 			return err
 		}
 
