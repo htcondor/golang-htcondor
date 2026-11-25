@@ -574,6 +574,32 @@ this exists to make writing it, and keeping it correct, cheap.
 
 **5. Screenshots.**
 
+## A setting hidden before its replacement exists
+
+`HTTP_API_MCP_ADMIN_GROUP` and `HTTP_API_MCP_SUPERUSER_GROUP` are
+marked obsolete and left out of the documentation, which is what was
+asked for. They are also, as of this writing, the **only** source of
+the `mcp:admin`, `mcp:superuser`, `anyuser:read` and `anyuser:write`
+scope grants: `oauth2_sso.go` grants each of those from these two group
+sets and from nothing else. `HTTP_API_WEBUI_ADMIN_GROUP` and
+`HTTP_API_SUPERUSER_GROUP` are where the same power lives for a browser
+or API caller -- `handlers_admin.go` is the authoritative map -- but
+they do not reach the OAuth2 scope path.
+
+So an operator who needs an OAuth2 or MCP client to read across users
+now has no documented way to configure it. That is why neither carries
+a `superseded_by`: a pointer at a setting that would not restore what
+they had is worse than no pointer.
+
+Resolving it is a product decision rather than a documentation one, and
+it is one of two shapes. Either the scope grants start answering to the
+unified groups, after which both settings get a `superseded_by` and
+this paragraph goes away; or the capability is deliberately
+browser-only, in which case the scopes should stop being advertised
+rather than being grantable from a setting nobody may find. The comment
+in `oauth2_sso.go` -- "until the two settings are split apart" --
+suggests the first was intended.
+
 ## Open questions
 
 - Where does the public site live, and who operates it? The in-product

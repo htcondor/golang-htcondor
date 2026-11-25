@@ -28,24 +28,24 @@ var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
 
 // MCPAdminGroup is HTTP_API_MCP_ADMIN_GROUP.
 //
-// Obsolete: superseded by HTTP_API_WEBUI_ADMIN_GROUP. Group(s) whose
-// members may read every user's jobs through MCP. Read as a raw string
-// and split downstream, so a change to how lists are parsed does not
+// Obsolete: do not use it in new configuration. Group(s) whose members
+// may read every user's jobs through MCP. Read as a raw string and
+// split downstream, so a change to how lists are parsed does not
 // change who is privileged.
 //
-// Deprecated: superseded by HTTP_API_WEBUI_ADMIN_GROUP.
+// Deprecated: do not use it in new configuration.
 var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.Reconfig,
-	"Obsolete: superseded by HTTP_API_WEBUI_ADMIN_GROUP. Group(s) whose members may read every user's jobs through MCP. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
+	"Obsolete: do not use it in new configuration. Group(s) whose members may read every user's jobs through MCP. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
 
 // MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
 //
-// Obsolete: superseded by HTTP_API_SUPERUSER_GROUP. Group(s) whose
-// members may change any user's jobs through MCP. Read as a raw string
-// and split downstream, as above.
+// Obsolete: do not use it in new configuration. Group(s) whose members
+// may change any user's jobs through MCP. Read as a raw string and
+// split downstream, as above.
 //
-// Deprecated: superseded by HTTP_API_SUPERUSER_GROUP.
+// Deprecated: do not use it in new configuration.
 var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
-	"Obsolete: superseded by HTTP_API_SUPERUSER_GROUP. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
+	"Obsolete: do not use it in new configuration. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
 
 // OAuth2AuthURL is HTTP_API_OAUTH2_AUTH_URL.
 //
@@ -479,6 +479,6 @@ var All = []config.Knob{
 // operator still has in their configuration.
 var Obsolete = map[string]string{
 	"HTTP_API_LISTEN":              "HTTP_API_LISTEN_ADDR",
-	"HTTP_API_MCP_ADMIN_GROUP":     "HTTP_API_WEBUI_ADMIN_GROUP",
-	"HTTP_API_MCP_SUPERUSER_GROUP": "HTTP_API_SUPERUSER_GROUP",
+	"HTTP_API_MCP_ADMIN_GROUP":     "",
+	"HTTP_API_MCP_SUPERUSER_GROUP": "",
 }

@@ -234,12 +234,20 @@ knobs:
   # The two cross-user MCP privileges. Obsolete, so they are declared
   # here -- the table is the only place a setting may be spelled -- and
   # left out of the reference on purpose.
+  #
+  # Deliberately without superseded_by. HTTP_API_WEBUI_ADMIN_GROUP and
+  # HTTP_API_SUPERUSER_GROUP are where the equivalent power lives for a
+  # browser or API caller (handlers_admin.go names them), but they do
+  # not grant the mcp:admin, mcp:superuser, anyuser:read or
+  # anyuser:write scopes: oauth2_sso.go grants each of those from these
+  # two group sets and from nothing else. Pointing an operator at a
+  # setting that would not restore what they had is worse than pointing
+  # them nowhere.
   - name: HTTP_API_MCP_ADMIN_GROUP
     type: string
     default: ""
     scope: reconfig
-    obsolete:
-      superseded_by: HTTP_API_WEBUI_ADMIN_GROUP
+    obsolete: {}
     doc: >
       Group(s) whose members may read every user's jobs through MCP.
       Read as a raw string and split downstream, so a change to how
@@ -249,8 +257,7 @@ knobs:
     type: string
     default: ""
     scope: reconfig
-    obsolete:
-      superseded_by: HTTP_API_SUPERUSER_GROUP
+    obsolete: {}
     doc: >
       Group(s) whose members may change any user's jobs through MCP.
       Read as a raw string and split downstream, as above.
