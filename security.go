@@ -604,13 +604,78 @@ func GetSecurityConfig(cfg *config.Config, command int, context string) (*securi
 				// ALLOW_READ that names identities.
 				secConfig.TokenDir = userDir
 			}
-			// Note: TokenFile is typically used for single-token scenarios
-			// In practice, HTCondor usually uses TokenDir with multiple tokens
 			break
 		}
 	}
 
+	// Where a SciToken comes from, which is not the IDTOKEN directory
+	// settled above. condor_auth_ssl reads SCITOKENS_FILE when it is
+	// set and otherwise calls htcondor::discover_token(), the WLCG
+	// bearer-token search; neither was wired here, and cedar has no
+	// discovery of its own, so a Go client offering SCITOKENS could
+	// only present a token some caller injected or one that happened to
+	// be sitting loose among the IDTOKENs.
+	//
+	// Gated on AuthSciTokens alone rather than on the token branch
+	// above: TokenFile is shared with the IDTOKENS path, and an
+	// IDTOKENS-only client has no business reading a bearer token.
+	// (Harmless if it did -- cedar filters candidates on HMAC, issuer
+	// and kid, so an RS256 SciToken there is inert -- but the narrower
+	// gate is the honest one.)
+	if hasAuthMethod(secConfig.AuthMethods, security.AuthSciTokens) {
+		if f, ok := cfg.Get("SCITOKENS_FILE"); ok && strings.TrimSpace(f) != "" {
+			secConfig.TokenFile = strings.TrimSpace(f)
+		} else if path := discoverBearerTokenFile(); path != "" {
+			secConfig.TokenFile = path
+		}
+	}
+
 	return secConfig, nil
+}
+
+// discoverBearerTokenFile returns the first WLCG bearer-token location
+// that holds something, or "" if none does.
+//
+// The file arms of htcondor::discover_token (condor_scitokens.cpp), in
+// its order: $BEARER_TOKEN_FILE, then $XDG_RUNTIME_DIR/bt_u<euid>, then
+// /tmp/bt_u<euid>. The WLCG profile defines no search path on Windows
+// and C++ skips it there, so this does too.
+//
+// A path is returned rather than the token's bytes so that
+// SecurityConfig.Credentials stays the only thing that reads credential
+// files -- it is the privileged reader, and on a daemon that has dropped
+// to the condor account it is the difference between reading the file
+// and "permission denied".
+//
+// $BEARER_TOKEN, which carries a token rather than a path, is
+// deliberately not honoured here: this function's contract is a file,
+// and a caller that already holds a token passes it through
+// NewClientSecurityConfig, which sets Token and clears TokenFile.
+func discoverBearerTokenFile() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	var candidates []string
+	if f := os.Getenv("BEARER_TOKEN_FILE"); f != "" {
+		candidates = append(candidates, f)
+	}
+	name := fmt.Sprintf("bt_u%d", os.Geteuid())
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		candidates = append(candidates, filepath.Join(dir, name))
+	}
+	candidates = append(candidates, filepath.Join("/tmp", name))
+
+	for _, path := range candidates {
+		// The WLCG profile's locations are env-var supplied by
+		// definition, and this only stats them -- the file is read
+		// later by SecurityConfig.Credentials, the privileged reader.
+		st, err := os.Stat(path) //nolint:gosec // G703: a bearer-token location is caller-supplied by design
+		if err != nil || st.IsDir() || st.Size() == 0 {
+			continue
+		}
+		return path
+	}
+	return ""
 }
 
 // GetServerSecurityConfig builds a *server-side* SecurityConfig from the
