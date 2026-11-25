@@ -51,19 +51,35 @@ func TestCapabilitiesSeenOnAPoolThatPublishesThem(t *testing.T) {
 	}
 }
 
-// The ap2001 symptom: the push is refused and, before this was
-// reported, nothing said the command had gone as the access point.
+// With remote administration off the execute point publishes no
+// capability, so the pool reports degraded and every command goes as
+// this access point -- which is a documented mode, not a broken one.
+//
+// This used to assert that the push was REFUSED. That held only because
+// the fallback presented nothing at all: with no capability and no
+// SecurityConfig, cedar skipped the handshake entirely, so the command
+// carried neither a credential nor a command number and the startd could
+// not have accepted it however it was configured. Now that the fallback
+// authenticates, an execute point that authorizes this access point
+// directly takes the update -- and in this harness it does, both ends
+// being the same host.
+//
+// The diagnostic the ap2001 incident asked for -- that a refusal says
+// which credentials it went out with -- is pinned deterministically in
+// capabilities_test.go (credentialUsed, and annotate wrapping it), so
+// nothing is lost by not re-asserting it against a pool that accepts.
 func TestCapabilitiesSeenOnAPoolThatDoesNot(t *testing.T) {
 	act, machine := capabilityHarness(t, "False")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	err := act.Probe(ctx, machine)
-	if err == nil {
-		t.Fatal("the execute point accepted a machine-ad update with remote administration off")
-	}
-	if !strings.Contains(err.Error(), "own credentials") {
-		t.Fatalf("the refusal does not say which credentials it used: %v", err)
+	if err := act.Probe(ctx, machine); err != nil {
+		// Not a pass: the fallback is supposed to work here. If it is
+		// ever refused, the message must at least name what it used.
+		if !strings.Contains(err.Error(), "own credentials") {
+			t.Fatalf("the refusal does not say which credentials it used: %v", err)
+		}
+		t.Fatalf("probing %s with this access point's own credentials: %v", machine, err)
 	}
 
 	caps := act.Refreshed()
