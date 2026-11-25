@@ -349,10 +349,26 @@ var reconfigParams = []reconfigParam{
 	// and the origin of the redirect URIs registered clients hold, so it
 	// cannot be swapped under live sessions without invalidating them.
 	{name: "HTTP_API_BASE_URL"},
-	{name: "HTTP_API_MCP_BASE_URL"},
+	fromKnob(knobs.MCPBaseURL.Knob),
+
+	// Where this daemon logs, opened once when the logger is built, and
+	// the schedd log it tails for the job change stream, opened once
+	// when the stream starts.
+	fromKnob(knobs.Log.Knob),
+	fromKnob(knobs.JobQueueLog.Knob),
+
+	// Read when their one consumer is built: the staging directory for
+	// JupyterLab submissions, the credd service-name prefix connected
+	// accounts are stored under, and how often the pool is pinged for
+	// what /readyz reports.
+	fromKnob(knobs.JupyterWorkDir.Knob),
+	fromKnob(knobs.ConnectorPrefix.Knob),
+	fromKnob(knobs.PingInterval.Knob),
 
 	// Listener and credentials, all bound or opened during startup.
 	{name: "HTTP_API_LISTEN_ADDR"},
+	// The separate MCP listener, bound at the same time.
+	fromKnob(knobs.MCPListenAddr.Knob),
 	// The older spelling of the same thing, listed so a change to it is
 	// reported as needing a restart rather than silently ignored. An
 	// operator still using the alias is the one most likely to be
@@ -429,7 +445,7 @@ var reconfigParams = []reconfigParam{
 	// The connector output sweep's ticker is likewise started once. Which
 	// connectors exist, and their policy, do reload; how often finished
 	// jobs' results are appended does not.
-	{name: "HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL"},
+	fromKnob(knobs.ConnectorOutputSweepInterval.Knob),
 
 	// Authorization groups. Worth making dynamic later -- they are consulted
 	// per request -- but some are also folded into policy objects at
@@ -461,7 +477,7 @@ var reconfigParams = []reconfigParam{
 	{name: "HTTP_API_INTERACTIVE_REQUIREMENTS"},
 	{name: "HTTP_API_DAGMAN_PATH"},
 	{name: "HTTP_API_DAGMAN_ENVIRONMENT"},
-	{name: "HTTP_API_INTERACTIVE_EXTRA_SUBMIT"},
+	fromKnob(knobs.InteractiveExtraSubmit.Knob),
 	fromKnob(knobs.BuildExtraSubmit.Knob),
 	fromKnob(knobs.BuildRequirements.Knob),
 	fromKnob(knobs.BuildStagingBase.Knob),

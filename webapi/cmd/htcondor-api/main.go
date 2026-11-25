@@ -333,7 +333,7 @@ func checkLogPathWritable(logPath string) error {
 // createLogger creates a logger with reasonable defaults for unprivileged operation
 func createLogger(cfg *config.Config) (*logging.Logger, error) {
 	// Check if LOG path is configured and writable
-	logPath, hasLogPath := cfg.Get("HTTP_API_LOG")
+	logPath, hasLogPath := cfg.Get(knobs.Log.Name())
 	needStdout := false
 
 	if hasLogPath && logPath != "" && logPath != "stdout" && logPath != "stderr" {
@@ -360,7 +360,7 @@ func createLogger(cfg *config.Config) (*logging.Logger, error) {
 	// Temporarily override LOG to stdout if needed
 	originalLog := logPath
 	if needStdout {
-		cfg.Set("HTTP_API_LOG", "stdout")
+		cfg.Set(knobs.Log.Name(), "stdout")
 	}
 
 	// Create logger with HTTP_API daemon-specific settings
@@ -368,7 +368,7 @@ func createLogger(cfg *config.Config) (*logging.Logger, error) {
 
 	// Restore original LOG value if we changed it
 	if needStdout && hasLogPath {
-		cfg.Set("HTTP_API_LOG", originalLog)
+		cfg.Set(knobs.Log.Name(), originalLog)
 	}
 
 	if err != nil {
@@ -649,10 +649,7 @@ func loadDBPath(cfg *config.Config, logger *logging.Logger) string {
 // httpserver/jupyterhelperbin (when built with -tags embed_jupyter_helper),
 // so there is no separate path-discovery step.
 func loadJupyterWorkDir(cfg *config.Config) string {
-	if p, ok := cfg.Get("HTTP_API_JUPYTER_WORK_DIR"); ok && p != "" {
-		return p
-	}
-	return ""
+	return knobs.JupyterWorkDir.Get(cfg)
 }
 
 // Defaults for the two JupyterLab session limits.
@@ -777,7 +774,7 @@ func loadTemplateGlobalPath(cfg *config.Config) string {
 // the API server to pick up changes (the value is read once at
 // startup).
 func loadInteractiveExtraSubmit(cfg *config.Config) string {
-	if v, ok := cfg.Get("HTTP_API_INTERACTIVE_EXTRA_SUBMIT"); ok {
+	if v := knobs.InteractiveExtraSubmit.Get(cfg); v != "" {
 		return v
 	}
 	return ""
@@ -962,7 +959,7 @@ func loadInteractiveRequirements(cfg *config.Config, logger *logging.Logger) str
 // tail, and that is not a misconfiguration to warn about on every
 // start.
 func resolveJobQueueLog(cfg *config.Config, logger *logging.Logger) string {
-	if configured := strings.TrimSpace(firstConfigValue(cfg, "HTTP_API_JOB_QUEUE_LOG")); configured != "" {
+	if configured := strings.TrimSpace(knobs.JobQueueLog.Get(cfg)); configured != "" {
 		if strings.EqualFold(configured, "none") {
 			logger.Info(logging.DestinationHTTP, "The job change stream is switched off by configuration")
 			return ""
@@ -2256,7 +2253,7 @@ func getHTTPConfig(cfg *config.Config, logger *logging.Logger) (listenAddrResult
 			listenAddrResult = strings.TrimSpace(addr)
 		}
 	}
-	mcpListenAddrResult, _ = cfg.Get("HTTP_API_MCP_LISTEN_ADDR")
+	mcpListenAddrResult = knobs.MCPListenAddr.Get(cfg)
 	tlsCertFile = knobs.TLSCert.Get(cfg)
 	tlsKeyFile = knobs.TLSKey.Get(cfg)
 	tlsCACertFile = knobs.TLSCACert.Get(cfg)
@@ -2674,7 +2671,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	server, err := httpserver.NewServer(httpserver.Config{
 		ListenAddr:               listenAddrFromConfig,
 		MCPListenAddr:            mcpListenAddrFromConfig,
-		MCPBaseURL:               firstConfigValue(cfg, "HTTP_API_MCP_BASE_URL"),
+		MCPBaseURL:               knobs.MCPBaseURL.Get(cfg),
 		CCB:                      ccbDialer,
 		ScheddName:               scheddNameValue,
 		ScheddAddr:               scheddAddrValue,
@@ -4517,7 +4514,7 @@ func loadMCPWatchMaxWait(cfg *config.Config, logger *logging.Logger) time.Durati
 // from the shipped binary at all: nothing read this setting, and the
 // library coerced its documented "off" value back to the default.
 func loadPingInterval(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_PING_INTERVAL")
+	raw, ok := cfg.Get(knobs.PingInterval.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return defaultPingInterval
 	}

@@ -85,6 +85,27 @@ var BuildRequirements = config.DefineString("HTTP_API_BUILD_REQUIREMENTS", "", c
 var BuildStagingBase = config.DefineString("HTTP_API_BUILD_STAGING_BASE", "", config.Startup,
 	"Where built images are published when the caller gives a bare name. Unset means every call has to name its own destination. It may be a template: {user} expands to the authenticated caller and {initial} to the first letter of that name, so a per-user staging area can be written osdf:///chtc/staging/{initial}/{user}. A base with no placeholder is used verbatim.")
 
+// ConnectorOutputSweepInterval is HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL.
+//
+// How often finished jobs are swept for output to deliver to a
+// connected account, as a duration with a unit. A bare number is
+// refused rather than guessed at, and anything under a minute is
+// raised to one with a message: sweeping faster asks the queue and the
+// provider about the same finished jobs more often than they can
+// change, and a provider's rate limit is a real consequence. Read at
+// startup; the running ticker does not re-read it, so a change needs a
+// restart even though the rest of the connector configuration reloads.
+var ConnectorOutputSweepInterval = config.DefineDuration("HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL", time.Duration(0) /* 0s */, config.Startup,
+	"How often finished jobs are swept for output to deliver to a connected account, as a duration with a unit. A bare number is refused rather than guessed at, and anything under a minute is raised to one with a message: sweeping faster asks the queue and the provider about the same finished jobs more often than they can change, and a provider's rate limit is a real consequence. Read at startup; the running ticker does not re-read it, so a change needs a restart even though the rest of the connector configuration reloads.")
+
+// ConnectorPrefix is HTTP_API_CONNECTOR_PREFIX.
+//
+// The prefix of the credd service names this server stores
+// connected-account credentials under. Change it only to keep two
+// servers sharing one credd from seeing each other's credentials.
+var ConnectorPrefix = config.DefineString("HTTP_API_CONNECTOR_PREFIX", "webapi", config.Startup,
+	"The prefix of the credd service names this server stores connected-account credentials under. Change it only to keep two servers sharing one credd from seeing each other's credentials.")
+
 // EnableIDP is HTTP_API_ENABLE_IDP.
 //
 // Run the built-in identity provider, so this server signs users in
@@ -173,6 +194,35 @@ var IDPIssuer = config.DefineString("HTTP_API_IDP_ISSUER", "", config.Startup,
 var IDPRefreshTokenLifespan = config.DefineDuration("HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN", time.Duration(0) /* 0s */, config.Startup,
 	"How long a refresh token the built-in identity provider issues stays valid. It has to be at least the access token lifespan, or the provider refuses to start: a refresh token that dies first makes every refresh fail after the access token expires. Read only when HTTP_API_ENABLE_IDP is on, and refused the same way as above when it is not a positive duration.")
 
+// InteractiveExtraSubmit is HTTP_API_INTERACTIVE_EXTRA_SUBMIT.
+//
+// Extra submit-file lines added to every interactive session job --
+// terminal, VS Code and JupyterLab. Operator-only configuration,
+// spliced in as written, as with the submit-file settings above.
+var InteractiveExtraSubmit = config.DefineString("HTTP_API_INTERACTIVE_EXTRA_SUBMIT", "", config.Startup,
+	"Extra submit-file lines added to every interactive session job -- terminal, VS Code and JupyterLab. Operator-only configuration, spliced in as written, as with the submit-file settings above.")
+
+// JobQueueLog is HTTP_API_JOB_QUEUE_LOG.
+//
+// The schedd's job queue log, tailed to serve the job change stream,
+// or the word none to switch the stream off. Unset falls back to
+// JOB_QUEUE_LOG where the file is there, which is the case when this
+// server shares a host with its schedd; where it does not -- an API
+// server in its own container, the usual deployment -- there is
+// nothing to tail and that is not a misconfiguration. Named explicitly
+// and absent is an operator error, and is reported as one.
+var JobQueueLog = config.DefineString("HTTP_API_JOB_QUEUE_LOG", "", config.Startup,
+	"The schedd's job queue log, tailed to serve the job change stream, or the word none to switch the stream off. Unset falls back to JOB_QUEUE_LOG where the file is there, which is the case when this server shares a host with its schedd; where it does not -- an API server in its own container, the usual deployment -- there is nothing to tail and that is not a misconfiguration. Named explicitly and absent is an operator error, and is reported as one.")
+
+// JupyterWorkDir is HTTP_API_JUPYTER_WORK_DIR.
+//
+// Where the helper binary and token files for JupyterLab submissions
+// are staged. The helper itself is built into this binary, so nothing
+// has to be found on disk; this is only where it is written out to be
+// transferred.
+var JupyterWorkDir = config.DefineString("HTTP_API_JUPYTER_WORK_DIR", "", config.Startup,
+	"Where the helper binary and token files for JupyterLab submissions are staged. The helper itself is built into this binary, so nothing has to be found on disk; this is only where it is written out to be transferred.")
+
 // Listen is HTTP_API_LISTEN.
 //
 // Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of
@@ -184,6 +234,17 @@ var IDPRefreshTokenLifespan = config.DefineDuration("HTTP_API_IDP_REFRESH_TOKEN_
 var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
 	"Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of the listen address, honored when HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins where both are set.")
 
+// Log is HTTP_API_LOG.
+//
+// Where this daemon writes its log: a file, or the words stdout or
+// stderr. A named file that cannot be written falls back to stdout
+// with a message -- except under condor_master, where stdout is
+// discarded and there would be nowhere to report anything, so the
+// daemon refuses to start and the reason goes to the master's log
+// instead.
+var Log = config.DefineString("HTTP_API_LOG", "", config.Startup,
+	"Where this daemon writes its log: a file, or the words stdout or stderr. A named file that cannot be written falls back to stdout with a message -- except under condor_master, where stdout is discarded and there would be nowhere to report anything, so the daemon refuses to start and the reason goes to the master's log instead.")
+
 // MCPAdminGroup is HTTP_API_MCP_ADMIN_GROUP.
 //
 // Obsolete: do not use it in new configuration. Group(s) whose members
@@ -194,6 +255,23 @@ var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
 // Deprecated: do not use it in new configuration.
 var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.Reconfig,
 	"Obsolete: do not use it in new configuration. Group(s) whose members may read every user's jobs through MCP. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
+
+// MCPBaseURL is HTTP_API_MCP_BASE_URL.
+//
+// The externally-visible base URL of the MCP listener, for a
+// deployment that serves MCP on an address of its own. Unset, MCP is
+// reached at HTTP_API_BASE_URL like everything else.
+var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup,
+	"The externally-visible base URL of the MCP listener, for a deployment that serves MCP on an address of its own. Unset, MCP is reached at HTTP_API_BASE_URL like everything else.")
+
+// MCPListenAddr is HTTP_API_MCP_LISTEN_ADDR.
+//
+// A second address to serve MCP on, separate from
+// HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which is
+// what almost every deployment wants; this is for separating the agent
+// surface onto its own port or interface.
+var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.Startup,
+	"A second address to serve MCP on, separate from HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which is what almost every deployment wants; this is for separating the agent surface onto its own port or interface.")
 
 // MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
 //
@@ -350,6 +428,20 @@ var OAuth2UserinfoURL = config.DefineString("HTTP_API_OAUTH2_USERINFO_URL", "", 
 // identity mapping" in the operator guide.
 var OAuth2UsernameClaim = config.DefineString("HTTP_API_OAUTH2_USERNAME_CLAIM", "", config.Startup,
 	"Which claim names the account that owns the jobs, e.g. eppn, where the provider's subject is not it. Unset uses the subject. See \"Local identity mapping\" in the operator guide.")
+
+// PingInterval is HTTP_API_PING_INTERVAL.
+//
+// How often the daemon pings the pool to decide what /readyz reports,
+// as a duration with a unit. A bare 0 switches the ping off and is the
+// one value exempt from the unit rule, since there is no ambiguity in
+// zero. Switching it off is what a deployment holding no local
+// HTCondor credential needs: where every request authenticates with a
+// forwarded token and the daemon itself has nothing to ping with, the
+// ping can only fail and drag /readyz down with it. A value with no
+// unit, or one that does not parse, refuses to start rather than being
+// guessed at -- 5 could be seconds or minutes.
+var PingInterval = config.DefineDuration("HTTP_API_PING_INTERVAL", time.Duration(60000000000) /* 1m */, config.Startup,
+	"How often the daemon pings the pool to decide what /readyz reports, as a duration with a unit. A bare 0 switches the ping off and is the one value exempt from the unit rule, since there is no ambiguity in zero. Switching it off is what a deployment holding no local HTCondor credential needs: where every request authenticates with a forwarded token and the daemon itself has nothing to ping with, the ping can only fail and drag /readyz down with it. A value with no unit, or one that does not parse, refuses to start rather than being guessed at -- 5 could be seconds or minutes.")
 
 // ReadTimeout is HTTP_API_READ_TIMEOUT.
 //
@@ -687,6 +779,8 @@ var All = []config.Knob{
 	BuildMaxMemoryMB.Knob,
 	BuildRequirements.Knob,
 	BuildStagingBase.Knob,
+	ConnectorOutputSweepInterval.Knob,
+	ConnectorPrefix.Knob,
 	EnableIDP.Knob,
 	IdempotencyKeyCheck.Knob,
 	IdempotencyKeyHistoryWindow.Knob,
@@ -696,8 +790,14 @@ var All = []config.Knob{
 	IDPAccessTokenLifespan.Knob,
 	IDPIssuer.Knob,
 	IDPRefreshTokenLifespan.Knob,
+	InteractiveExtraSubmit.Knob,
+	JobQueueLog.Knob,
+	JupyterWorkDir.Knob,
 	Listen.Knob,
+	Log.Knob,
 	MCPAdminGroup.Knob,
+	MCPBaseURL.Knob,
+	MCPListenAddr.Knob,
 	MCPSuperuserGroup.Knob,
 	OAuth2AccessTokenLifespan.Knob,
 	OAuth2AuthURL.Knob,
@@ -715,6 +815,7 @@ var All = []config.Knob{
 	OAuth2TokenURL.Knob,
 	OAuth2UserinfoURL.Knob,
 	OAuth2UsernameClaim.Knob,
+	PingInterval.Knob,
 	ReadTimeout.Knob,
 	SpoolBufferDir.Knob,
 	SubmitFileDefaults.Knob,

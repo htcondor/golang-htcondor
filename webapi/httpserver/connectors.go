@@ -10,6 +10,7 @@ import (
 	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/connectors"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Wiring the connectors package into the server: where a definition
@@ -44,7 +45,7 @@ func (s *Handler) outputSweepIntervalFor(params *config.Config) time.Duration {
 	if params == nil {
 		return 0
 	}
-	const key = "HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL"
+	key := knobs.ConnectorOutputSweepInterval.Name()
 	raw, ok := params.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0

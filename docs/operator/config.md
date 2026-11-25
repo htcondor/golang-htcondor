@@ -186,6 +186,27 @@ one.
 How a job fetches from this account, where the connector supports more
 than one way.
 
+### `HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL`
+
+**Duration.** Unset leaves the sweep off. Changing it needs a restart.
+
+How often finished jobs are swept for output to deliver to a connected
+account, as a duration with a unit. A bare number is refused rather
+than guessed at, and anything under a minute is raised to one with a
+message: sweeping faster asks the queue and the provider about the
+same finished jobs more often than they can change, and a provider's
+rate limit is a real consequence. Read at startup; the running ticker
+does not re-read it, so a change needs a restart even though the rest
+of the connector configuration reloads.
+
+### `HTTP_API_CONNECTOR_PREFIX`
+
+**String.** Default `webapi`. Changing it needs a restart.
+
+The prefix of the credd service names this server stores
+connected-account credentials under. Change it only to keep two
+servers sharing one credd from seeing each other's credentials.
+
 ### `HTTP_API_ENABLE_IDP`
 
 **Boolean.** Default `false`. Changing it needs a restart.
@@ -273,6 +294,62 @@ provider refuses to start: a refresh token that dies first makes every
 refresh fail after the access token expires. Read only when
 `HTTP_API_ENABLE_IDP` is on, and refused the same way as above when it
 is not a positive duration.
+
+### `HTTP_API_INTERACTIVE_EXTRA_SUBMIT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Extra submit-file lines added to every interactive session job --
+terminal, VS Code and JupyterLab. Operator-only configuration, spliced
+in as written, as with the submit-file settings above.
+
+### `HTTP_API_JOB_QUEUE_LOG`
+
+**String.** Unset uses JOB_QUEUE_LOG when that file is actually present. Changing it needs a restart.
+
+The schedd's job queue log, tailed to serve the job change stream, or
+the word none to switch the stream off. Unset falls back to
+JOB_QUEUE_LOG where the file is there, which is the case when this
+server shares a host with its schedd; where it does not -- an API
+server in its own container, the usual deployment -- there is nothing
+to tail and that is not a misconfiguration. Named explicitly and
+absent is an operator error, and is reported as one.
+
+### `HTTP_API_JUPYTER_WORK_DIR`
+
+**String.** Unset uses a directory under the system temporary directory. Changing it needs a restart.
+
+Where the helper binary and token files for JupyterLab submissions are
+staged. The helper itself is built into this binary, so nothing has to
+be found on disk; this is only where it is written out to be
+transferred.
+
+### `HTTP_API_LOG`
+
+**String.** Unset logs to stdout. Changing it needs a restart.
+
+Where this daemon writes its log: a file, or the words stdout or
+stderr. A named file that cannot be written falls back to stdout with
+a message -- except under condor_master, where stdout is discarded and
+there would be nowhere to report anything, so the daemon refuses to
+start and the reason goes to the master's log instead.
+
+### `HTTP_API_MCP_BASE_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The externally-visible base URL of the MCP listener, for a deployment
+that serves MCP on an address of its own. Unset, MCP is reached at
+`HTTP_API_BASE_URL` like everything else.
+
+### `HTTP_API_MCP_LISTEN_ADDR`
+
+**String.** Unset by default. Changing it needs a restart.
+
+A second address to serve MCP on, separate from
+`HTTP_API_LISTEN_ADDR`. Unset serves MCP on the one listener, which is
+what almost every deployment wants; this is for separating the agent
+surface onto its own port or interface.
 
 ### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
 
@@ -476,6 +553,20 @@ default.
 
 Which shipped chooser to run. Defaults to the chooser's own name, so
 the common case needs one line.
+
+### `HTTP_API_PING_INTERVAL`
+
+**Duration.** Default `1m`. Changing it needs a restart.
+
+How often the daemon pings the pool to decide what /readyz reports, as
+a duration with a unit. A bare 0 switches the ping off and is the one
+value exempt from the unit rule, since there is no ambiguity in zero.
+Switching it off is what a deployment holding no local HTCondor
+credential needs: where every request authenticates with a forwarded
+token and the daemon itself has nothing to ping with, the ping can
+only fail and drag /readyz down with it. A value with no unit, or one
+that does not parse, refuses to start rather than being guessed at --
+5 could be seconds or minutes.
 
 ### `HTTP_API_READ_TIMEOUT`
 

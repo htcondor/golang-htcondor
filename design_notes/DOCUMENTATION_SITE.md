@@ -519,9 +519,14 @@ when the lint covers everything.
 *The generated reference has landed*, out of order with the rest of the
 stage and deliberately so: it covered a fraction when it landed -- 22
 declared settings of roughly 240 -- but from here every setting
-converted documents itself. Forty-seven are declared as of this
-writing, with 169 names still read as string literals outside generated
-code. Left until the conversion was finished, the whole exercise
+converted documents itself. Fifty-six are declared as of this
+writing, with 162 names still read as string literals outside generated
+code -- and, of the settings the server reads, none is undocumented any
+more. The two names a census still turns up, HTTP_API_WEBUI_PRIVACY and
+HTTP_API_WEBUI_TERMS, are labels handed to resolvePolicy for its
+messages rather than settings anything looks up; the real pair is
+_FILE and _URL, both of which the reference carries. A lint over string
+literals will have to know the difference. Left until the conversion was finished, the whole exercise
 would have paid nothing out until the last setting moved. It writes
 into a marked region of `docs/operator/config.md` rather than a page of
 its own, so the prose no table can generate stays where it is, and the
