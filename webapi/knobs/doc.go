@@ -11,5 +11,5 @@
 //
 //	timeout := knobs.ReadTimeout.Get(cfg)
 //
-//go:generate go run ./generate.go
+//go:generate go run ./generate.go -docs ../../docs/operator/config.md
 package knobs

@@ -237,8 +237,8 @@ docs-check: ## Validate docs front matter, links and nav.json
 	go test ./internal/docsmeta/
 
 .PHONY: knobs
-knobs: ## Regenerate webapi/knobs/knobs_gen.go from knobs.yaml
-	@echo "Generating webapi/knobs/knobs_gen.go..."
+knobs: ## Regenerate the knob accessors and the configuration reference from knobs.yaml
+	@echo "Generating webapi/knobs/knobs_gen.go and the generated region of docs/operator/config.md..."
 	cd webapi/knobs && go generate ./...
 
 .PHONY: imports

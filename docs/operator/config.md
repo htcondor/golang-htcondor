@@ -24,7 +24,369 @@ With neither a collector nor `HTTP_API_DBMIRROR_ADDRESS`, routing is simply
 off rather than failing — an address file that resolves on every host would
 otherwise switch it on for deployments that never asked.
 
-## Knobs
+## Settings
+
+Generated from the table the server declares its settings in, so the
+type, the default and what it takes to install a change are the ones the
+code uses rather than a second copy of them. Alphabetical by parameter.
+
+<!-- BEGIN GENERATED SETTINGS: edit webapi/knobs/knobs.yaml, then run `make knobs` -->
+
+### `HTTP_API_CONNECTORS`
+
+**Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
+
+Names the external accounts this access point offers to connect. Each
+is then configured by the `HTTP_API_CONNECTOR_<instance>_*` settings.
+
+### `HTTP_API_CONNECTOR_<instance>_*`
+
+An external account users may connect, so a job can read their files
+from it. `HTTP_API_CONNECTORS` names the connectors offered; each is
+configured by the settings below with its id folded in, e.g.
+`HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS` for builtin:gdrive.
+
+#### `HTTP_API_CONNECTOR_<instance>_AUTHORIZATION_URL`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The provider's authorization endpoint, for a connector that is not a
+shipped one.
+
+#### `HTTP_API_CONNECTOR_<instance>_CLIENT_ID`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The OAuth2 client id this access point registered with the provider.
+
+#### `HTTP_API_CONNECTOR_<instance>_CLIENT_SECRET_FILE`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+File holding the OAuth2 client secret. A connector with no readable
+secret is refused rather than offered. Holds or names a credential:
+keep it readable only by the account the server runs as.
+
+#### `HTTP_API_CONNECTOR_<instance>_ENABLED`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Whether the connector is offered at all. Default true, so a connector
+is turned off by setting this rather than by removing its
+configuration.
+
+#### `HTTP_API_CONNECTOR_<instance>_GROUPS`
+
+**Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
+
+Group(s) whose members may connect this account. Unset offers it to
+everyone who may sign in.
+
+#### `HTTP_API_CONNECTOR_<instance>_KIND`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Which shipped connector definition to use, for an id that is not
+itself one.
+
+#### `HTTP_API_CONNECTOR_<instance>_SCOPES`
+
+**Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
+
+The scopes requested when a user connects this account.
+
+#### `HTTP_API_CONNECTOR_<instance>_TOKEN_URL`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The provider's token endpoint, for a connector that is not a shipped
+one.
+
+#### `HTTP_API_CONNECTOR_<instance>_TRANSFER`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+How a job fetches from this account, where the connector supports more
+than one way.
+
+### `HTTP_API_IDLE_TIMEOUT`
+
+**Duration.** Default `120s`. Changing it needs a restart.
+
+How long a keep-alive connection may sit idle before the server closes
+it, as a Go duration.
+
+### `HTTP_API_OAUTH2_AUTH_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The provider's authorization endpoint, used when discovery is not
+configured or did not answer.
+
+### `HTTP_API_OAUTH2_CLIENT_ID`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The client id this server registered with that identity provider.
+
+### `HTTP_API_OAUTH2_CLIENT_SECRET_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+File holding the client secret for that registration. Read as root
+where the ordinary read is denied, since a secret staged on an access
+point is usually root-owned and this daemon has dropped privilege by
+then. An unreadable file is a warning and no secret, not a refusal to
+start. Holds or names a credential: keep it readable only by the
+account the server runs as.
+
+### `HTTP_API_OAUTH2_DB_PATH`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Deprecated and ignored. The application database is
+`HTTP_API_DB_PATH`; the legacy oauth.db schema conflicts with the
+unified migration, so setting this is reported and has no effect.
+
+### `HTTP_API_OAUTH2_GROUPS_CLAIM`
+
+**String.** Default `groups`. Changing it needs a restart.
+
+Which claim in the token carries the user's groups, for the settings
+that gate access on group membership.
+
+### `HTTP_API_OAUTH2_IDP`
+
+**String.** Unset by default. Changing it needs a restart.
+
+An external identity provider to sign users in through, as the base
+URL of its OIDC discovery document. Discovery supplies the
+authorization, token and userinfo endpoints; the explicit
+`HTTP_API_OAUTH2_*`_URL settings are the fallback when it fails, which
+is logged as a warning rather than refused.
+
+### `HTTP_API_OAUTH2_ISSUER`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The issuer this server names in its own OAuth2 documents. Unset, it is
+derived from the externally-visible URL, assuming https.
+
+### `HTTP_API_OAUTH2_REDIRECT_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where the provider sends the user back to, which has to be a redirect
+URI registered with it. Unset, it is the issuer followed by this
+server's callback path, which is the right answer whenever the issuer
+is how users reach it: /mcp/oauth2/callback on a server whose only
+surface is MCP, /oauth2/callback everywhere else. Both paths are
+served wherever MCP is on, so an authorization started before an
+upgrade still lands; but what has to be registered at the provider is
+the URI this server sends, so a build that gains the web UI needs
+/oauth2/callback added there -- or this set, to keep sending the old
+one.
+
+### `HTTP_API_OAUTH2_REQUIREMENTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Login policy as a ClassAd expression over the token's claims; a login
+proceeds only where it evaluates true. It is parsed at startup and a
+malformed one stops the server, rather than failing at somebody's
+first login.
+
+See [Local identity mapping](auth.md#local-identity-mapping).
+
+### `HTTP_API_OAUTH2_SCOPES`
+
+**Space-separated list.** Unset by default. Changing it needs a restart.
+
+Scopes requested at sign-in, space separated as RFC 6749 writes them,
+e.g. "openid profile email org.cilogon.userinfo". Unset uses the
+built-in defaults. Every scope has to be approved for this client at
+the provider: CILogon rejects an unapproved scope outright, where it
+used to ignore it silently, and that refusal fails every login.
+offline_access is added to whatever is set here unless
+`HTTP_API_UPSTREAM_REFRESH` is off; that one this server adds itself,
+so a refusal of it is absorbed rather than failing logins.
+
+### `HTTP_API_OAUTH2_TOKEN_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The provider's token endpoint, used when discovery is not configured
+or did not answer.
+
+### `HTTP_API_OAUTH2_USERINFO_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The provider's userinfo endpoint, used when discovery is not
+configured or did not answer.
+
+### `HTTP_API_OAUTH2_USERNAME_CLAIM`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Which claim names the account that owns the jobs, e.g. eppn, where the
+provider's subject is not it. Unset uses the subject.
+
+See [Local identity mapping](auth.md#local-identity-mapping).
+
+### `HTTP_API_PICKERS`
+
+**Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
+
+Names the file choosers this access point offers. Each is then
+configured by the `HTTP_API_PICKER_<instance>_*` settings.
+
+### `HTTP_API_PICKER_<instance>_*`
+
+A file chooser the submit page offers, so a user can pick input files
+out of a connected account instead of uploading them.
+`HTTP_API_PICKERS` names the choosers that exist; a chooser is
+configured by the settings below with its name folded in, e.g.
+`HTTP_API_PICKER_LAB_A_API_KEY` for the chooser named lab-a.
+
+#### `HTTP_API_PICKER_<instance>_API_KEY`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The provider's developer key, where its chooser needs one to run in
+the browser. Holds or names a credential: keep it readable only by the
+account the server runs as.
+
+#### `HTTP_API_PICKER_<instance>_APP_ID`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The provider's application id, where its chooser needs one alongside
+the developer key.
+
+#### `HTTP_API_PICKER_<instance>_CONNECTOR`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The connector whose credential the chooser shows files with. Without
+one the chooser is not offered.
+
+#### `HTTP_API_PICKER_<instance>_ORIGIN`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The origin the chooser is loaded from, when it is not the provider's
+default.
+
+#### `HTTP_API_PICKER_<instance>_PROVIDER`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Which shipped chooser to run. Defaults to the chooser's own name, so
+the common case needs one line.
+
+### `HTTP_API_READ_TIMEOUT`
+
+**Duration.** Default `30s`. Changing it needs a restart.
+
+How long a request may take to arrive in full, as a Go duration. A
+value that cannot be parsed is logged and the default applies.
+
+### `HTTP_API_SITE_APP_<instance>_*`
+
+A lab's own web interface, published to the people it belongs to. Each
+bundle in `HTTP_API_SITE_APPS_DIR` is configured by the settings below
+with its id folded in, e.g. `HTTP_API_SITE_APP_CRYOEM_GROUPS` for the
+bundle cryoem. GROUPS is what declares an app: a bundle nobody has
+given groups to is not published.
+
+The instances are discovered rather than listed in a parameter, so there is no setting that names them.
+
+#### `HTTP_API_SITE_APP_<instance>_DESCRIPTION`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+One line about the app, shown beside its name.
+
+#### `HTTP_API_SITE_APP_<instance>_ENABLED`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Whether the app is served. Default true when the setting is present at
+all, so an app is turned off by setting this to false rather than by
+removing its groups.
+
+#### `HTTP_API_SITE_APP_<instance>_GROUPS`
+
+**Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
+
+Group(s) whose members this app is published to. An app with none is
+not published at all -- an empty value is far more often a mistake
+than a deliberate "nobody".
+
+#### `HTTP_API_SITE_APP_<instance>_HOME`
+
+**Boolean.** Default `false`. A change is installed by `condor_reconfig`.
+
+Whether this app is what its people land on instead of the dashboard.
+
+#### `HTTP_API_SITE_APP_<instance>_ICON`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+The icon shown beside the app's name.
+
+#### `HTTP_API_SITE_APP_<instance>_NAME`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+What the app is called in the navigation, instead of its bundle id.
+
+### `HTTP_API_SPOOL_BUFFER_DIR`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where an archive dropped in the SSH gateway's /submit/, or posted to
+the REST upload endpoints, is buffered while it is unpacked. Unset
+holds it in memory instead, under a much smaller ceiling.
+
+### `HTTP_API_TLS_CA_CERT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+CA bundle used to verify client certificates. Unset asks for no client
+certificate.
+
+### `HTTP_API_TLS_CERT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+PEM certificate for serving HTTPS directly, rather than behind a
+terminating proxy. Needs `HTTP_API_TLS_KEY`; neither alone enables
+TLS.
+
+### `HTTP_API_TLS_KEY`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Private key for `HTTP_API_TLS_CERT`. Keep it readable only by the
+account the server runs as.
+
+### `HTTP_API_WRITE_TIMEOUT`
+
+**Duration.** Default `30s`. Changing it needs a restart.
+
+How long a response may take to write, as a Go duration. This bounds a
+slow client, so it also bounds a deliberately long poll; see the note
+on streaming endpoints before lowering it.
+
+<!-- END GENERATED SETTINGS -->
+
+## More settings
+
+Settings the table does not carry yet, documented by hand. The same
+prose, without the type, the default and what a change takes stated for
+each one.
 
 | Knob | Purpose |
 | --- | --- |
@@ -66,7 +428,6 @@ otherwise switch it on for deployments that never asked.
 | `HTTP_API_MCP_CIMD_ALLOWED_HOSTS` | Comma/space list of host or `.domain` patterns a CIMD `client_id` may point at. Empty = any host (SSRF guards still apply). Recommended for production: without it, unauthenticated callers choose which public hosts this server fetches from. |
 | `HTTP_API_MCP_DCR` | Accept dynamic client registration (RFC 7591) at `/oauth2/register` (and `/mcp/oauth2/register` where MCP is on). Default `true`; set `false` when every client is seeded, operator-provisioned or CIMD. Registrations are then refused with 403 and the endpoint is not advertised. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
 | `HTTP_API_MCP_WATCH_MAX_WAIT` | Cap on how long the MCP `check_watches`/`watch_jobs` tools may block in-call before returning (a duration, e.g. `15s`). This number is advertised to the agent in the tool schema, so it has to be one the whole path can deliver, not just this server. Unset = `45s`, or the value derived from `HTTP_API_MCP_MAX_REQUEST_DURATION` where that is tighter. 45s is not a server limit — the server will hold a request for 14m30s by default — it is what an MCP client is observed to wait for before abandoning the call, which returns *nothing at all* to the agent rather than a timeout it could act on. **Set this lower when a gateway or proxy with a tighter timeout sits in front of this server**; set it higher only when you know the clients reaching this deployment are configured for a longer tool timeout. |
-| `HTTP_API_OAUTH2_REDIRECT_URL` | The redirect URI registered with the identity provider. Unset = derived from the issuer plus this server's callback path, which is `/mcp/oauth2/callback` on a server whose only surface is MCP and `/oauth2/callback` everywhere else. Both paths are served wherever MCP is on, so an authorization started before an upgrade still lands; but the URI the server *sends* must be registered at the IdP, so a build that gains the web UI needs `/oauth2/callback` added there (or this knob set to keep the old one). |
 | `HTTP_API_CREDD_ADDRESS` | Single-AP mode only (refused in multi-AP mode, where each access point's schedd names its own). Pins the credd this server talks to (a sinful, e.g. `<10.0.0.5:9618?sock=credd>`), overriding discovery. Normally unnecessary: the credd is read from the schedd itself, which publishes its own credd as `CredDIpAddr` in its ad and address file — the same binding `DCSchedd::getCreddAddress` uses. Set this when fronting a remote schedd that does not advertise it, since a credd that is not the submitting schedd's accepts credentials and leaves jobs held anyway. |
 | `HTTP_API_REQUIRED_CREDENTIALS` | OAuth service credentials that must exist before a job may be submitted (comma- or space-separated, e.g. `scitokens`). Some access points hold every job submitted without them, whatever the job actually uses. Each submit path checks the caller's credentials first and stores a placeholder for any that is missing, so a person using the web UI does not get a held job for a reason unrelated to what they asked for; a real credential obtained later through the OAuth flow replaces the placeholder. Presence is cached per user for 5 minutes. Best effort: if the credd is unavailable or refuses, the submit still proceeds and the reason is logged. Unset = nothing is required. |
 | `HTTP_API_MCP_MAX_REQUEST_DURATION` | Hard stop on an MCP request that is still making progress (a duration, e.g. `5m`). Unset = 15m. While an MCP request runs its write deadline is moved forward, so `HTTP_API_WRITE_TIMEOUT` — which is an absolute deadline meant for ordinary replies — does not decide how long a deliberately waiting tool may wait. A request that stops making progress is still cut off on its last window; this is the backstop for one that never finishes at all. |
@@ -96,10 +457,7 @@ otherwise switch it on for deployments that never asked.
 | `HTTP_API_IDENTITY_MAP_PASSWD_FILE` | Account file backing the mapping index. Default `/etc/passwd`. |
 | `HTTP_API_IDENTITY_MAP_TTL` | How long the account index and group answers are reused. Default `5m`. |
 | `HTTP_API_GROUP_SOURCE` | Comma-separated: `token` (default), `system`, and/or `file:<path>`. Local sources are unioned; `token` may not be mixed with them. See [Local identity mapping](auth.md#local-identity-mapping). |
-| `HTTP_API_OAUTH2_USERNAME_CLAIM` | Claim carrying the username, e.g. `eppn`. Default `sub`. |
-| `HTTP_API_OAUTH2_SCOPES` | Space-separated scopes requested from the provider. Default `openid profile email`. Every one must be approved for this client at the provider: CILogon rejects an unapproved scope outright, where it used to ignore it silently, and that refusal fails every login. `offline_access` is added to whatever is set here unless `HTTP_API_UPSTREAM_REFRESH` is `off`; that one is added by this server, so a refusal of it is absorbed rather than failing logins. |
 | `HTTP_API_UPSTREAM_REFRESH` | `auto` (default), `on` or `off`. Whether to ask the provider for `offline_access` and keep the refresh token it returns, which is what lets group membership be re-checked between logins where groups come from the token. `on` is `auto` plus a warning per login when the provider returns no refresh token. `off` neither asks nor stores. |
-| `HTTP_API_OAUTH2_REQUIREMENTS` | ClassAd expression over the token's claims; the login proceeds only if it is true. See [Local identity mapping](auth.md#local-identity-mapping). |
 | `HTTP_API_IDENTITY_MAP_STRIP_DOMAIN` | `true` to also match the local part of a scoped subject. Pair with `HTTP_API_OAUTH2_REQUIREMENTS`. |
 | `HTTP_API_DAGMAN_PATH` | Absolute path to `condor_dagman` on the **access point**, for the `submit_dag` tool. **Normally unnecessary — discovered from the schedd's `BIN`; set it only if that discovery is refused.** The server asks the schedd for `BIN` once (a READ-level `condor_config_val` query) and uses `$(BIN)/condor_dagman`; this knob overrides that, and `/usr/bin/condor_dagman` is the fallback when neither is available. `condor_submit_dag` normally finds the binary with `which` on the submitting machine, which is no help here: this server submits to a schedd it shares no filesystem with. |
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |

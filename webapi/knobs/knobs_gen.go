@@ -73,27 +73,41 @@ var OAuth2Issuer = config.DefineString("HTTP_API_OAUTH2_ISSUER", "", config.Star
 
 // OAuth2RedirectURL is HTTP_API_OAUTH2_REDIRECT_URL.
 //
-// Where the provider sends the user back to. Unset, it is the issuer
-// followed by this server's callback path, which is the right answer
-// whenever the issuer is how users reach it.
+// Where the provider sends the user back to, which has to be a
+// redirect URI registered with it. Unset, it is the issuer followed by
+// this server's callback path, which is the right answer whenever the
+// issuer is how users reach it: /mcp/oauth2/callback on a server whose
+// only surface is MCP, /oauth2/callback everywhere else. Both paths
+// are served wherever MCP is on, so an authorization started before an
+// upgrade still lands; but what has to be registered at the provider
+// is the URI this server sends, so a build that gains the web UI needs
+// /oauth2/callback added there -- or this set, to keep sending the old
+// one.
 var OAuth2RedirectURL = config.DefineString("HTTP_API_OAUTH2_REDIRECT_URL", "", config.Startup,
-	"Where the provider sends the user back to. Unset, it is the issuer followed by this server's callback path, which is the right answer whenever the issuer is how users reach it.")
+	"Where the provider sends the user back to, which has to be a redirect URI registered with it. Unset, it is the issuer followed by this server's callback path, which is the right answer whenever the issuer is how users reach it: /mcp/oauth2/callback on a server whose only surface is MCP, /oauth2/callback everywhere else. Both paths are served wherever MCP is on, so an authorization started before an upgrade still lands; but what has to be registered at the provider is the URI this server sends, so a build that gains the web UI needs /oauth2/callback added there -- or this set, to keep sending the old one.")
 
 // OAuth2Requirements is HTTP_API_OAUTH2_REQUIREMENTS.
 //
-// Login policy as a ClassAd expression over the token's claims. It is
-// parsed at startup and a malformed one stops the server, rather than
-// failing at somebody's first login.
+// Login policy as a ClassAd expression over the token's claims; a
+// login proceeds only where it evaluates true. It is parsed at startup
+// and a malformed one stops the server, rather than failing at
+// somebody's first login. See "Local identity mapping" in the operator
+// guide.
 var OAuth2Requirements = config.DefineString("HTTP_API_OAUTH2_REQUIREMENTS", "", config.Startup,
-	"Login policy as a ClassAd expression over the token's claims. It is parsed at startup and a malformed one stops the server, rather than failing at somebody's first login.")
+	"Login policy as a ClassAd expression over the token's claims; a login proceeds only where it evaluates true. It is parsed at startup and a malformed one stops the server, rather than failing at somebody's first login. See \"Local identity mapping\" in the operator guide.")
 
 // OAuth2Scopes is HTTP_API_OAUTH2_SCOPES.
 //
 // Scopes requested at sign-in, space separated as RFC 6749 writes
 // them, e.g. "openid profile email org.cilogon.userinfo". Unset uses
-// the built-in defaults.
+// the built-in defaults. Every scope has to be approved for this
+// client at the provider: CILogon rejects an unapproved scope
+// outright, where it used to ignore it silently, and that refusal
+// fails every login. offline_access is added to whatever is set here
+// unless HTTP_API_UPSTREAM_REFRESH is off; that one this server adds
+// itself, so a refusal of it is absorbed rather than failing logins.
 var OAuth2Scopes = config.DefineWords("HTTP_API_OAUTH2_SCOPES", nil, config.Startup,
-	"Scopes requested at sign-in, space separated as RFC 6749 writes them, e.g. \"openid profile email org.cilogon.userinfo\". Unset uses the built-in defaults.")
+	"Scopes requested at sign-in, space separated as RFC 6749 writes them, e.g. \"openid profile email org.cilogon.userinfo\". Unset uses the built-in defaults. Every scope has to be approved for this client at the provider: CILogon rejects an unapproved scope outright, where it used to ignore it silently, and that refusal fails every login. offline_access is added to whatever is set here unless HTTP_API_UPSTREAM_REFRESH is off; that one this server adds itself, so a refusal of it is absorbed rather than failing logins.")
 
 // OAuth2TokenURL is HTTP_API_OAUTH2_TOKEN_URL.
 //
@@ -111,10 +125,11 @@ var OAuth2UserinfoURL = config.DefineString("HTTP_API_OAUTH2_USERINFO_URL", "", 
 
 // OAuth2UsernameClaim is HTTP_API_OAUTH2_USERNAME_CLAIM.
 //
-// Which claim names the account that owns the jobs, where the
-// provider's subject is not it.
+// Which claim names the account that owns the jobs, e.g. eppn, where
+// the provider's subject is not it. Unset uses the subject. See "Local
+// identity mapping" in the operator guide.
 var OAuth2UsernameClaim = config.DefineString("HTTP_API_OAUTH2_USERNAME_CLAIM", "", config.Startup,
-	"Which claim names the account that owns the jobs, where the provider's subject is not it.")
+	"Which claim names the account that owns the jobs, e.g. eppn, where the provider's subject is not it. Unset uses the subject. See \"Local identity mapping\" in the operator guide.")
 
 // ReadTimeout is HTTP_API_READ_TIMEOUT.
 //
@@ -177,14 +192,14 @@ func Connector(instance string) ConnectorSettings {
 
 // ConnectorInstances is the parameter naming every Connector that exists.
 var ConnectorInstances = config.DefineList("HTTP_API_CONNECTORS", nil, config.Reconfig,
-	"Names the Connector instances that exist. An external account users may connect, so a job can read their files from it. HTTP_API_CONNECTORS names the connectors offered; each is configured by the settings below with its id folded in, e.g. HTTP_API_CONNECTOR_BUILTIN_GDRIVE_GROUPS for builtin:gdrive.")
+	"Names the external accounts this access point offers to connect. Each is then configured by the HTTP_API_CONNECTOR_<instance>_* settings.")
 
 // Kind is HTTP_API_CONNECTOR_<instance>_KIND.
 //
 // Which shipped connector definition to use, for an id that is not
 // itself one.
 func (s ConnectorSettings) Kind() config.StringKnob {
-	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_KIND", "", config.Startup,
+	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_KIND", "", config.Reconfig,
 		"Which shipped connector definition to use, for an id that is not itself one.")
 }
 
@@ -192,7 +207,7 @@ func (s ConnectorSettings) Kind() config.StringKnob {
 //
 // The OAuth2 client id this access point registered with the provider.
 func (s ConnectorSettings) ClientID() config.StringKnob {
-	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_CLIENT_ID", "", config.Startup,
+	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_CLIENT_ID", "", config.Reconfig,
 		"The OAuth2 client id this access point registered with the provider.")
 }
 
@@ -202,7 +217,7 @@ func (s ConnectorSettings) ClientID() config.StringKnob {
 // secret is refused rather than offered. Holds or names a credential:
 // keep it readable only by the account the server runs as.
 func (s ConnectorSettings) ClientSecretFile() config.StringKnob {
-	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_CLIENT_SECRET_FILE", "", config.Startup,
+	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_CLIENT_SECRET_FILE", "", config.Reconfig,
 		"File holding the OAuth2 client secret. A connector with no readable secret is refused rather than offered. Holds or names a credential: keep it readable only by the account the server runs as.")
 }
 
@@ -211,7 +226,7 @@ func (s ConnectorSettings) ClientSecretFile() config.StringKnob {
 // The provider's authorization endpoint, for a connector that is not a
 // shipped one.
 func (s ConnectorSettings) AuthorizationURL() config.StringKnob {
-	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_AUTHORIZATION_URL", "", config.Startup,
+	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_AUTHORIZATION_URL", "", config.Reconfig,
 		"The provider's authorization endpoint, for a connector that is not a shipped one.")
 }
 
@@ -220,7 +235,7 @@ func (s ConnectorSettings) AuthorizationURL() config.StringKnob {
 // The provider's token endpoint, for a connector that is not a shipped
 // one.
 func (s ConnectorSettings) TokenURL() config.StringKnob {
-	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_TOKEN_URL", "", config.Startup,
+	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_TOKEN_URL", "", config.Reconfig,
 		"The provider's token endpoint, for a connector that is not a shipped one.")
 }
 
@@ -228,7 +243,7 @@ func (s ConnectorSettings) TokenURL() config.StringKnob {
 //
 // The scopes requested when a user connects this account.
 func (s ConnectorSettings) Scopes() config.ListKnob {
-	return config.DefineList("HTTP_API_CONNECTOR_"+s.id+"_SCOPES", nil, config.Startup,
+	return config.DefineList("HTTP_API_CONNECTOR_"+s.id+"_SCOPES", nil, config.Reconfig,
 		"The scopes requested when a user connects this account.")
 }
 
@@ -237,7 +252,7 @@ func (s ConnectorSettings) Scopes() config.ListKnob {
 // Group(s) whose members may connect this account. Unset offers it to
 // everyone who may sign in.
 func (s ConnectorSettings) Groups() config.ListKnob {
-	return config.DefineList("HTTP_API_CONNECTOR_"+s.id+"_GROUPS", nil, config.Startup,
+	return config.DefineList("HTTP_API_CONNECTOR_"+s.id+"_GROUPS", nil, config.Reconfig,
 		"Group(s) whose members may connect this account. Unset offers it to everyone who may sign in.")
 }
 
@@ -246,7 +261,7 @@ func (s ConnectorSettings) Groups() config.ListKnob {
 // How a job fetches from this account, where the connector supports
 // more than one way.
 func (s ConnectorSettings) Transfer() config.StringKnob {
-	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_TRANSFER", "", config.Startup,
+	return config.DefineString("HTTP_API_CONNECTOR_"+s.id+"_TRANSFER", "", config.Reconfig,
 		"How a job fetches from this account, where the connector supports more than one way.")
 }
 
@@ -256,7 +271,7 @@ func (s ConnectorSettings) Transfer() config.StringKnob {
 // connector is turned off by setting this rather than by removing its
 // configuration.
 func (s ConnectorSettings) Enabled() config.BoolKnob {
-	return config.DefineBool("HTTP_API_CONNECTOR_"+s.id+"_ENABLED", true, config.Startup,
+	return config.DefineBool("HTTP_API_CONNECTOR_"+s.id+"_ENABLED", true, config.Reconfig,
 		"Whether the connector is offered at all. Default true, so a connector is turned off by setting this rather than by removing its configuration.")
 }
 
@@ -277,14 +292,14 @@ func Picker(instance string) PickerSettings {
 
 // PickerInstances is the parameter naming every Picker that exists.
 var PickerInstances = config.DefineList("HTTP_API_PICKERS", nil, config.Reconfig,
-	"Names the Picker instances that exist. A file chooser the submit page offers, so a user can pick input files out of a connected account instead of uploading them. HTTP_API_PICKERS names the choosers that exist; a chooser is configured by the settings below with its name folded in, e.g. HTTP_API_PICKER_LAB_A_API_KEY for the chooser named lab-a.")
+	"Names the file choosers this access point offers. Each is then configured by the HTTP_API_PICKER_<instance>_* settings.")
 
 // Provider is HTTP_API_PICKER_<instance>_PROVIDER.
 //
 // Which shipped chooser to run. Defaults to the chooser's own name, so
 // the common case needs one line.
 func (s PickerSettings) Provider() config.StringKnob {
-	return config.DefineString("HTTP_API_PICKER_"+s.id+"_PROVIDER", "", config.Startup,
+	return config.DefineString("HTTP_API_PICKER_"+s.id+"_PROVIDER", "", config.Reconfig,
 		"Which shipped chooser to run. Defaults to the chooser's own name, so the common case needs one line.")
 }
 
@@ -293,7 +308,7 @@ func (s PickerSettings) Provider() config.StringKnob {
 // The connector whose credential the chooser shows files with. Without
 // one the chooser is not offered.
 func (s PickerSettings) Connector() config.StringKnob {
-	return config.DefineString("HTTP_API_PICKER_"+s.id+"_CONNECTOR", "", config.Startup,
+	return config.DefineString("HTTP_API_PICKER_"+s.id+"_CONNECTOR", "", config.Reconfig,
 		"The connector whose credential the chooser shows files with. Without one the chooser is not offered.")
 }
 
@@ -303,7 +318,7 @@ func (s PickerSettings) Connector() config.StringKnob {
 // the browser. Holds or names a credential: keep it readable only by
 // the account the server runs as.
 func (s PickerSettings) APIKey() config.StringKnob {
-	return config.DefineString("HTTP_API_PICKER_"+s.id+"_API_KEY", "", config.Startup,
+	return config.DefineString("HTTP_API_PICKER_"+s.id+"_API_KEY", "", config.Reconfig,
 		"The provider's developer key, where its chooser needs one to run in the browser. Holds or names a credential: keep it readable only by the account the server runs as.")
 }
 
@@ -312,7 +327,7 @@ func (s PickerSettings) APIKey() config.StringKnob {
 // The provider's application id, where its chooser needs one alongside
 // the developer key.
 func (s PickerSettings) AppID() config.StringKnob {
-	return config.DefineString("HTTP_API_PICKER_"+s.id+"_APP_ID", "", config.Startup,
+	return config.DefineString("HTTP_API_PICKER_"+s.id+"_APP_ID", "", config.Reconfig,
 		"The provider's application id, where its chooser needs one alongside the developer key.")
 }
 
@@ -321,7 +336,7 @@ func (s PickerSettings) AppID() config.StringKnob {
 // The origin the chooser is loaded from, when it is not the provider's
 // default.
 func (s PickerSettings) Origin() config.StringKnob {
-	return config.DefineString("HTTP_API_PICKER_"+s.id+"_ORIGIN", "", config.Startup,
+	return config.DefineString("HTTP_API_PICKER_"+s.id+"_ORIGIN", "", config.Reconfig,
 		"The origin the chooser is loaded from, when it is not the provider's default.")
 }
 
