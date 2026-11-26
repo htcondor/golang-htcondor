@@ -110,6 +110,11 @@ func endpointBaseName(fullName string) string {
 	return "<unknown>"
 }
 
+// sharedPortPrefix marks the shared-port endpoint item in CONDOR_INHERIT's
+// second group, as daemon_core.cpp writes it and DaemonCore::Inherit matches
+// it.
+const sharedPortPrefix = "SharedPort:"
+
 // extractSharedPortFromInherit parses CONDOR_INHERIT and returns the inherited
 // fd and full endpoint name from the SharedPort: token (if any). Returns
 // ok=false when the token is absent or malformed.
@@ -121,7 +126,7 @@ func endpointBaseName(fullName string) string {
 // One of the remaining items may be "SharedPort:<full_name>*<fd>*<...>" where
 // the fields after `*` are the serialized ReliSock.
 func extractSharedPortFromInherit(inherit string) (fd int, fullName string, ok bool) {
-	const prefix = "SharedPort:"
+	const prefix = sharedPortPrefix
 	for _, tok := range strings.Fields(inherit) {
 		if !strings.HasPrefix(tok, prefix) {
 			continue
@@ -180,32 +185,72 @@ func resolveInheritedListener(logger *logging.Logger) net.Listener {
 	return ln
 }
 
-// extractInheritedCommandSocket parses CONDOR_INHERIT's inherit-list -- the serialized
-// command sockets before the "0" sentinel -- and returns the fd of the FIRST one: the
-// ReliSock TCP command-port listener condor_master pre-created (it creates the stream
-// ReliSock before the optional UDP SafeSock, so the first entry is the listener to adopt).
-// Returns ok=false when the inherit-list is empty (the sentinel is first) or malformed.
+// extractInheritedCommandSocket returns the fd of the TCP command-socket
+// listener condor_master pre-created and inherited to us, if CONDOR_INHERIT
+// carries one. Returns ok=false when it does not, or when the string is
+// malformed.
 //
-// Format (daemon_core.cpp extractInheritedSocks):
+// Format, as daemon_core.cpp writes it and extractInheritedSocks plus
+// DaemonCore::Inherit read it back:
 //
-//	<ppid> <psinful> <sock1> <sock2> ... 0 <remaining-items>...
+//	<ppid> <psinful> [<type> <sock>]... 0 [SharedPort:<...>] [<type> <sock>]... 0
 //
-// Each sockN is a serialized ReliSock/SafeSock, "<fd>*<state>*..." (the same encoding the
-// SharedPort: token carries after its endpoint name).
+// Both groups are (type, sock) PAIRS: the type token is "1" for a ReliSock
+// and "2" for a SafeSock, and each serialized sock is one whitespace-free
+// "<fd>*<state>*..." token (Sock::serialize goes out of its way to keep
+// spaces out of it).
+//
+// The first group is the sock_inherit_list, which condor_master never
+// fills, so for every daemon it spawns the "0" sentinel comes first and the
+// command sockets are in the SECOND group. Reading fields[2] as a sock --
+// which this did -- therefore found the sentinel and gave up on every real
+// input, while a non-empty list would have yielded the type token "1"
+// parsed as fd 1, i.e. stdout. The command sockets have to be looked for
+// after the sentinel, past the optional shared-port endpoint.
+//
+// A shared-port endpoint and command sockets are not exclusive: the master
+// writes both when a daemon is given a fixed command port (want_command_port
+// > 1), which is why the SharedPort: token is skipped rather than treated as
+// the end of the string.
 func extractInheritedCommandSocket(inherit string) (fd int, ok bool) {
 	fields := strings.Fields(inherit)
 	if len(fields) < 3 {
-		return 0, false // need at least ppid, psinful, and a sock or the "0" sentinel
+		return 0, false // need at least ppid, psinful and the sentinel
 	}
-	first := fields[2] // the first inherit-list entry, or the sentinel if none
-	if first == "0" {
-		return 0, false // no inherited sockets
+
+	// Walk the sock_inherit_list to its sentinel. Type tokens are "1"/"2"
+	// and serialized socks always begin with an fd, so only the sentinel
+	// can start with '0' at a pair boundary.
+	i := 2
+	for i+1 < len(fields) && fields[i][0] != '0' {
+		i += 2
 	}
-	fdStr := first
-	if i := strings.IndexByte(first, '*'); i >= 0 {
-		fdStr = first[:i]
+	if i >= len(fields) || fields[i][0] != '0' {
+		return 0, false // no sentinel: not a string we understand
 	}
-	n, err := strconv.Atoi(fdStr)
+	i++
+
+	// Then the command-socket group, after any shared-port endpoint.
+	if i < len(fields) && strings.HasPrefix(fields[i], sharedPortPrefix) {
+		i++
+	}
+	for i+1 < len(fields) && fields[i][0] != '0' {
+		if fields[i] == "1" { // the ReliSock listener; "2" is the UDP SafeSock
+			return parseSerializedFD(fields[i+1])
+		}
+		i += 2
+	}
+	return 0, false
+}
+
+// parseSerializedFD reads the leading fd out of a serialized Sock,
+// "<fd>*<state>*...".
+func parseSerializedFD(sock string) (fd int, ok bool) {
+	s := sock
+	if i := strings.IndexByte(s, '*'); i >= 0 {
+		s = s[:i]
+	}
+	n, err := strconv.Atoi(s)
 	if err != nil || n < 0 {
 		return 0, false
 	}

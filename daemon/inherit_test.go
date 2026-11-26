@@ -74,10 +74,20 @@ func TestExtractSharedPortFromInherit(t *testing.T) {
 	}
 }
 
-// TestExtractInheritedCommandSocket covers the parser for the inherit-list command socket
-// condor_master passes when USE_SHARED_PORT=False (issue #119). The distinguishing signal
-// from shared-port mode: there the inherit-list is empty (the "0" sentinel is the first
-// entry) and the socket is a SharedPort: token instead.
+// TestExtractInheritedCommandSocket covers the parser for the command socket
+// condor_master pre-creates and inherits to a daemon it spawns (issue #119).
+//
+// The fixtures are the shape daemon_core.cpp actually writes:
+//
+//	<ppid> <psinful> [<type> <sock>]... 0 [SharedPort:<...>] [<type> <sock>]... 0
+//
+// Both groups are (type, sock) pairs, "1" for a ReliSock and "2" for a
+// SafeSock. The first group is the sock_inherit_list, which condor_master
+// never fills -- so its "0" sentinel comes first and the command sockets
+// are in the second group, after any shared-port endpoint. These cases used
+// to assert a format with no sentinel and no type tokens, which is why a
+// parser that read fields[2] as a sock passed them while finding nothing on
+// any real input.
 func TestExtractInheritedCommandSocket(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -85,12 +95,26 @@ func TestExtractInheritedCommandSocket(t *testing.T) {
 		wantFD  int
 		wantOK  bool
 	}{
-		{"non-shared-port TCP command socket", "123 <sinful> 14*5*0*0*0 0", 14, true},
-		{"TCP ReliSock then UDP SafeSock: adopt the first", "123 <sinful> 14*5*0 16*5*0 0", 14, true},
-		{"shared-port mode: inherit-list empty (sentinel first)", "29 <sinful> 0 SharedPort:cookie/name*15*6*0 0", 0, false},
+		{"TCP command socket", "123 <sinful> 0 1 14*5*0*0*0 0", 14, true},
+		{"TCP ReliSock then UDP SafeSock: adopt the ReliSock",
+			"123 <sinful> 0 1 14*5*0 2 16*5*0 0", 14, true},
+		{"UDP SafeSock listed first: still the ReliSock",
+			"123 <sinful> 0 2 16*5*0 1 14*5*0 0", 14, true},
+		{"shared-port mode: the endpoint is not a command socket",
+			"29 <sinful> 0 SharedPort:cookie/name*15*6*0 0", 0, false},
+		// A daemon given a fixed command port gets both.
+		{"shared port AND a command socket",
+			"29 <sinful> 0 SharedPort:cookie/name*15*6*0 1 14*5*0 0", 14, true},
 		{"no inherited sockets", "29 <sinful> 0 0", 0, false},
+		{"a UDP SafeSock alone is not adoptable", "29 <sinful> 0 2 16*5*0 0", 0, false},
+		// Non-empty sock_inherit_list: the command socket is still the one
+		// after the sentinel, and the list's own type token must not be
+		// read as an fd (it would be fd 1, stdout).
+		{"a non-empty sock_inherit_list is skipped",
+			"29 <sinful> 1 9*5*0 0 1 14*5*0 0", 14, true},
 		{"empty inherit string", "", 0, false},
-		{"malformed fd", "123 <sinful> notanum*5 0", 0, false},
+		{"no sentinel at all", "123 <sinful> 1 14*5*0", 0, false},
+		{"malformed fd", "123 <sinful> 0 1 notanum*5 0", 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,7 +144,7 @@ func TestResolveInheritedListener(t *testing.T) {
 	}
 	// resolveInheritedListener takes ownership of the fd number and closes its reference,
 	// so we do not close f ourselves.
-	t.Setenv("CONDOR_INHERIT", fmt.Sprintf("123 <sinful> %d*5*0*0 0", f.Fd()))
+	t.Setenv("CONDOR_INHERIT", fmt.Sprintf("123 <sinful> 0 1 %d*5*0*0 0", f.Fd()))
 
 	logger, err := logging.New(&logging.Config{OutputPath: "stderr", SkipGlobalInstall: true})
 	if err != nil {
