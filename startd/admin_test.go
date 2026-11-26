@@ -15,11 +15,14 @@
 package startd
 
 import (
+	"context"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 
 	"github.com/PelicanPlatform/classad/classad"
+	"github.com/htcondor/cedar/security"
 )
 
 // capability is a syntactically valid administrative capability, shaped
@@ -219,5 +222,97 @@ func TestCommandNumbers(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s = %d, want %d", tc.name, tc.got, tc.want)
 		}
+	}
+}
+
+// TestConnectRefusesWithNoCapabilityAndNoSecurityConfig: an Admin with
+// neither a capability session nor a SecurityConfig builder must fail
+// before it dials, and must not reach for this process's own credentials
+// on the caller's behalf.
+//
+// cedar performs no handshake at all when its Security is nil, and the
+// handshake is what carries the command integer -- the real command rides
+// inside the DC_AUTHENTICATE ad. So a nil config produces not a weakly
+// authenticated command but no command: the peer reads the request ad's
+// leading expression count as a command number and refuses, which reads
+// to an operator like an authorization failure and sends them to
+// ALLOW_ADMINISTRATOR for a handshake that never happened.
+//
+// Checked by watching the socket: a dial that happens at all is the
+// failure, whatever the call returns.
+func TestConnectRefusesWithNoCapabilityAndNoSecurityConfig(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // test listener
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	dialed := make(chan struct{}, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		dialed <- struct{}{}
+		_ = c.Close()
+	}()
+
+	addr := "<" + ln.Addr().String() + ">"
+	for _, tc := range []struct {
+		name string
+		call func(a *Admin) error
+	}{
+		{"UpdateMachineAd", func(a *Admin) error {
+			return a.UpdateMachineAd(context.Background(), adWith(map[string]any{"Foo": "bar"}))
+		}},
+		{"VacateClaim", func(a *Admin) error {
+			return a.VacateClaim(context.Background(), "slot1@host", false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := NewAdminFromAd(adWith(map[string]any{"MyAddress": addr}), false, nil)
+			if err != nil {
+				t.Fatalf("NewAdminFromAd: %v", err)
+			}
+			err = tc.call(a)
+			if err == nil {
+				t.Fatal("a command with no credentials and no command number was sent anyway")
+			}
+			if !strings.Contains(err.Error(), "SecurityConfig") {
+				t.Errorf("err = %v, want one naming the missing SecurityConfig", err)
+			}
+			select {
+			case <-dialed:
+				t.Error("the execute point was dialed before the missing credential was noticed")
+			default:
+			}
+		})
+	}
+}
+
+// TestConnectUsesAnInjectedSecurityConfig: the injection point is what
+// makes the no-capability mode work, so it has to be consulted. The
+// builder here refuses, which is enough to show the call reached it --
+// and a caller's builder refusing (as the daemon-origin check does for a
+// context acting for a user) must fail the command, not fall through to
+// an unauthenticated one.
+func TestConnectUsesAnInjectedSecurityConfig(t *testing.T) {
+	sentinel := errors.New("builder refused")
+	calls := 0
+	a, err := NewAdminFromAd(adWith(map[string]any{"MyAddress": "<127.0.0.1:9618>"}), false,
+		&AdminOptions{SecurityConfig: func(context.Context, int, string) (*security.SecurityConfig, error) {
+			calls++
+			return nil, sentinel
+		}})
+	if err != nil {
+		t.Fatalf("NewAdminFromAd: %v", err)
+	}
+
+	err = a.UpdateMachineAd(context.Background(), adWith(map[string]any{"Foo": "bar"}))
+	if !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want the builder's own error", err)
+	}
+	if calls != 1 {
+		t.Errorf("builder called %d times, want 1", calls)
 	}
 }

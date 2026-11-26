@@ -82,6 +82,12 @@ func (h *Handler) startReservations(ctx context.Context) {
 		Query:    h.collector,
 		Only:     h.reservationEPConstraint,
 		OnReload: h.reportCapabilities(),
+		// What the no-capability fallback authenticates with. It
+		// presents this daemon's identity, which is legitimate here and
+		// only here: everything below runs on the context marked above,
+		// so the per-command origin check passes for the controller and
+		// would refuse the same call made for a user.
+		Config: h.clientConfig,
 		// Graceful: a vacated job takes its soft-kill signal and, if it
 		// checkpoints, writes one. The cost model says evicting a young
 		// job is free; it does not say throwing away a checkpoint it
