@@ -69,6 +69,47 @@ func TestURLOnlyInputNeedsNoSpool(t *testing.T) {
 			needsSpooling: true,
 			wantAllow:     []string{"run.sh"},
 		},
+		{
+			// The stdin file is an input like any other: C++ folds
+			// ATTR_JOB_INPUT into the transfer list next to
+			// TransferInput (file_transfer.cpp, _SimpleInit's
+			// hasJobInput block). This case used to answer
+			// needsSpooling=false with an empty allow-set, because the
+			// check read "Input" and the attribute is "In".
+			name:          "stdin is the only uploadable file",
+			submit:        "executable = /bin/true\ntransfer_executable = false\ninput = data.in\nqueue\n",
+			needsSpooling: true,
+			wantAllow:     []string{"data.in"},
+		},
+		{
+			// The submit parser writes In = /dev/null for every job
+			// that names no stdin, so without the null-file guard
+			// every job in the pool would look like it had one.
+			name:          "stdin is the null file",
+			submit:        "executable = /bin/true\ntransfer_executable = false\ninput = /dev/null\nqueue\n",
+			needsSpooling: false,
+		},
+		{
+			name:          "stdin is a URL",
+			submit:        "executable = /bin/true\ntransfer_executable = false\ninput = https://example.com/data.in\nqueue\n",
+			needsSpooling: false,
+		},
+		{
+			// transfer_input = false leaves the schedd's rewrite of In
+			// alone (the AttrXferBool gate in rewriteSpooledJobAd), so
+			// the committed ad keeps the submit-side path and a
+			// basename in the allow-set would name nothing.
+			name:          "stdin with transfer_input = false",
+			submit:        "executable = /bin/true\ntransfer_executable = false\ninput = data.in\ntransfer_input = false\nqueue\n",
+			needsSpooling: false,
+		},
+		{
+			name: "stdin alongside a transfer_input_files entry",
+			submit: "executable = /bin/true\ntransfer_executable = false\n" +
+				"transfer_input_files = run.sh\ninput = data.in\nqueue\n",
+			needsSpooling: true,
+			wantAllow:     []string{"data.in", "run.sh"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sf, err := ParseSubmitFile(strings.NewReader(tc.submit))

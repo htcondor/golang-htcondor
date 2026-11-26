@@ -27,6 +27,12 @@ const jobStatusHeld = 5
 // such file or directory" and the job hold-loops on the missing file.
 var InputSpoolProjection = []string{
 	"ClusterId", "ProcId", "TransferInput", "Cmd", "TransferExecutable",
+	// In/TransferIn: the job's stdin file is an input like any other,
+	// and PreserveRelativePaths decides whether a directory-qualified
+	// input keeps its path or is flattened to a basename. Leaving any
+	// of them out of the projection makes the allow-set answer with the
+	// wrong names, which is the same failure as leaving out Cmd.
+	"In", "TransferIn", "PreserveRelativePaths",
 }
 
 // InputShareProjection adds the state a share-URL mint or redeem has to

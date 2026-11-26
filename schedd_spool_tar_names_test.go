@@ -63,9 +63,9 @@ func sendTarToSink(t *testing.T, allowed []string, tarBytes []byte) ([]byte, err
 	}()
 
 	id := procID{cluster: 1, proc: 0}
-	set := make(map[string]bool)
+	set := make(map[string]string)
 	for _, n := range allowed {
-		set[n] = true
+		set[n] = n
 	}
 	info := map[procID]*jobInfo{id: {inputFiles: set, jobID: id}}
 	err := (&Schedd{}).sendJobFilesFromTar(context.Background(), stream.NewStream(c1),
