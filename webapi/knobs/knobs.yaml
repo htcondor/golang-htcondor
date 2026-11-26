@@ -7,12 +7,19 @@
 #
 # Fields:
 #   name     the configuration parameter, HTTP_API_*
-#   type     string | bool | duration | bytes | list
+#   type     string | bool | int | duration | bytes | list | words
 #   default  what applies when the setting is absent
 #   scope    startup (a change needs a restart) | reconfig (a
 #            reconfigure installs it on the running server)
 #   doc      one paragraph, written for an operator; this is what the
 #            configuration reference prints
+#   obsolete optional; marks a setting that still works but should not
+#            be used. It is left out of the reference entirely, and the
+#            generated declaration is marked Deprecated so staticcheck
+#            reports every read. superseded_by names its replacement.
+#   default_doc optional; what the reference prints instead of the
+#            literal default, for a setting whose "unset" behaviour is
+#            not a value this table holds. A whole sentence.
 #   see      optional cross-references, each a text and a url relative
 #            to docs/operator/config.md; the reference prints them as
 #            links and the documentation tests check they resolve
@@ -214,6 +221,445 @@ knobs:
       Where an archive dropped in the SSH gateway's /submit/, or posted
       to the REST upload endpoints, is buffered while it is unpacked.
       Unset holds it in memory instead, under a much smaller ceiling.
+
+
+  - name: HTTP_API_LISTEN
+    type: string
+    default: ""
+    scope: startup
+    obsolete:
+      superseded_by: HTTP_API_LISTEN_ADDR
+    doc: >
+      An older spelling of the listen address, honored when
+      HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is
+      used. HTTP_API_LISTEN_ADDR wins where both are set.
+
+  # The two cross-user MCP privileges. Obsolete, so they are declared
+  # here -- the table is the only place a setting may be spelled -- and
+  # left out of the reference on purpose.
+  #
+  # Deliberately without superseded_by. HTTP_API_WEBUI_ADMIN_GROUP and
+  # HTTP_API_SUPERUSER_GROUP are where the equivalent power lives for a
+  # browser or API caller (handlers_admin.go names them), but they do
+  # not grant the mcp:admin, mcp:superuser, anyuser:read or
+  # anyuser:write scopes: oauth2_sso.go grants each of those from these
+  # two group sets and from nothing else. Pointing an operator at a
+  # setting that would not restore what they had is worse than pointing
+  # them nowhere.
+  - name: HTTP_API_MCP_ADMIN_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete: {}
+    doc: >
+      Group(s) whose members may read every user's jobs through MCP.
+      Read as a raw string and split downstream, so a change to how
+      lists are parsed does not change who is privileged.
+
+  - name: HTTP_API_MCP_SUPERUSER_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete: {}
+    doc: >
+      Group(s) whose members may change any user's jobs through MCP.
+      Read as a raw string and split downstream, as above.
+
+
+  - name: HTTP_API_ENABLE_IDP
+    type: bool
+    default: "false"
+    scope: startup
+    doc: >
+      Run the built-in identity provider, so this server signs users in
+      itself instead of sending them to an external one. Off by
+      default. The provider shares the unified application database;
+      the separate HTTP_API_IDP_DB_PATH it once had is no longer read.
+
+  - name: HTTP_API_IDP_ISSUER
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The issuer the built-in identity provider names in its own
+      documents. Unset derives it the same way HTTP_API_OAUTH2_ISSUER
+      is derived, from the externally-visible URL. Read only when
+      HTTP_API_ENABLE_IDP is on.
+
+  - name: HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset issues access tokens that live one hour.
+    doc: >
+      How long an access token the built-in identity provider issues
+      stays valid, as a Go duration. A value that is not a duration, or
+      is not positive, refuses to start rather than being quietly
+      ignored -- a token lifetime is not something to get wrong
+      silently. Read only when HTTP_API_ENABLE_IDP is on.
+
+  - name: HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset issues refresh tokens that live 30 days.
+    doc: >
+      How long a refresh token the built-in identity provider issues
+      stays valid. It has to be at least the access token lifespan, or
+      the provider refuses to start: a refresh token that dies first
+      makes every refresh fail after the access token expires. Read
+      only when HTTP_API_ENABLE_IDP is on, and refused the same way as
+      above when it is not a positive duration.
+
+  - name: HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset issues access tokens that live one hour.
+    doc: >
+      How long an access token this server issues as an OAuth2
+      authorization server stays valid, as a Go duration. Refused the
+      same way as the identity provider's when it is not a positive
+      duration.
+
+  - name: HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset issues refresh tokens that live 30 days.
+    doc: >
+      How long one refresh token this server issues stays valid. Every
+      refresh resets it, which is why HTTP_API_OAUTH2_MAX_GRANT_LIFETIME
+      exists: without a cap, a client that keeps refreshing keeps its
+      grant forever.
+    see:
+      - text: Refresh-grant re-authorization
+        url: auth.md#refresh-grant-re-authorization
+
+  - name: HTTP_API_OAUTH2_MAX_GRANT_LIFETIME
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset lets a grant go 30 days unused.
+    doc: >
+      How long a grant may go unused before the user has to consent
+      again. Measured from the grant's last use rather than from
+      consent, so a client that refreshes inside the window keeps its
+      grant indefinitely, which is what lets an unattended integration
+      keep working; an abandoned grant still expires. What bounds a
+      grant in active use is the revocation oracles, not this.
+    see:
+      - text: Refresh-grant re-authorization
+        url: auth.md#refresh-grant-re-authorization
+
+  - name: HTTP_API_TOKEN_RETENTION
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset keeps dead token rows for 90 days.
+    doc: >
+      How long rows for dead OAuth2 tokens are kept before being swept,
+      as a duration with a unit, or off (equivalently 0) to keep them
+      forever. A bare number is refused rather than read as
+      nanoseconds, which is what parsing "90" would otherwise mean and
+      is never what anybody intends; so is anything else that does not
+      parse, and the server refuses to start rather than sweeping on a
+      figure nobody chose. Only rows that are already dead -- revoked
+      or expired -- are ever removed, because a live grant is
+      somebody's session whatever its age.
+
+  - name: HTTP_API_USER_HEADER_TRUST_ANY
+    type: bool
+    default: "false"
+    scope: startup
+    doc: >
+      Accept the user header from any source address. For demonstration
+      and testing only: with it on, anything that can reach this server
+      can claim to be any user, so it undoes authentication rather than
+      relaxing it. Off by default, and the server logs a warning for as
+      long as it is on. Leave it off anywhere a real person has an
+      account.
+
+
+  # Container builds. All read once at startup; the sizes are MiB,
+  # matching what the build_container tool argument takes.
+  - name: HTTP_API_BUILD_REQUIREMENTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      ClassAd expression selecting the slots a container build may run
+      on, for a site where no schedd transform does it. A site picks its
+      build machines by its own convention and the tool cannot guess
+      it, so an unconfigured server submits an ordinary job and relies
+      on the caller naming a destination.
+
+  - name: HTTP_API_BUILD_EXTRA_SUBMIT
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Extra submit-file lines added to every container build job, for
+      whatever else a site's build slots need.
+
+  - name: HTTP_API_BUILD_STAGING_BASE
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Where built images are published when the caller gives a bare
+      name. Unset means every call has to name its own destination. It
+      may be a template: {user} expands to the authenticated caller and
+      {initial} to the first letter of that name, so a per-user staging
+      area can be written osdf:///chtc/staging/{initial}/{user}. A base
+      with no placeholder is used verbatim.
+
+  - name: HTTP_API_BUILD_DEFAULT_CPUS
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset requests 8 CPUs.
+    doc: >
+      CPUs a container build requests when the caller does not say. A
+      value that is not a whole number, or is negative, is reported and
+      ignored rather than refusing to start: the rest of the server has
+      nothing to do with container builds, and a typo in a build
+      setting should not take the API down.
+
+  - name: HTTP_API_BUILD_DEFAULT_MEMORY_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset requests 16384 MiB (16 GiB).
+    doc: >
+      Memory in MiB a container build requests when the caller does not
+      say. Ignored with a report when it is not a non-negative whole
+      number, as above.
+
+  - name: HTTP_API_BUILD_DEFAULT_DISK_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset requests 30720 MiB (30 GiB).
+    doc: >
+      Disk in MiB a container build requests when the caller does not
+      say. Ignored with a report when it is not a non-negative whole
+      number, as above.
+
+  - name: HTTP_API_BUILD_MAX_CPUS
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset leaves CPUs uncapped.
+    doc: >
+      Most CPUs one container build may request; a larger request is
+      clamped to it rather than refused. Worth setting, because build
+      slots are large -- CHTC's are 128-core, 256 GB machines -- and an
+      agent asking for plenty should not be able to claim a whole one.
+
+  - name: HTTP_API_BUILD_MAX_MEMORY_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset leaves memory uncapped.
+    doc: >
+      Most memory in MiB one container build may request, clamped
+      rather than refused, for the reason above.
+
+  - name: HTTP_API_BUILD_MAX_DISK_MB
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset leaves disk uncapped.
+    doc: >
+      Most disk in MiB one container build may request, clamped rather
+      than refused, for the reason above.
+
+
+  # Submit-file policy and the idempotency-key guarantee. All read once
+  # at startup.
+  - name: HTTP_API_SUBMIT_FILE_DEFAULTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Submit-file lines added to every submission, but only where the
+      submit file is silent, so a user who sets the same command keeps
+      their own value. Written as HTCondor configuration, so several
+      lines need that syntax for a multi-line value. Operator-only
+      configuration, spliced in as written.
+
+  - name: HTTP_API_SUBMIT_FILE_OVERRIDES
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Submit-file lines added to every submission that win over
+      whatever the submit file says. For requirements that are not the
+      user's to opt out of -- an access point that will not have a log
+      written outside the home directory, say. Otherwise as above:
+      HTCondor configuration syntax, operator-only, spliced in as
+      written.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_CHECK
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset is AUTO.
+    doc: >
+      How much of the idempotency-key guarantee this access point
+      enforces. NONE does not check at all; QUEUE checks the live job
+      queue; FULL checks the queue and the mirrored history, which is
+      what makes a key reused after its job finished still a duplicate;
+      AUTO is FULL where an htcondordb mirror is configured and QUEUE
+      where none is. OFF and FALSE read as NONE, TRUE as FULL. Anything
+      else is reported and AUTO applies.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_RETENTION
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset keeps a key claimed for one hour.
+    doc: >
+      How long, in whole seconds, a key this server submitted stays
+      claimed in memory. It covers the window in which a finished job is
+      in neither the live queue nor the mirrored history yet, so it
+      wants to be longer than the gap between the schedd writing a job
+      out and the mirror carrying it. A value that is not a
+      non-negative whole number is reported and the default applies.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_TIMEOUT
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset bounds the lookups at 10 seconds.
+    doc: >
+      How long, in whole seconds, the queue and history lookups get
+      between them. A keyed submission waits on them, so this is also
+      the longest the check can delay one. Reported and defaulted the
+      same way as above when it is not a non-negative whole number.
+
+  - name: HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset consults the whole history.
+    doc: >
+      How far back, in whole seconds, the history lookup reads, as a
+      floor on EnteredHistoryTime. It trades the guarantee for the cost
+      of the read: a key reused after the window reads as unused. Unset
+      consults the whole history, which is what the index is there for,
+      so set this only where that read is measurably too expensive.
+
+
+  # The last of the settings the server read and no page documented.
+  - name: HTTP_API_LOG
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset logs to stdout.
+    doc: >
+      Where this daemon writes its log: a file, or the words stdout or
+      stderr. A named file that cannot be written falls back to stdout
+      with a message -- except under condor_master, where stdout is
+      discarded and there would be nowhere to report anything, so the
+      daemon refuses to start and the reason goes to the master's log
+      instead.
+
+  - name: HTTP_API_JOB_QUEUE_LOG
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset uses JOB_QUEUE_LOG when that file is actually present.
+    doc: >
+      The schedd's job queue log, tailed to serve the job change
+      stream, or the word none to switch the stream off. Unset falls
+      back to JOB_QUEUE_LOG where the file is there, which is the case
+      when this server shares a host with its schedd; where it does not
+      -- an API server in its own container, the usual deployment --
+      there is nothing to tail and that is not a misconfiguration.
+      Named explicitly and absent is an operator error, and is reported
+      as one.
+
+  - name: HTTP_API_JUPYTER_WORK_DIR
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset uses a directory under the system temporary directory.
+    doc: >
+      Where the helper binary and token files for JupyterLab
+      submissions are staged. The helper itself is built into this
+      binary, so nothing has to be found on disk; this is only where it
+      is written out to be transferred.
+
+  - name: HTTP_API_MCP_BASE_URL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The externally-visible base URL of the MCP listener, for a
+      deployment that serves MCP on an address of its own. Unset, MCP
+      is reached at HTTP_API_BASE_URL like everything else.
+
+  - name: HTTP_API_MCP_LISTEN_ADDR
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      A second address to serve MCP on, separate from
+      HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which
+      is what almost every deployment wants; this is for separating the
+      agent surface onto its own port or interface.
+
+  - name: HTTP_API_PING_INTERVAL
+    type: duration
+    default: 1m
+    scope: startup
+    doc: >
+      How often the daemon pings the pool to decide what /readyz
+      reports, as a duration with a unit. A bare 0 switches the ping
+      off and is the one value exempt from the unit rule, since there
+      is no ambiguity in zero. Switching it off is what a deployment
+      holding no local HTCondor credential needs: where every request
+      authenticates with a forwarded token and the daemon itself has
+      nothing to ping with, the ping can only fail and drag /readyz
+      down with it. A value with no unit, or one that does not parse,
+      refuses to start rather than being guessed at -- 5 could be
+      seconds or minutes.
+
+  - name: HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset leaves the sweep off.
+    doc: >
+      How often finished jobs are swept for output to deliver to a
+      connected account, as a duration with a unit. A bare number is
+      refused rather than guessed at, and anything under a minute is
+      raised to one with a message: sweeping faster asks the queue and
+      the provider about the same finished jobs more often than they
+      can change, and a provider's rate limit is a real consequence.
+      Read at startup; the running ticker does not re-read it, so a
+      change needs a restart even though the rest of the connector
+      configuration reloads.
+
+  - name: HTTP_API_CONNECTOR_PREFIX
+    type: string
+    default: webapi
+    scope: startup
+    doc: >
+      The prefix of the credd service names this server stores
+      connected-account credentials under. Change it only to keep two
+      servers sharing one credd from seeing each other's credentials.
+
+  - name: HTTP_API_INTERACTIVE_EXTRA_SUBMIT
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Extra submit-file lines added to every interactive session job --
+      terminal, VS Code and JupyterLab. Operator-only configuration,
+      spliced in as written, as with the submit-file settings above.
 
 
 # Families: one group of parameters per named instance, with the name

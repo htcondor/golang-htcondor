@@ -517,9 +517,16 @@ per-directory. A grep-based drift test can ship on day one and retires
 when the lint covers everything.
 
 *The generated reference has landed*, out of order with the rest of the
-stage and deliberately so: at 22 declared settings of roughly 240 it
-covers a fraction, but from here every setting converted documents
-itself. Left until the conversion was finished, the whole exercise
+stage and deliberately so: it covered a fraction when it landed -- 22
+declared settings of roughly 240 -- but from here every setting
+converted documents itself. Fifty-six are declared as of this
+writing, with 162 names still read as string literals outside generated
+code -- and, of the settings the server reads, none is undocumented any
+more. The two names a census still turns up, HTTP_API_WEBUI_PRIVACY and
+HTTP_API_WEBUI_TERMS, are labels handed to resolvePolicy for its
+messages rather than settings anything looks up; the real pair is
+_FILE and _URL, both of which the reference carries. A lint over string
+literals will have to know the difference. Left until the conversion was finished, the whole exercise
 would have paid nothing out until the last setting moved. It writes
 into a marked region of `docs/operator/config.md` rather than a page of
 its own, so the prose no table can generate stays where it is, and the
@@ -533,6 +540,25 @@ into another page and a paragraph that a Go doc comment also prints
 cannot hold a relative Markdown link; the reference renders it as a
 link that the documentation tests then check resolves, and the comment
 gets the title alone.
+
+*Not every undocumented setting wants documenting.* Some are
+deliberately undocumented because they are obsolete and their use is to
+be discouraged, which the table now says with `obsolete:`. Such a
+setting is declared like any other -- the table is the only place a
+name may be spelled -- and then left out of the reference entirely,
+because documenting it, even as obsolete, is how somebody finds it and
+decides to use it. The people who need to know are the ones who already
+have it set, and `knobs.Obsolete` is what lets the daemon tell them.
+Three things make the marker do work rather than describe an intention:
+the generated declaration carries Go's own `Deprecated:` paragraph, so
+staticcheck reports every read and the one place allowed to read it
+carries a `//nolint` saying why; a test checks the name appears nowhere
+under `docs/`; and `superseded_by`, where it is set, has to name a
+setting some page does mention, since a pointer into nothing is worse
+than no pointer. That last pair is why the check matches whole
+parameter names -- `HTTP_API_LISTEN` is a prefix of the current
+`HTTP_API_LISTEN_ADDR`, and a substring match read every page
+documenting the current setting as documenting the obsolete one.
 
 **3. OpenAPI out of the Go string.** *Done, ahead of stage 2's
 completion, because it depended on nothing.* The document is
@@ -554,6 +580,32 @@ added without documentation.
 this exists to make writing it, and keeping it correct, cheap.
 
 **5. Screenshots.**
+
+## A setting hidden before its replacement exists
+
+`HTTP_API_MCP_ADMIN_GROUP` and `HTTP_API_MCP_SUPERUSER_GROUP` are
+marked obsolete and left out of the documentation, which is what was
+asked for. They are also, as of this writing, the **only** source of
+the `mcp:admin`, `mcp:superuser`, `anyuser:read` and `anyuser:write`
+scope grants: `oauth2_sso.go` grants each of those from these two group
+sets and from nothing else. `HTTP_API_WEBUI_ADMIN_GROUP` and
+`HTTP_API_SUPERUSER_GROUP` are where the same power lives for a browser
+or API caller -- `handlers_admin.go` is the authoritative map -- but
+they do not reach the OAuth2 scope path.
+
+So an operator who needs an OAuth2 or MCP client to read across users
+now has no documented way to configure it. That is why neither carries
+a `superseded_by`: a pointer at a setting that would not restore what
+they had is worse than no pointer.
+
+Resolving it is a product decision rather than a documentation one, and
+it is one of two shapes. Either the scope grants start answering to the
+unified groups, after which both settings get a `superseded_by` and
+this paragraph goes away; or the capability is deliberately
+browser-only, in which case the scopes should stop being advertised
+rather than being grantable from a setting nobody may find. The comment
+in `oauth2_sso.go` -- "until the two settings are split apart" --
+suggests the first was intended.
 
 ## Open questions
 

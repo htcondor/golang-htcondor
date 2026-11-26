@@ -132,8 +132,8 @@ type ConfigSource struct {
 func NewConfigSource(params Params) *ConfigSource {
 	src := &ConfigSource{params: params, prefix: DefaultServicePrefix}
 	if params != nil {
-		if v, ok := params.Get("HTTP_API_CONNECTOR_PREFIX"); ok && strings.TrimSpace(v) != "" {
-			src.prefix = strings.TrimSpace(v)
+		if v := strings.TrimSpace(knobs.ConnectorPrefix.Get(params)); v != "" {
+			src.prefix = v
 		}
 	}
 	return src

@@ -310,3 +310,45 @@ func TestWordsKnobSplitsOnWhitespace(t *testing.T) {
 		t.Errorf("default = %q", got)
 	}
 }
+
+// An _MB setting means that many MiB, not that many bytes, which is
+// the whole reason IntKnob exists beside BytesKnob.
+func TestIntKnobDoesNotReadUnits(t *testing.T) {
+	k := DefineInt("HTTP_API_TEST_INT", 7, Startup, "doc")
+	for _, tc := range []struct {
+		raw  string
+		want int64
+	}{
+		{"2048", 2048},
+		{"0", 0},
+		{"-1", -1},
+		{"  12  ", 12},
+		// A unit suffix is not a whole number. BytesKnob reads these;
+		// this one must not, or 2G would silently become a count.
+		{"2G", 7},
+		{"1000M", 7},
+		{"1.5", 7},
+		{"", 7},
+		{"nonsense", 7},
+	} {
+		src := fakeSource{"HTTP_API_TEST_INT": tc.raw}
+		if got := k.Get(src); got != tc.want {
+			t.Errorf("Get(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
+	}
+	if got := k.Get(fakeSource{}); got != 7 {
+		t.Errorf("Get with the setting absent = %d, want the default 7", got)
+	}
+}
+
+// Lookup distinguishes "set to the same value as the default" from
+// "absent", which is what an overlay needs.
+func TestIntKnobLookupReportsPresence(t *testing.T) {
+	k := DefineInt("HTTP_API_TEST_INT", 7, Startup, "doc")
+	if v, ok := k.Lookup(fakeSource{"HTTP_API_TEST_INT": "7"}); !ok || v != 7 {
+		t.Errorf("Lookup of a present value = (%d, %v), want (7, true)", v, ok)
+	}
+	if v, ok := k.Lookup(fakeSource{}); ok || v != 7 {
+		t.Errorf("Lookup of an absent value = (%d, %v), want (7, false)", v, ok)
+	}
+}

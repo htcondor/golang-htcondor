@@ -32,6 +32,83 @@ code uses rather than a second copy of them. Alphabetical by parameter.
 
 <!-- BEGIN GENERATED SETTINGS: edit webapi/knobs/knobs.yaml, then run `make knobs` -->
 
+### `HTTP_API_BUILD_DEFAULT_CPUS`
+
+**Whole number.** Unset requests 8 CPUs. Changing it needs a restart.
+
+CPUs a container build requests when the caller does not say. A value
+that is not a whole number, or is negative, is reported and ignored
+rather than refusing to start: the rest of the server has nothing to
+do with container builds, and a typo in a build setting should not
+take the API down.
+
+### `HTTP_API_BUILD_DEFAULT_DISK_MB`
+
+**Whole number.** Unset requests 30720 MiB (30 GiB). Changing it needs a restart.
+
+Disk in MiB a container build requests when the caller does not say.
+Ignored with a report when it is not a non-negative whole number, as
+above.
+
+### `HTTP_API_BUILD_DEFAULT_MEMORY_MB`
+
+**Whole number.** Unset requests 16384 MiB (16 GiB). Changing it needs a restart.
+
+Memory in MiB a container build requests when the caller does not say.
+Ignored with a report when it is not a non-negative whole number, as
+above.
+
+### `HTTP_API_BUILD_EXTRA_SUBMIT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Extra submit-file lines added to every container build job, for
+whatever else a site's build slots need.
+
+### `HTTP_API_BUILD_MAX_CPUS`
+
+**Whole number.** Unset leaves CPUs uncapped. Changing it needs a restart.
+
+Most CPUs one container build may request; a larger request is clamped
+to it rather than refused. Worth setting, because build slots are
+large -- CHTC's are 128-core, 256 GB machines -- and an agent asking
+for plenty should not be able to claim a whole one.
+
+### `HTTP_API_BUILD_MAX_DISK_MB`
+
+**Whole number.** Unset leaves disk uncapped. Changing it needs a restart.
+
+Most disk in MiB one container build may request, clamped rather than
+refused, for the reason above.
+
+### `HTTP_API_BUILD_MAX_MEMORY_MB`
+
+**Whole number.** Unset leaves memory uncapped. Changing it needs a restart.
+
+Most memory in MiB one container build may request, clamped rather
+than refused, for the reason above.
+
+### `HTTP_API_BUILD_REQUIREMENTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+ClassAd expression selecting the slots a container build may run on,
+for a site where no schedd transform does it. A site picks its build
+machines by its own convention and the tool cannot guess it, so an
+unconfigured server submits an ordinary job and relies on the caller
+naming a destination.
+
+### `HTTP_API_BUILD_STAGING_BASE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where built images are published when the caller gives a bare name.
+Unset means every call has to name its own destination. It may be a
+template: {user} expands to the authenticated caller and {initial} to
+the first letter of that name, so a per-user staging area can be
+written osdf:///chtc/staging/{initial}/{user}. A base with no
+placeholder is used verbatim.
+
 ### `HTTP_API_CONNECTORS`
 
 **Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
@@ -109,12 +186,178 @@ one.
 How a job fetches from this account, where the connector supports more
 than one way.
 
+### `HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL`
+
+**Duration.** Unset leaves the sweep off. Changing it needs a restart.
+
+How often finished jobs are swept for output to deliver to a connected
+account, as a duration with a unit. A bare number is refused rather
+than guessed at, and anything under a minute is raised to one with a
+message: sweeping faster asks the queue and the provider about the
+same finished jobs more often than they can change, and a provider's
+rate limit is a real consequence. Read at startup; the running ticker
+does not re-read it, so a change needs a restart even though the rest
+of the connector configuration reloads.
+
+### `HTTP_API_CONNECTOR_PREFIX`
+
+**String.** Default `webapi`. Changing it needs a restart.
+
+The prefix of the credd service names this server stores
+connected-account credentials under. Change it only to keep two
+servers sharing one credd from seeing each other's credentials.
+
+### `HTTP_API_ENABLE_IDP`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Run the built-in identity provider, so this server signs users in
+itself instead of sending them to an external one. Off by default. The
+provider shares the unified application database; the separate
+`HTTP_API_IDP_DB_PATH` it once had is no longer read.
+
+### `HTTP_API_IDEMPOTENCY_KEY_CHECK`
+
+**String.** Unset is AUTO. Changing it needs a restart.
+
+How much of the idempotency-key guarantee this access point enforces.
+NONE does not check at all; QUEUE checks the live job queue; FULL
+checks the queue and the mirrored history, which is what makes a key
+reused after its job finished still a duplicate; AUTO is FULL where an
+htcondordb mirror is configured and QUEUE where none is. OFF and FALSE
+read as NONE, TRUE as FULL. Anything else is reported and AUTO
+applies.
+
+### `HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW`
+
+**Whole number.** Unset consults the whole history. Changing it needs a restart.
+
+How far back, in whole seconds, the history lookup reads, as a floor
+on EnteredHistoryTime. It trades the guarantee for the cost of the
+read: a key reused after the window reads as unused. Unset consults
+the whole history, which is what the index is there for, so set this
+only where that read is measurably too expensive.
+
+### `HTTP_API_IDEMPOTENCY_KEY_RETENTION`
+
+**Whole number.** Unset keeps a key claimed for one hour. Changing it needs a restart.
+
+How long, in whole seconds, a key this server submitted stays claimed
+in memory. It covers the window in which a finished job is in neither
+the live queue nor the mirrored history yet, so it wants to be longer
+than the gap between the schedd writing a job out and the mirror
+carrying it. A value that is not a non-negative whole number is
+reported and the default applies.
+
+### `HTTP_API_IDEMPOTENCY_KEY_TIMEOUT`
+
+**Whole number.** Unset bounds the lookups at 10 seconds. Changing it needs a restart.
+
+How long, in whole seconds, the queue and history lookups get between
+them. A keyed submission waits on them, so this is also the longest
+the check can delay one. Reported and defaulted the same way as above
+when it is not a non-negative whole number.
+
 ### `HTTP_API_IDLE_TIMEOUT`
 
 **Duration.** Default `120s`. Changing it needs a restart.
 
 How long a keep-alive connection may sit idle before the server closes
 it, as a Go duration.
+
+### `HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues access tokens that live one hour. Changing it needs a restart.
+
+How long an access token the built-in identity provider issues stays
+valid, as a Go duration. A value that is not a duration, or is not
+positive, refuses to start rather than being quietly ignored -- a
+token lifetime is not something to get wrong silently. Read only when
+`HTTP_API_ENABLE_IDP` is on.
+
+### `HTTP_API_IDP_ISSUER`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The issuer the built-in identity provider names in its own documents.
+Unset derives it the same way `HTTP_API_OAUTH2_ISSUER` is derived,
+from the externally-visible URL. Read only when `HTTP_API_ENABLE_IDP`
+is on.
+
+### `HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues refresh tokens that live 30 days. Changing it needs a restart.
+
+How long a refresh token the built-in identity provider issues stays
+valid. It has to be at least the access token lifespan, or the
+provider refuses to start: a refresh token that dies first makes every
+refresh fail after the access token expires. Read only when
+`HTTP_API_ENABLE_IDP` is on, and refused the same way as above when it
+is not a positive duration.
+
+### `HTTP_API_INTERACTIVE_EXTRA_SUBMIT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Extra submit-file lines added to every interactive session job --
+terminal, VS Code and JupyterLab. Operator-only configuration, spliced
+in as written, as with the submit-file settings above.
+
+### `HTTP_API_JOB_QUEUE_LOG`
+
+**String.** Unset uses JOB_QUEUE_LOG when that file is actually present. Changing it needs a restart.
+
+The schedd's job queue log, tailed to serve the job change stream, or
+the word none to switch the stream off. Unset falls back to
+JOB_QUEUE_LOG where the file is there, which is the case when this
+server shares a host with its schedd; where it does not -- an API
+server in its own container, the usual deployment -- there is nothing
+to tail and that is not a misconfiguration. Named explicitly and
+absent is an operator error, and is reported as one.
+
+### `HTTP_API_JUPYTER_WORK_DIR`
+
+**String.** Unset uses a directory under the system temporary directory. Changing it needs a restart.
+
+Where the helper binary and token files for JupyterLab submissions are
+staged. The helper itself is built into this binary, so nothing has to
+be found on disk; this is only where it is written out to be
+transferred.
+
+### `HTTP_API_LOG`
+
+**String.** Unset logs to stdout. Changing it needs a restart.
+
+Where this daemon writes its log: a file, or the words stdout or
+stderr. A named file that cannot be written falls back to stdout with
+a message -- except under condor_master, where stdout is discarded and
+there would be nowhere to report anything, so the daemon refuses to
+start and the reason goes to the master's log instead.
+
+### `HTTP_API_MCP_BASE_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The externally-visible base URL of the MCP listener, for a deployment
+that serves MCP on an address of its own. Unset, MCP is reached at
+`HTTP_API_BASE_URL` like everything else.
+
+### `HTTP_API_MCP_LISTEN_ADDR`
+
+**String.** Unset by default. Changing it needs a restart.
+
+A second address to serve MCP on, separate from
+`HTTP_API_LISTEN_ADDR`. Unset serves MCP on the one listener, which is
+what almost every deployment wants; this is for separating the agent
+surface onto its own port or interface.
+
+### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues access tokens that live one hour. Changing it needs a restart.
+
+How long an access token this server issues as an OAuth2 authorization
+server stays valid, as a Go duration. Refused the same way as the
+identity provider's when it is not a positive duration.
 
 ### `HTTP_API_OAUTH2_AUTH_URL`
 
@@ -172,6 +415,20 @@ is logged as a warning rather than refused.
 The issuer this server names in its own OAuth2 documents. Unset, it is
 derived from the externally-visible URL, assuming https.
 
+### `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME`
+
+**Duration.** Unset lets a grant go 30 days unused. Changing it needs a restart.
+
+How long a grant may go unused before the user has to consent again.
+Measured from the grant's last use rather than from consent, so a
+client that refreshes inside the window keeps its grant indefinitely,
+which is what lets an unattended integration keep working; an
+abandoned grant still expires. What bounds a grant in active use is
+the revocation oracles, not this.
+
+See [Refresh-grant
+re-authorization](auth.md#refresh-grant-re-authorization).
+
 ### `HTTP_API_OAUTH2_REDIRECT_URL`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -186,6 +443,18 @@ upgrade still lands; but what has to be registered at the provider is
 the URI this server sends, so a build that gains the web UI needs
 /oauth2/callback added there -- or this set, to keep sending the old
 one.
+
+### `HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN`
+
+**Duration.** Unset issues refresh tokens that live 30 days. Changing it needs a restart.
+
+How long one refresh token this server issues stays valid. Every
+refresh resets it, which is why `HTTP_API_OAUTH2_MAX_GRANT_LIFETIME`
+exists: without a cap, a client that keeps refreshing keeps its grant
+forever.
+
+See [Refresh-grant
+re-authorization](auth.md#refresh-grant-re-authorization).
 
 ### `HTTP_API_OAUTH2_REQUIREMENTS`
 
@@ -285,6 +554,20 @@ default.
 Which shipped chooser to run. Defaults to the chooser's own name, so
 the common case needs one line.
 
+### `HTTP_API_PING_INTERVAL`
+
+**Duration.** Default `1m`. Changing it needs a restart.
+
+How often the daemon pings the pool to decide what /readyz reports, as
+a duration with a unit. A bare 0 switches the ping off and is the one
+value exempt from the unit rule, since there is no ambiguity in zero.
+Switching it off is what a deployment holding no local HTCondor
+credential needs: where every request authenticates with a forwarded
+token and the daemon itself has nothing to ping with, the ping can
+only fail and drag /readyz down with it. A value with no unit, or one
+that does not parse, refuses to start rather than being guessed at --
+5 could be seconds or minutes.
+
 ### `HTTP_API_READ_TIMEOUT`
 
 **Duration.** Default `30s`. Changing it needs a restart.
@@ -350,6 +633,26 @@ Where an archive dropped in the SSH gateway's /submit/, or posted to
 the REST upload endpoints, is buffered while it is unpacked. Unset
 holds it in memory instead, under a much smaller ceiling.
 
+### `HTTP_API_SUBMIT_FILE_DEFAULTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Submit-file lines added to every submission, but only where the submit
+file is silent, so a user who sets the same command keeps their own
+value. Written as HTCondor configuration, so several lines need that
+syntax for a multi-line value. Operator-only configuration, spliced in
+as written.
+
+### `HTTP_API_SUBMIT_FILE_OVERRIDES`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Submit-file lines added to every submission that win over whatever the
+submit file says. For requirements that are not the user's to opt out
+of -- an access point that will not have a log written outside the
+home directory, say. Otherwise as above: HTCondor configuration
+syntax, operator-only, spliced in as written.
+
 ### `HTTP_API_TLS_CA_CERT`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -371,6 +674,29 @@ TLS.
 
 Private key for `HTTP_API_TLS_CERT`. Keep it readable only by the
 account the server runs as.
+
+### `HTTP_API_TOKEN_RETENTION`
+
+**String.** Unset keeps dead token rows for 90 days. Changing it needs a restart.
+
+How long rows for dead OAuth2 tokens are kept before being swept, as a
+duration with a unit, or off (equivalently 0) to keep them forever. A
+bare number is refused rather than read as nanoseconds, which is what
+parsing "90" would otherwise mean and is never what anybody intends;
+so is anything else that does not parse, and the server refuses to
+start rather than sweeping on a figure nobody chose. Only rows that
+are already dead -- revoked or expired -- are ever removed, because a
+live grant is somebody's session whatever its age.
+
+### `HTTP_API_USER_HEADER_TRUST_ANY`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Accept the user header from any source address. For demonstration and
+testing only: with it on, anything that can reach this server can
+claim to be any user, so it undoes authentication rather than relaxing
+it. Off by default, and the server logs a warning for as long as it is
+on. Leave it off anywhere a real person has an account.
 
 ### `HTTP_API_WRITE_TIMEOUT`
 

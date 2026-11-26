@@ -45,11 +45,11 @@ func fromKnob(k config.Knob) reconfigParam {
 	return reconfigParam{name: k.Name()}
 }
 
-// A dynamic entry for a declared setting would be
-// reconfigParam{name: k.Name(), apply: ...}; there is no such setting
-// yet, because the settings converted so far are all read at startup.
-// TestReconfigScopesMatchTheKnobs is what will say so when one is
-// declared scope: reconfig and listed without an apply.
+// A dynamic entry for a declared setting is written out rather than
+// built by fromKnob, because it carries an apply as well as the name:
+// see the two MCP group entries below. TestReconfigScopesMatchTheKnobs
+// is what says so when one is declared scope: reconfig and listed
+// without an apply.
 
 // reconfigTarget is the running server a reconfigure updates. It is an
 // interface, not *httpserver.Server, so the table and its bookkeeping can be
@@ -227,12 +227,17 @@ var reconfigParams = []reconfigParam{
 		name:  "HTTP_API_MCP_WRITE_GROUP",
 		apply: func(s reconfigTarget, v string) { s.SetMCPWriteGroups(v) },
 	},
+	// Declared, and obsolete: the name comes from the table so the two
+	// cannot drift, and staticcheck reports the read for the reason it
+	// does at the startup read in main.go.
 	{
-		name:  "HTTP_API_MCP_ADMIN_GROUP",
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		name:  knobs.MCPAdminGroup.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetMCPAdminGroups(v) },
 	},
 	{
-		name:  "HTTP_API_MCP_SUPERUSER_GROUP",
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		name:  knobs.MCPSuperuserGroup.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetMCPSuperuserGroups(v) },
 	},
 	// Reloaded unconditionally in reconfigure() as well; this entry is what
@@ -344,10 +349,32 @@ var reconfigParams = []reconfigParam{
 	// and the origin of the redirect URIs registered clients hold, so it
 	// cannot be swapped under live sessions without invalidating them.
 	{name: "HTTP_API_BASE_URL"},
-	{name: "HTTP_API_MCP_BASE_URL"},
+	fromKnob(knobs.MCPBaseURL.Knob),
+
+	// Where this daemon logs, opened once when the logger is built, and
+	// the schedd log it tails for the job change stream, opened once
+	// when the stream starts.
+	fromKnob(knobs.Log.Knob),
+	fromKnob(knobs.JobQueueLog.Knob),
+
+	// Read when their one consumer is built: the staging directory for
+	// JupyterLab submissions, the credd service-name prefix connected
+	// accounts are stored under, and how often the pool is pinged for
+	// what /readyz reports.
+	fromKnob(knobs.JupyterWorkDir.Knob),
+	fromKnob(knobs.ConnectorPrefix.Knob),
+	fromKnob(knobs.PingInterval.Knob),
 
 	// Listener and credentials, all bound or opened during startup.
 	{name: "HTTP_API_LISTEN_ADDR"},
+	// The separate MCP listener, bound at the same time.
+	fromKnob(knobs.MCPListenAddr.Knob),
+	// The older spelling of the same thing, listed so a change to it is
+	// reported as needing a restart rather than silently ignored. An
+	// operator still using the alias is the one most likely to be
+	// surprised.
+	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+	fromKnob(knobs.Listen.Knob),
 	{name: "HTTP_API_SIGNING_KEY"},
 	{name: "HTTP_API_KEK_FILE"},
 	fromKnob(knobs.TLSCert.Knob),
@@ -355,6 +382,30 @@ var reconfigParams = []reconfigParam{
 	// Read at startup like the pair above and, until now, listed
 	// nowhere: a change to it did nothing and nothing said so.
 	fromKnob(knobs.TLSCACert.Knob),
+
+	// The built-in identity provider, stood up once at startup: turning
+	// it on or off, and the issuer and token lifetimes it stamps into
+	// everything it has already signed.
+	fromKnob(knobs.EnableIDP.Knob),
+	fromKnob(knobs.IDPIssuer.Knob),
+	fromKnob(knobs.IDPAccessTokenLifespan.Knob),
+	fromKnob(knobs.IDPRefreshTokenLifespan.Knob),
+
+	// The same for the OAuth2 authorization server this one is. The
+	// lifespans are handed to the provider when it is built, so a
+	// change reaches nothing already issued and nothing issued next
+	// either until a restart.
+	fromKnob(knobs.OAuth2AccessTokenLifespan.Knob),
+	fromKnob(knobs.OAuth2RefreshTokenLifespan.Knob),
+	fromKnob(knobs.OAuth2MaxGrantLifetime.Knob),
+
+	// The retention sweep's window, read when the sweeper is started.
+	fromKnob(knobs.TokenRetention.Knob),
+
+	// Whether the user header is trusted from anywhere, decided when
+	// the handler is built. Listed so that turning it off in the
+	// configuration and reconfiguring does not look like it worked.
+	fromKnob(knobs.UserHeaderTrustAny.Knob),
 
 	// The HTTP server's timeouts, captured when it was built.
 	fromKnob(knobs.ReadTimeout.Knob),
@@ -394,7 +445,7 @@ var reconfigParams = []reconfigParam{
 	// The connector output sweep's ticker is likewise started once. Which
 	// connectors exist, and their policy, do reload; how often finished
 	// jobs' results are appended does not.
-	{name: "HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL"},
+	fromKnob(knobs.ConnectorOutputSweepInterval.Knob),
 
 	// Authorization groups. Worth making dynamic later -- they are consulted
 	// per request -- but some are also folded into policy objects at
@@ -411,32 +462,32 @@ var reconfigParams = []reconfigParam{
 	{name: "HTTP_API_POOL_QUERY_EXTRA_ATTRS"},
 
 	// Submit-time policy, compiled into the submit policy at startup.
-	{name: "HTTP_API_SUBMIT_FILE_DEFAULTS"},
-	{name: "HTTP_API_SUBMIT_FILE_OVERRIDES"},
+	fromKnob(knobs.SubmitFileDefaults.Knob),
+	fromKnob(knobs.SubmitFileOverrides.Knob),
 
 	// Idempotency-key enforcement, folded into the Guard at startup.
 	// Restart-only on purpose rather than for want of a setter: the
 	// Guard holds the claims, and rebuilding it would drop every key
 	// claimed in the retention window -- turning a reconfig into a
 	// window in which a retry is accepted twice.
-	{name: "HTTP_API_IDEMPOTENCY_KEY_CHECK"},
-	{name: "HTTP_API_IDEMPOTENCY_KEY_RETENTION"},
-	{name: "HTTP_API_IDEMPOTENCY_KEY_TIMEOUT"},
-	{name: "HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW"},
+	fromKnob(knobs.IdempotencyKeyCheck.Knob),
+	fromKnob(knobs.IdempotencyKeyRetention.Knob),
+	fromKnob(knobs.IdempotencyKeyTimeout.Knob),
+	fromKnob(knobs.IdempotencyKeyHistoryWindow.Knob),
 	{name: "HTTP_API_INTERACTIVE_REQUIREMENTS"},
 	{name: "HTTP_API_DAGMAN_PATH"},
 	{name: "HTTP_API_DAGMAN_ENVIRONMENT"},
-	{name: "HTTP_API_INTERACTIVE_EXTRA_SUBMIT"},
-	{name: "HTTP_API_BUILD_EXTRA_SUBMIT"},
-	{name: "HTTP_API_BUILD_REQUIREMENTS"},
-	{name: "HTTP_API_BUILD_STAGING_BASE"},
+	fromKnob(knobs.InteractiveExtraSubmit.Knob),
+	fromKnob(knobs.BuildExtraSubmit.Knob),
+	fromKnob(knobs.BuildRequirements.Knob),
+	fromKnob(knobs.BuildStagingBase.Knob),
 	{name: "HTTP_API_VSCODE_IMAGE"},
-	{name: "HTTP_API_BUILD_DEFAULT_CPUS"},
-	{name: "HTTP_API_BUILD_DEFAULT_MEMORY_MB"},
-	{name: "HTTP_API_BUILD_DEFAULT_DISK_MB"},
-	{name: "HTTP_API_BUILD_MAX_CPUS"},
-	{name: "HTTP_API_BUILD_MAX_MEMORY_MB"},
-	{name: "HTTP_API_BUILD_MAX_DISK_MB"},
+	fromKnob(knobs.BuildDefaultCPUs.Knob),
+	fromKnob(knobs.BuildDefaultMemoryMB.Knob),
+	fromKnob(knobs.BuildDefaultDiskMB.Knob),
+	fromKnob(knobs.BuildMaxCPUs.Knob),
+	fromKnob(knobs.BuildMaxMemoryMB.Knob),
+	fromKnob(knobs.BuildMaxDiskMB.Knob),
 
 	// Tool-usage statistics. The flush ticker is started once and the
 	// collector is registered once, both when the handler is built, so

@@ -290,6 +290,55 @@ func (k BytesKnob) Lookup(c Source) (int64, bool) {
 // Default is the value that applies when the setting is absent.
 func (k BytesKnob) Default() int64 { return k.def }
 
+// IntKnob is a setting read as a whole number: a count, a ceiling, or a
+// size already denominated in some unit the setting's name states
+// (HTTP_API_BUILD_MAX_MEMORY_MB is in MiB). It is deliberately not
+// BytesKnob, which reads 2048 as 2048 bytes; a setting whose name ends
+// in _MB means 2048 of them.
+type IntKnob struct {
+	Knob
+	def int64
+}
+
+// DefineInt declares a whole-number setting. For generated knob tables.
+func DefineInt(name string, def int64, scope Scope, doc string) IntKnob {
+	return IntKnob{Knob{name, doc, scope}, def}
+}
+
+// Get returns the configured number, or the default when it is unset or
+// unparseable.
+//
+// A negative number is returned as written rather than refused here:
+// zero means "no limit" to some of these settings and "unset" to
+// others, and which of those a negative value is closer to is the
+// setting's business, not the type's. A caller that has no meaning for
+// one checks after reading.
+func (k IntKnob) Get(c Source) int64 {
+	v, ok := k.raw(c)
+	if !ok {
+		return k.def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		// The parse error names strconv and the function, which is not
+		// what an operator wants to read about their configuration.
+		k.malformed(c, v, fmt.Errorf("not a whole number"))
+		return k.def
+	}
+	return n
+}
+
+// Lookup is Get, and also reports whether the setting was present.
+func (k IntKnob) Lookup(c Source) (int64, bool) {
+	if _, found := k.raw(c); !found {
+		return k.def, false
+	}
+	return k.Get(c), true
+}
+
+// Default is the value that applies when the setting is absent.
+func (k IntKnob) Default() int64 { return k.def }
+
 // ListKnob is a setting read as a list of names, written comma
 // separated or as a JSON array -- the latter for a name that contains a
 // comma. Whitespace is not a separator: a name may contain a space, and

@@ -8,12 +8,288 @@ import (
 	"github.com/htcondor/golang-htcondor/config"
 )
 
+// BuildDefaultCPUs is HTTP_API_BUILD_DEFAULT_CPUS.
+//
+// CPUs a container build requests when the caller does not say. A
+// value that is not a whole number, or is negative, is reported and
+// ignored rather than refusing to start: the rest of the server has
+// nothing to do with container builds, and a typo in a build setting
+// should not take the API down.
+var BuildDefaultCPUs = config.DefineInt("HTTP_API_BUILD_DEFAULT_CPUS", 0, config.Startup,
+	"CPUs a container build requests when the caller does not say. A value that is not a whole number, or is negative, is reported and ignored rather than refusing to start: the rest of the server has nothing to do with container builds, and a typo in a build setting should not take the API down.")
+
+// BuildDefaultDiskMB is HTTP_API_BUILD_DEFAULT_DISK_MB.
+//
+// Disk in MiB a container build requests when the caller does not say.
+// Ignored with a report when it is not a non-negative whole number, as
+// above.
+var BuildDefaultDiskMB = config.DefineInt("HTTP_API_BUILD_DEFAULT_DISK_MB", 0, config.Startup,
+	"Disk in MiB a container build requests when the caller does not say. Ignored with a report when it is not a non-negative whole number, as above.")
+
+// BuildDefaultMemoryMB is HTTP_API_BUILD_DEFAULT_MEMORY_MB.
+//
+// Memory in MiB a container build requests when the caller does not
+// say. Ignored with a report when it is not a non-negative whole
+// number, as above.
+var BuildDefaultMemoryMB = config.DefineInt("HTTP_API_BUILD_DEFAULT_MEMORY_MB", 0, config.Startup,
+	"Memory in MiB a container build requests when the caller does not say. Ignored with a report when it is not a non-negative whole number, as above.")
+
+// BuildExtraSubmit is HTTP_API_BUILD_EXTRA_SUBMIT.
+//
+// Extra submit-file lines added to every container build job, for
+// whatever else a site's build slots need.
+var BuildExtraSubmit = config.DefineString("HTTP_API_BUILD_EXTRA_SUBMIT", "", config.Startup,
+	"Extra submit-file lines added to every container build job, for whatever else a site's build slots need.")
+
+// BuildMaxCPUs is HTTP_API_BUILD_MAX_CPUS.
+//
+// Most CPUs one container build may request; a larger request is
+// clamped to it rather than refused. Worth setting, because build
+// slots are large -- CHTC's are 128-core, 256 GB machines -- and an
+// agent asking for plenty should not be able to claim a whole one.
+var BuildMaxCPUs = config.DefineInt("HTTP_API_BUILD_MAX_CPUS", 0, config.Startup,
+	"Most CPUs one container build may request; a larger request is clamped to it rather than refused. Worth setting, because build slots are large -- CHTC's are 128-core, 256 GB machines -- and an agent asking for plenty should not be able to claim a whole one.")
+
+// BuildMaxDiskMB is HTTP_API_BUILD_MAX_DISK_MB.
+//
+// Most disk in MiB one container build may request, clamped rather
+// than refused, for the reason above.
+var BuildMaxDiskMB = config.DefineInt("HTTP_API_BUILD_MAX_DISK_MB", 0, config.Startup,
+	"Most disk in MiB one container build may request, clamped rather than refused, for the reason above.")
+
+// BuildMaxMemoryMB is HTTP_API_BUILD_MAX_MEMORY_MB.
+//
+// Most memory in MiB one container build may request, clamped rather
+// than refused, for the reason above.
+var BuildMaxMemoryMB = config.DefineInt("HTTP_API_BUILD_MAX_MEMORY_MB", 0, config.Startup,
+	"Most memory in MiB one container build may request, clamped rather than refused, for the reason above.")
+
+// BuildRequirements is HTTP_API_BUILD_REQUIREMENTS.
+//
+// ClassAd expression selecting the slots a container build may run on,
+// for a site where no schedd transform does it. A site picks its build
+// machines by its own convention and the tool cannot guess it, so an
+// unconfigured server submits an ordinary job and relies on the caller
+// naming a destination.
+var BuildRequirements = config.DefineString("HTTP_API_BUILD_REQUIREMENTS", "", config.Startup,
+	"ClassAd expression selecting the slots a container build may run on, for a site where no schedd transform does it. A site picks its build machines by its own convention and the tool cannot guess it, so an unconfigured server submits an ordinary job and relies on the caller naming a destination.")
+
+// BuildStagingBase is HTTP_API_BUILD_STAGING_BASE.
+//
+// Where built images are published when the caller gives a bare name.
+// Unset means every call has to name its own destination. It may be a
+// template: {user} expands to the authenticated caller and {initial}
+// to the first letter of that name, so a per-user staging area can be
+// written osdf:///chtc/staging/{initial}/{user}. A base with no
+// placeholder is used verbatim.
+var BuildStagingBase = config.DefineString("HTTP_API_BUILD_STAGING_BASE", "", config.Startup,
+	"Where built images are published when the caller gives a bare name. Unset means every call has to name its own destination. It may be a template: {user} expands to the authenticated caller and {initial} to the first letter of that name, so a per-user staging area can be written osdf:///chtc/staging/{initial}/{user}. A base with no placeholder is used verbatim.")
+
+// ConnectorOutputSweepInterval is HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL.
+//
+// How often finished jobs are swept for output to deliver to a
+// connected account, as a duration with a unit. A bare number is
+// refused rather than guessed at, and anything under a minute is
+// raised to one with a message: sweeping faster asks the queue and the
+// provider about the same finished jobs more often than they can
+// change, and a provider's rate limit is a real consequence. Read at
+// startup; the running ticker does not re-read it, so a change needs a
+// restart even though the rest of the connector configuration reloads.
+var ConnectorOutputSweepInterval = config.DefineDuration("HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL", time.Duration(0) /* 0s */, config.Startup,
+	"How often finished jobs are swept for output to deliver to a connected account, as a duration with a unit. A bare number is refused rather than guessed at, and anything under a minute is raised to one with a message: sweeping faster asks the queue and the provider about the same finished jobs more often than they can change, and a provider's rate limit is a real consequence. Read at startup; the running ticker does not re-read it, so a change needs a restart even though the rest of the connector configuration reloads.")
+
+// ConnectorPrefix is HTTP_API_CONNECTOR_PREFIX.
+//
+// The prefix of the credd service names this server stores
+// connected-account credentials under. Change it only to keep two
+// servers sharing one credd from seeing each other's credentials.
+var ConnectorPrefix = config.DefineString("HTTP_API_CONNECTOR_PREFIX", "webapi", config.Startup,
+	"The prefix of the credd service names this server stores connected-account credentials under. Change it only to keep two servers sharing one credd from seeing each other's credentials.")
+
+// EnableIDP is HTTP_API_ENABLE_IDP.
+//
+// Run the built-in identity provider, so this server signs users in
+// itself instead of sending them to an external one. Off by default.
+// The provider shares the unified application database; the separate
+// HTTP_API_IDP_DB_PATH it once had is no longer read.
+var EnableIDP = config.DefineBool("HTTP_API_ENABLE_IDP", false, config.Startup,
+	"Run the built-in identity provider, so this server signs users in itself instead of sending them to an external one. Off by default. The provider shares the unified application database; the separate HTTP_API_IDP_DB_PATH it once had is no longer read.")
+
+// IdempotencyKeyCheck is HTTP_API_IDEMPOTENCY_KEY_CHECK.
+//
+// How much of the idempotency-key guarantee this access point
+// enforces. NONE does not check at all; QUEUE checks the live job
+// queue; FULL checks the queue and the mirrored history, which is what
+// makes a key reused after its job finished still a duplicate; AUTO is
+// FULL where an htcondordb mirror is configured and QUEUE where none
+// is. OFF and FALSE read as NONE, TRUE as FULL. Anything else is
+// reported and AUTO applies.
+var IdempotencyKeyCheck = config.DefineString("HTTP_API_IDEMPOTENCY_KEY_CHECK", "", config.Startup,
+	"How much of the idempotency-key guarantee this access point enforces. NONE does not check at all; QUEUE checks the live job queue; FULL checks the queue and the mirrored history, which is what makes a key reused after its job finished still a duplicate; AUTO is FULL where an htcondordb mirror is configured and QUEUE where none is. OFF and FALSE read as NONE, TRUE as FULL. Anything else is reported and AUTO applies.")
+
+// IdempotencyKeyHistoryWindow is HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW.
+//
+// How far back, in whole seconds, the history lookup reads, as a floor
+// on EnteredHistoryTime. It trades the guarantee for the cost of the
+// read: a key reused after the window reads as unused. Unset consults
+// the whole history, which is what the index is there for, so set this
+// only where that read is measurably too expensive.
+var IdempotencyKeyHistoryWindow = config.DefineInt("HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW", 0, config.Startup,
+	"How far back, in whole seconds, the history lookup reads, as a floor on EnteredHistoryTime. It trades the guarantee for the cost of the read: a key reused after the window reads as unused. Unset consults the whole history, which is what the index is there for, so set this only where that read is measurably too expensive.")
+
+// IdempotencyKeyRetention is HTTP_API_IDEMPOTENCY_KEY_RETENTION.
+//
+// How long, in whole seconds, a key this server submitted stays
+// claimed in memory. It covers the window in which a finished job is
+// in neither the live queue nor the mirrored history yet, so it wants
+// to be longer than the gap between the schedd writing a job out and
+// the mirror carrying it. A value that is not a non-negative whole
+// number is reported and the default applies.
+var IdempotencyKeyRetention = config.DefineInt("HTTP_API_IDEMPOTENCY_KEY_RETENTION", 0, config.Startup,
+	"How long, in whole seconds, a key this server submitted stays claimed in memory. It covers the window in which a finished job is in neither the live queue nor the mirrored history yet, so it wants to be longer than the gap between the schedd writing a job out and the mirror carrying it. A value that is not a non-negative whole number is reported and the default applies.")
+
+// IdempotencyKeyTimeout is HTTP_API_IDEMPOTENCY_KEY_TIMEOUT.
+//
+// How long, in whole seconds, the queue and history lookups get
+// between them. A keyed submission waits on them, so this is also the
+// longest the check can delay one. Reported and defaulted the same way
+// as above when it is not a non-negative whole number.
+var IdempotencyKeyTimeout = config.DefineInt("HTTP_API_IDEMPOTENCY_KEY_TIMEOUT", 0, config.Startup,
+	"How long, in whole seconds, the queue and history lookups get between them. A keyed submission waits on them, so this is also the longest the check can delay one. Reported and defaulted the same way as above when it is not a non-negative whole number.")
+
 // IdleTimeout is HTTP_API_IDLE_TIMEOUT.
 //
 // How long a keep-alive connection may sit idle before the server
 // closes it, as a Go duration.
 var IdleTimeout = config.DefineDuration("HTTP_API_IDLE_TIMEOUT", time.Duration(120000000000) /* 120s */, config.Startup,
 	"How long a keep-alive connection may sit idle before the server closes it, as a Go duration.")
+
+// IDPAccessTokenLifespan is HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN.
+//
+// How long an access token the built-in identity provider issues stays
+// valid, as a Go duration. A value that is not a duration, or is not
+// positive, refuses to start rather than being quietly ignored -- a
+// token lifetime is not something to get wrong silently. Read only
+// when HTTP_API_ENABLE_IDP is on.
+var IDPAccessTokenLifespan = config.DefineDuration("HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN", time.Duration(0) /* 0s */, config.Startup,
+	"How long an access token the built-in identity provider issues stays valid, as a Go duration. A value that is not a duration, or is not positive, refuses to start rather than being quietly ignored -- a token lifetime is not something to get wrong silently. Read only when HTTP_API_ENABLE_IDP is on.")
+
+// IDPIssuer is HTTP_API_IDP_ISSUER.
+//
+// The issuer the built-in identity provider names in its own
+// documents. Unset derives it the same way HTTP_API_OAUTH2_ISSUER is
+// derived, from the externally-visible URL. Read only when
+// HTTP_API_ENABLE_IDP is on.
+var IDPIssuer = config.DefineString("HTTP_API_IDP_ISSUER", "", config.Startup,
+	"The issuer the built-in identity provider names in its own documents. Unset derives it the same way HTTP_API_OAUTH2_ISSUER is derived, from the externally-visible URL. Read only when HTTP_API_ENABLE_IDP is on.")
+
+// IDPRefreshTokenLifespan is HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN.
+//
+// How long a refresh token the built-in identity provider issues stays
+// valid. It has to be at least the access token lifespan, or the
+// provider refuses to start: a refresh token that dies first makes
+// every refresh fail after the access token expires. Read only when
+// HTTP_API_ENABLE_IDP is on, and refused the same way as above when it
+// is not a positive duration.
+var IDPRefreshTokenLifespan = config.DefineDuration("HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN", time.Duration(0) /* 0s */, config.Startup,
+	"How long a refresh token the built-in identity provider issues stays valid. It has to be at least the access token lifespan, or the provider refuses to start: a refresh token that dies first makes every refresh fail after the access token expires. Read only when HTTP_API_ENABLE_IDP is on, and refused the same way as above when it is not a positive duration.")
+
+// InteractiveExtraSubmit is HTTP_API_INTERACTIVE_EXTRA_SUBMIT.
+//
+// Extra submit-file lines added to every interactive session job --
+// terminal, VS Code and JupyterLab. Operator-only configuration,
+// spliced in as written, as with the submit-file settings above.
+var InteractiveExtraSubmit = config.DefineString("HTTP_API_INTERACTIVE_EXTRA_SUBMIT", "", config.Startup,
+	"Extra submit-file lines added to every interactive session job -- terminal, VS Code and JupyterLab. Operator-only configuration, spliced in as written, as with the submit-file settings above.")
+
+// JobQueueLog is HTTP_API_JOB_QUEUE_LOG.
+//
+// The schedd's job queue log, tailed to serve the job change stream,
+// or the word none to switch the stream off. Unset falls back to
+// JOB_QUEUE_LOG where the file is there, which is the case when this
+// server shares a host with its schedd; where it does not -- an API
+// server in its own container, the usual deployment -- there is
+// nothing to tail and that is not a misconfiguration. Named explicitly
+// and absent is an operator error, and is reported as one.
+var JobQueueLog = config.DefineString("HTTP_API_JOB_QUEUE_LOG", "", config.Startup,
+	"The schedd's job queue log, tailed to serve the job change stream, or the word none to switch the stream off. Unset falls back to JOB_QUEUE_LOG where the file is there, which is the case when this server shares a host with its schedd; where it does not -- an API server in its own container, the usual deployment -- there is nothing to tail and that is not a misconfiguration. Named explicitly and absent is an operator error, and is reported as one.")
+
+// JupyterWorkDir is HTTP_API_JUPYTER_WORK_DIR.
+//
+// Where the helper binary and token files for JupyterLab submissions
+// are staged. The helper itself is built into this binary, so nothing
+// has to be found on disk; this is only where it is written out to be
+// transferred.
+var JupyterWorkDir = config.DefineString("HTTP_API_JUPYTER_WORK_DIR", "", config.Startup,
+	"Where the helper binary and token files for JupyterLab submissions are staged. The helper itself is built into this binary, so nothing has to be found on disk; this is only where it is written out to be transferred.")
+
+// Listen is HTTP_API_LISTEN.
+//
+// Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of
+// the listen address, honored when HTTP_API_LISTEN_ADDR is unset and
+// reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins
+// where both are set.
+//
+// Deprecated: superseded by HTTP_API_LISTEN_ADDR.
+var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
+	"Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of the listen address, honored when HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins where both are set.")
+
+// Log is HTTP_API_LOG.
+//
+// Where this daemon writes its log: a file, or the words stdout or
+// stderr. A named file that cannot be written falls back to stdout
+// with a message -- except under condor_master, where stdout is
+// discarded and there would be nowhere to report anything, so the
+// daemon refuses to start and the reason goes to the master's log
+// instead.
+var Log = config.DefineString("HTTP_API_LOG", "", config.Startup,
+	"Where this daemon writes its log: a file, or the words stdout or stderr. A named file that cannot be written falls back to stdout with a message -- except under condor_master, where stdout is discarded and there would be nowhere to report anything, so the daemon refuses to start and the reason goes to the master's log instead.")
+
+// MCPAdminGroup is HTTP_API_MCP_ADMIN_GROUP.
+//
+// Obsolete: do not use it in new configuration. Group(s) whose members
+// may read every user's jobs through MCP. Read as a raw string and
+// split downstream, so a change to how lists are parsed does not
+// change who is privileged.
+//
+// Deprecated: do not use it in new configuration.
+var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.Reconfig,
+	"Obsolete: do not use it in new configuration. Group(s) whose members may read every user's jobs through MCP. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
+
+// MCPBaseURL is HTTP_API_MCP_BASE_URL.
+//
+// The externally-visible base URL of the MCP listener, for a
+// deployment that serves MCP on an address of its own. Unset, MCP is
+// reached at HTTP_API_BASE_URL like everything else.
+var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup,
+	"The externally-visible base URL of the MCP listener, for a deployment that serves MCP on an address of its own. Unset, MCP is reached at HTTP_API_BASE_URL like everything else.")
+
+// MCPListenAddr is HTTP_API_MCP_LISTEN_ADDR.
+//
+// A second address to serve MCP on, separate from
+// HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which is
+// what almost every deployment wants; this is for separating the agent
+// surface onto its own port or interface.
+var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.Startup,
+	"A second address to serve MCP on, separate from HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which is what almost every deployment wants; this is for separating the agent surface onto its own port or interface.")
+
+// MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
+//
+// Obsolete: do not use it in new configuration. Group(s) whose members
+// may change any user's jobs through MCP. Read as a raw string and
+// split downstream, as above.
+//
+// Deprecated: do not use it in new configuration.
+var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
+	"Obsolete: do not use it in new configuration. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
+
+// OAuth2AccessTokenLifespan is HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN.
+//
+// How long an access token this server issues as an OAuth2
+// authorization server stays valid, as a Go duration. Refused the same
+// way as the identity provider's when it is not a positive duration.
+var OAuth2AccessTokenLifespan = config.DefineDuration("HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN", time.Duration(0) /* 0s */, config.Startup,
+	"How long an access token this server issues as an OAuth2 authorization server stays valid, as a Go duration. Refused the same way as the identity provider's when it is not a positive duration.")
 
 // OAuth2AuthURL is HTTP_API_OAUTH2_AUTH_URL.
 //
@@ -71,6 +347,18 @@ var OAuth2IDP = config.DefineString("HTTP_API_OAUTH2_IDP", "", config.Startup,
 var OAuth2Issuer = config.DefineString("HTTP_API_OAUTH2_ISSUER", "", config.Startup,
 	"The issuer this server names in its own OAuth2 documents. Unset, it is derived from the externally-visible URL, assuming https.")
 
+// OAuth2MaxGrantLifetime is HTTP_API_OAUTH2_MAX_GRANT_LIFETIME.
+//
+// How long a grant may go unused before the user has to consent again.
+// Measured from the grant's last use rather than from consent, so a
+// client that refreshes inside the window keeps its grant
+// indefinitely, which is what lets an unattended integration keep
+// working; an abandoned grant still expires. What bounds a grant in
+// active use is the revocation oracles, not this. See "Refresh-grant
+// re-authorization" in the operator guide.
+var OAuth2MaxGrantLifetime = config.DefineDuration("HTTP_API_OAUTH2_MAX_GRANT_LIFETIME", time.Duration(0) /* 0s */, config.Startup,
+	"How long a grant may go unused before the user has to consent again. Measured from the grant's last use rather than from consent, so a client that refreshes inside the window keeps its grant indefinitely, which is what lets an unattended integration keep working; an abandoned grant still expires. What bounds a grant in active use is the revocation oracles, not this. See \"Refresh-grant re-authorization\" in the operator guide.")
+
 // OAuth2RedirectURL is HTTP_API_OAUTH2_REDIRECT_URL.
 //
 // Where the provider sends the user back to, which has to be a
@@ -85,6 +373,16 @@ var OAuth2Issuer = config.DefineString("HTTP_API_OAUTH2_ISSUER", "", config.Star
 // one.
 var OAuth2RedirectURL = config.DefineString("HTTP_API_OAUTH2_REDIRECT_URL", "", config.Startup,
 	"Where the provider sends the user back to, which has to be a redirect URI registered with it. Unset, it is the issuer followed by this server's callback path, which is the right answer whenever the issuer is how users reach it: /mcp/oauth2/callback on a server whose only surface is MCP, /oauth2/callback everywhere else. Both paths are served wherever MCP is on, so an authorization started before an upgrade still lands; but what has to be registered at the provider is the URI this server sends, so a build that gains the web UI needs /oauth2/callback added there -- or this set, to keep sending the old one.")
+
+// OAuth2RefreshTokenLifespan is HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN.
+//
+// How long one refresh token this server issues stays valid. Every
+// refresh resets it, which is why HTTP_API_OAUTH2_MAX_GRANT_LIFETIME
+// exists: without a cap, a client that keeps refreshing keeps its
+// grant forever. See "Refresh-grant re-authorization" in the operator
+// guide.
+var OAuth2RefreshTokenLifespan = config.DefineDuration("HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN", time.Duration(0) /* 0s */, config.Startup,
+	"How long one refresh token this server issues stays valid. Every refresh resets it, which is why HTTP_API_OAUTH2_MAX_GRANT_LIFETIME exists: without a cap, a client that keeps refreshing keeps its grant forever. See \"Refresh-grant re-authorization\" in the operator guide.")
 
 // OAuth2Requirements is HTTP_API_OAUTH2_REQUIREMENTS.
 //
@@ -131,6 +429,20 @@ var OAuth2UserinfoURL = config.DefineString("HTTP_API_OAUTH2_USERINFO_URL", "", 
 var OAuth2UsernameClaim = config.DefineString("HTTP_API_OAUTH2_USERNAME_CLAIM", "", config.Startup,
 	"Which claim names the account that owns the jobs, e.g. eppn, where the provider's subject is not it. Unset uses the subject. See \"Local identity mapping\" in the operator guide.")
 
+// PingInterval is HTTP_API_PING_INTERVAL.
+//
+// How often the daemon pings the pool to decide what /readyz reports,
+// as a duration with a unit. A bare 0 switches the ping off and is the
+// one value exempt from the unit rule, since there is no ambiguity in
+// zero. Switching it off is what a deployment holding no local
+// HTCondor credential needs: where every request authenticates with a
+// forwarded token and the daemon itself has nothing to ping with, the
+// ping can only fail and drag /readyz down with it. A value with no
+// unit, or one that does not parse, refuses to start rather than being
+// guessed at -- 5 could be seconds or minutes.
+var PingInterval = config.DefineDuration("HTTP_API_PING_INTERVAL", time.Duration(60000000000) /* 1m */, config.Startup,
+	"How often the daemon pings the pool to decide what /readyz reports, as a duration with a unit. A bare 0 switches the ping off and is the one value exempt from the unit rule, since there is no ambiguity in zero. Switching it off is what a deployment holding no local HTCondor credential needs: where every request authenticates with a forwarded token and the daemon itself has nothing to ping with, the ping can only fail and drag /readyz down with it. A value with no unit, or one that does not parse, refuses to start rather than being guessed at -- 5 could be seconds or minutes.")
+
 // ReadTimeout is HTTP_API_READ_TIMEOUT.
 //
 // How long a request may take to arrive in full, as a Go duration. A
@@ -145,6 +457,26 @@ var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(3
 // holds it in memory instead, under a much smaller ceiling.
 var SpoolBufferDir = config.DefineString("HTTP_API_SPOOL_BUFFER_DIR", "", config.Startup,
 	"Where an archive dropped in the SSH gateway's /submit/, or posted to the REST upload endpoints, is buffered while it is unpacked. Unset holds it in memory instead, under a much smaller ceiling.")
+
+// SubmitFileDefaults is HTTP_API_SUBMIT_FILE_DEFAULTS.
+//
+// Submit-file lines added to every submission, but only where the
+// submit file is silent, so a user who sets the same command keeps
+// their own value. Written as HTCondor configuration, so several lines
+// need that syntax for a multi-line value. Operator-only
+// configuration, spliced in as written.
+var SubmitFileDefaults = config.DefineString("HTTP_API_SUBMIT_FILE_DEFAULTS", "", config.Startup,
+	"Submit-file lines added to every submission, but only where the submit file is silent, so a user who sets the same command keeps their own value. Written as HTCondor configuration, so several lines need that syntax for a multi-line value. Operator-only configuration, spliced in as written.")
+
+// SubmitFileOverrides is HTTP_API_SUBMIT_FILE_OVERRIDES.
+//
+// Submit-file lines added to every submission that win over whatever
+// the submit file says. For requirements that are not the user's to
+// opt out of -- an access point that will not have a log written
+// outside the home directory, say. Otherwise as above: HTCondor
+// configuration syntax, operator-only, spliced in as written.
+var SubmitFileOverrides = config.DefineString("HTTP_API_SUBMIT_FILE_OVERRIDES", "", config.Startup,
+	"Submit-file lines added to every submission that win over whatever the submit file says. For requirements that are not the user's to opt out of -- an access point that will not have a log written outside the home directory, say. Otherwise as above: HTCondor configuration syntax, operator-only, spliced in as written.")
 
 // TLSCACert is HTTP_API_TLS_CA_CERT.
 //
@@ -167,6 +499,31 @@ var TLSCert = config.DefineString("HTTP_API_TLS_CERT", "", config.Startup,
 // account the server runs as.
 var TLSKey = config.DefineString("HTTP_API_TLS_KEY", "", config.Startup,
 	"Private key for HTTP_API_TLS_CERT. Keep it readable only by the account the server runs as.")
+
+// TokenRetention is HTTP_API_TOKEN_RETENTION.
+//
+// How long rows for dead OAuth2 tokens are kept before being swept, as
+// a duration with a unit, or off (equivalently 0) to keep them
+// forever. A bare number is refused rather than read as nanoseconds,
+// which is what parsing "90" would otherwise mean and is never what
+// anybody intends; so is anything else that does not parse, and the
+// server refuses to start rather than sweeping on a figure nobody
+// chose. Only rows that are already dead -- revoked or expired -- are
+// ever removed, because a live grant is somebody's session whatever
+// its age.
+var TokenRetention = config.DefineString("HTTP_API_TOKEN_RETENTION", "", config.Startup,
+	"How long rows for dead OAuth2 tokens are kept before being swept, as a duration with a unit, or off (equivalently 0) to keep them forever. A bare number is refused rather than read as nanoseconds, which is what parsing \"90\" would otherwise mean and is never what anybody intends; so is anything else that does not parse, and the server refuses to start rather than sweeping on a figure nobody chose. Only rows that are already dead -- revoked or expired -- are ever removed, because a live grant is somebody's session whatever its age.")
+
+// UserHeaderTrustAny is HTTP_API_USER_HEADER_TRUST_ANY.
+//
+// Accept the user header from any source address. For demonstration
+// and testing only: with it on, anything that can reach this server
+// can claim to be any user, so it undoes authentication rather than
+// relaxing it. Off by default, and the server logs a warning for as
+// long as it is on. Leave it off anywhere a real person has an
+// account.
+var UserHeaderTrustAny = config.DefineBool("HTTP_API_USER_HEADER_TRUST_ANY", false, config.Startup,
+	"Accept the user header from any source address. For demonstration and testing only: with it on, anything that can reach this server can claim to be any user, so it undoes authentication rather than relaxing it. Off by default, and the server logs a warning for as long as it is on. Leave it off anywhere a real person has an account.")
 
 // WriteTimeout is HTTP_API_WRITE_TIMEOUT.
 //
@@ -413,7 +770,36 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 // that check the table against the code. A family's per-instance settings
 // are not here: they have no name until an instance does.
 var All = []config.Knob{
+	BuildDefaultCPUs.Knob,
+	BuildDefaultDiskMB.Knob,
+	BuildDefaultMemoryMB.Knob,
+	BuildExtraSubmit.Knob,
+	BuildMaxCPUs.Knob,
+	BuildMaxDiskMB.Knob,
+	BuildMaxMemoryMB.Knob,
+	BuildRequirements.Knob,
+	BuildStagingBase.Knob,
+	ConnectorOutputSweepInterval.Knob,
+	ConnectorPrefix.Knob,
+	EnableIDP.Knob,
+	IdempotencyKeyCheck.Knob,
+	IdempotencyKeyHistoryWindow.Knob,
+	IdempotencyKeyRetention.Knob,
+	IdempotencyKeyTimeout.Knob,
 	IdleTimeout.Knob,
+	IDPAccessTokenLifespan.Knob,
+	IDPIssuer.Knob,
+	IDPRefreshTokenLifespan.Knob,
+	InteractiveExtraSubmit.Knob,
+	JobQueueLog.Knob,
+	JupyterWorkDir.Knob,
+	Listen.Knob,
+	Log.Knob,
+	MCPAdminGroup.Knob,
+	MCPBaseURL.Knob,
+	MCPListenAddr.Knob,
+	MCPSuperuserGroup.Knob,
+	OAuth2AccessTokenLifespan.Knob,
 	OAuth2AuthURL.Knob,
 	OAuth2ClientID.Knob,
 	OAuth2ClientSecretFile.Knob,
@@ -421,18 +807,36 @@ var All = []config.Knob{
 	OAuth2GroupsClaim.Knob,
 	OAuth2IDP.Knob,
 	OAuth2Issuer.Knob,
+	OAuth2MaxGrantLifetime.Knob,
 	OAuth2RedirectURL.Knob,
+	OAuth2RefreshTokenLifespan.Knob,
 	OAuth2Requirements.Knob,
 	OAuth2Scopes.Knob,
 	OAuth2TokenURL.Knob,
 	OAuth2UserinfoURL.Knob,
 	OAuth2UsernameClaim.Knob,
+	PingInterval.Knob,
 	ReadTimeout.Knob,
 	SpoolBufferDir.Knob,
+	SubmitFileDefaults.Knob,
+	SubmitFileOverrides.Knob,
 	TLSCACert.Knob,
 	TLSCert.Knob,
 	TLSKey.Knob,
+	TokenRetention.Knob,
+	UserHeaderTrustAny.Knob,
 	WriteTimeout.Knob,
 	ConnectorInstances.Knob,
 	PickerInstances.Knob,
+}
+
+// Obsolete maps each obsolete setting to the setting that replaces
+// it, or to the empty string where nothing single replaces it. It is
+// what the reference leaves out and what a test checks stays out of
+// the documentation; a daemon can also use it to report a setting an
+// operator still has in their configuration.
+var Obsolete = map[string]string{
+	"HTTP_API_LISTEN":              "HTTP_API_LISTEN_ADDR",
+	"HTTP_API_MCP_ADMIN_GROUP":     "",
+	"HTTP_API_MCP_SUPERUSER_GROUP": "",
 }

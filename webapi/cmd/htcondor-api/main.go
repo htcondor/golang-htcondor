@@ -333,7 +333,7 @@ func checkLogPathWritable(logPath string) error {
 // createLogger creates a logger with reasonable defaults for unprivileged operation
 func createLogger(cfg *config.Config) (*logging.Logger, error) {
 	// Check if LOG path is configured and writable
-	logPath, hasLogPath := cfg.Get("HTTP_API_LOG")
+	logPath, hasLogPath := cfg.Get(knobs.Log.Name())
 	needStdout := false
 
 	if hasLogPath && logPath != "" && logPath != "stdout" && logPath != "stderr" {
@@ -360,7 +360,7 @@ func createLogger(cfg *config.Config) (*logging.Logger, error) {
 	// Temporarily override LOG to stdout if needed
 	originalLog := logPath
 	if needStdout {
-		cfg.Set("HTTP_API_LOG", "stdout")
+		cfg.Set(knobs.Log.Name(), "stdout")
 	}
 
 	// Create logger with HTTP_API daemon-specific settings
@@ -368,7 +368,7 @@ func createLogger(cfg *config.Config) (*logging.Logger, error) {
 
 	// Restore original LOG value if we changed it
 	if needStdout && hasLogPath {
-		cfg.Set("HTTP_API_LOG", originalLog)
+		cfg.Set(knobs.Log.Name(), originalLog)
 	}
 
 	if err != nil {
@@ -649,10 +649,7 @@ func loadDBPath(cfg *config.Config, logger *logging.Logger) string {
 // httpserver/jupyterhelperbin (when built with -tags embed_jupyter_helper),
 // so there is no separate path-discovery step.
 func loadJupyterWorkDir(cfg *config.Config) string {
-	if p, ok := cfg.Get("HTTP_API_JUPYTER_WORK_DIR"); ok && p != "" {
-		return p
-	}
-	return ""
+	return knobs.JupyterWorkDir.Get(cfg)
 }
 
 // Defaults for the two JupyterLab session limits.
@@ -777,7 +774,7 @@ func loadTemplateGlobalPath(cfg *config.Config) string {
 // the API server to pick up changes (the value is read once at
 // startup).
 func loadInteractiveExtraSubmit(cfg *config.Config) string {
-	if v, ok := cfg.Get("HTTP_API_INTERACTIVE_EXTRA_SUBMIT"); ok {
+	if v := knobs.InteractiveExtraSubmit.Get(cfg); v != "" {
 		return v
 	}
 	return ""
@@ -827,37 +824,33 @@ func loadDagmanEnvironment(cfg *config.Config, logger *logging.Logger) map[strin
 // Sizes are MiB, matching what an operator would write and what the tool
 // argument takes. Read once at startup; restart to pick up changes.
 func loadBuildConfig(cfg *config.Config, logger *logging.Logger) mcpserver.BuildConfig {
-	get := func(key string) string {
-		v, _ := cfg.Get(key)
-		return v
-	}
-	// A malformed number is logged and ignored rather than failing
-	// startup: the rest of the server is unrelated to container builds,
-	// and a typo in a cap should not take the API down.
-	num := func(key string) int {
-		raw := strings.TrimSpace(get(key))
-		if raw == "" {
-			return 0
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
+	// A value that is not a whole number is reported by the knob error
+	// handler and the default applies. A negative one parses, so it is
+	// refused here: zero means "the built-in default" to the three
+	// defaults and "uncapped" to the three caps, and a negative number
+	// is neither. Either way the rest of the server is unrelated to
+	// container builds, and a typo in a cap should not take the API
+	// down.
+	num := func(k config.IntKnob) int {
+		n := k.Get(cfg)
+		if n < 0 {
 			logger.Warn(logging.DestinationGeneral,
-				"Ignoring a container-build setting that is not a non-negative integer",
-				"setting", key, "value", raw)
+				"Ignoring a container-build setting that is negative",
+				"setting", k.Name(), "value", n)
 			return 0
 		}
-		return n
+		return int(n)
 	}
 	return mcpserver.BuildConfig{
-		ExtraSubmit:     get("HTTP_API_BUILD_EXTRA_SUBMIT"),
-		Requirements:    strings.TrimSpace(get("HTTP_API_BUILD_REQUIREMENTS")),
-		StagingBase:     strings.TrimSpace(get("HTTP_API_BUILD_STAGING_BASE")),
-		DefaultCpus:     num("HTTP_API_BUILD_DEFAULT_CPUS"),
-		DefaultMemoryMB: num("HTTP_API_BUILD_DEFAULT_MEMORY_MB"),
-		DefaultDiskMB:   num("HTTP_API_BUILD_DEFAULT_DISK_MB"),
-		MaxCpus:         num("HTTP_API_BUILD_MAX_CPUS"),
-		MaxMemoryMB:     num("HTTP_API_BUILD_MAX_MEMORY_MB"),
-		MaxDiskMB:       num("HTTP_API_BUILD_MAX_DISK_MB"),
+		ExtraSubmit:     knobs.BuildExtraSubmit.Get(cfg),
+		Requirements:    strings.TrimSpace(knobs.BuildRequirements.Get(cfg)),
+		StagingBase:     strings.TrimSpace(knobs.BuildStagingBase.Get(cfg)),
+		DefaultCpus:     num(knobs.BuildDefaultCPUs),
+		DefaultMemoryMB: num(knobs.BuildDefaultMemoryMB),
+		DefaultDiskMB:   num(knobs.BuildDefaultDiskMB),
+		MaxCpus:         num(knobs.BuildMaxCPUs),
+		MaxMemoryMB:     num(knobs.BuildMaxMemoryMB),
+		MaxDiskMB:       num(knobs.BuildMaxDiskMB),
 	}
 }
 
@@ -966,7 +959,7 @@ func loadInteractiveRequirements(cfg *config.Config, logger *logging.Logger) str
 // tail, and that is not a misconfiguration to warn about on every
 // start.
 func resolveJobQueueLog(cfg *config.Config, logger *logging.Logger) string {
-	if configured := strings.TrimSpace(firstConfigValue(cfg, "HTTP_API_JOB_QUEUE_LOG")); configured != "" {
+	if configured := strings.TrimSpace(knobs.JobQueueLog.Get(cfg)); configured != "" {
 		if strings.EqualFold(configured, "none") {
 			logger.Info(logging.DestinationHTTP, "The job change stream is switched off by configuration")
 			return ""
@@ -1040,27 +1033,29 @@ func firstConfigValue(cfg *config.Config, knob string) string {
 // complaint: these knobs all treat zero as "take the default", so a
 // typo degrades to the default rather than refusing to start a server
 // over one line of tuning.
-func configSeconds(cfg *config.Config, name string, logger *logging.Logger) time.Duration {
-	v := strings.TrimSpace(firstConfigValue(cfg, name))
-	if v == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
+// configSeconds reads a setting written as a whole number of seconds,
+// which is not a Go duration: these predate the duration-shaped
+// settings and are left in their own units rather than changing what an
+// operator already has written.
+//
+// Zero is returned for absent, malformed and negative alike, and each
+// consumer substitutes its own default for zero. A malformed value is
+// already reported by the knob error handler; a negative one parses, so
+// it is reported here.
+func configSeconds(cfg *config.Config, k config.IntKnob, logger *logging.Logger) time.Duration {
+	n := k.Get(cfg)
+	if n < 0 {
 		if logger != nil {
-			logger.Error(logging.DestinationHTTP, "configuration value is not a whole number of seconds; using the default",
-				"parameter", name, "value", v)
+			logger.Error(logging.DestinationHTTP, "configuration value is a negative number of seconds; using the default",
+				"parameter", k.Name(), "value", n)
 		}
 		return 0
 	}
 	return time.Duration(n) * time.Second
 }
 
-func loadSubmitFileLines(cfg *config.Config, knob string) string {
-	if v, ok := cfg.Get(knob); ok {
-		return v
-	}
-	return ""
+func loadSubmitFileLines(cfg *config.Config, k config.StringKnob) string {
+	return k.Get(cfg)
 }
 
 // (User-templates DB path resolution was removed: the templates store
@@ -1332,7 +1327,17 @@ func loadSkillsReloadInterval(cfg *config.Config, logger *logging.Logger) time.D
 	return d
 }
 
-func loadTokenLifespan(cfg *config.Config, key string, logger *logging.Logger) time.Duration {
+// loadTokenLifespan reads a token lifespan strictly: absent means zero,
+// which each consumer substitutes its own default for, and anything
+// that is not a positive duration refuses to start.
+//
+// It reads the raw value through the knob's name rather than
+// DurationKnob.Get, which reports a malformed value and falls back to
+// the default. Falling back is right for a timeout and wrong for a
+// token lifetime: a typo would silently issue tokens with a lifetime
+// nobody chose.
+func loadTokenLifespan(cfg *config.Config, k config.DurationKnob, logger *logging.Logger) time.Duration {
+	key := k.Name()
 	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
@@ -1373,11 +1378,17 @@ func loadAccessControlGroups(cfg *config.Config, config *mcpConfig, logger *logg
 	// The two cross-user privileges. Logged at the same level as the
 	// others, because "who can see and change everyone's jobs" is
 	// exactly what an operator wants to find in the startup log.
-	if adminGroup, ok := cfg.Get("HTTP_API_MCP_ADMIN_GROUP"); ok && adminGroup != "" {
+	// Both settings are obsolete and deliberately absent from the
+	// documentation, so these are the only reads of them. staticcheck
+	// reports a read of a deprecated variable, which is the point: a
+	// new one has to be written deliberately and say why.
+	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+	if adminGroup := knobs.MCPAdminGroup.Get(cfg); adminGroup != "" {
 		config.mcpAdminGroup = adminGroup
 		logger.Info(logging.DestinationHTTP, "MCP admin group: members may READ every user's jobs", "group", adminGroup)
 	}
-	if superGroup, ok := cfg.Get("HTTP_API_MCP_SUPERUSER_GROUP"); ok && superGroup != "" {
+	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+	if superGroup := knobs.MCPSuperuserGroup.Get(cfg); superGroup != "" {
 		config.mcpSuperuserGroup = superGroup
 		logger.Info(logging.DestinationHTTP, "MCP superuser group: members may CHANGE any user's jobs", "group", superGroup)
 	}
@@ -1720,15 +1731,15 @@ func loadOAuth2Config(cfg *config.Config, config *mcpConfig, listenAddrFromConfi
 	loadAccessControlGroups(cfg, config, logger)
 
 	// Load token lifespans (zero means "use the httpserver-package default")
-	config.oauth2AccessTokenLifespan = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN", logger)
+	config.oauth2AccessTokenLifespan = loadTokenLifespan(cfg, knobs.OAuth2AccessTokenLifespan, logger)
 	if config.oauth2AccessTokenLifespan > 0 {
 		logger.Info(logging.DestinationHTTP, "OAuth2 access token lifespan", "duration", config.oauth2AccessTokenLifespan)
 	}
-	config.oauth2RefreshTokenLifespan = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_REFRESH_TOKEN_LIFESPAN", logger)
+	config.oauth2RefreshTokenLifespan = loadTokenLifespan(cfg, knobs.OAuth2RefreshTokenLifespan, logger)
 	if config.oauth2RefreshTokenLifespan > 0 {
 		logger.Info(logging.DestinationHTTP, "OAuth2 refresh token lifespan", "duration", config.oauth2RefreshTokenLifespan)
 	}
-	config.oauth2MaxGrantLifetime = loadTokenLifespan(cfg, "HTTP_API_OAUTH2_MAX_GRANT_LIFETIME", logger)
+	config.oauth2MaxGrantLifetime = loadTokenLifespan(cfg, knobs.OAuth2MaxGrantLifetime, logger)
 	if config.oauth2MaxGrantLifetime > 0 {
 		logger.Info(logging.DestinationHTTP, "OAuth2 maximum grant idle time", "duration", config.oauth2MaxGrantLifetime)
 	}
@@ -2230,7 +2241,8 @@ func getHTTPConfig(cfg *config.Config, logger *logging.Logger) (listenAddrResult
 	if !flagWasSet("listen") {
 		addr, ok := cfg.Get("HTTP_API_LISTEN_ADDR")
 		if !ok || strings.TrimSpace(addr) == "" {
-			if alias, aliasOK := cfg.Get("HTTP_API_LISTEN"); aliasOK && strings.TrimSpace(alias) != "" {
+			//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+			if alias := knobs.Listen.Get(cfg); strings.TrimSpace(alias) != "" {
 				addr, ok = alias, true
 				logger.Warn(logging.DestinationHTTP,
 					"HTTP_API_LISTEN is an alias; the setting is named HTTP_API_LISTEN_ADDR",
@@ -2241,7 +2253,7 @@ func getHTTPConfig(cfg *config.Config, logger *logging.Logger) (listenAddrResult
 			listenAddrResult = strings.TrimSpace(addr)
 		}
 	}
-	mcpListenAddrResult, _ = cfg.Get("HTTP_API_MCP_LISTEN_ADDR")
+	mcpListenAddrResult = knobs.MCPListenAddr.Get(cfg)
 	tlsCertFile = knobs.TLSCert.Get(cfg)
 	tlsKeyFile = knobs.TLSKey.Get(cfg)
 	tlsCACertFile = knobs.TLSCACert.Get(cfg)
@@ -2311,15 +2323,7 @@ func splitCommaList(v string) []string {
 // HTCondor's config parser treats as boolean-true: "true", "1",
 // "yes", "on").
 func loadUserHeaderTrustAnyUnsafe(cfg *config.Config) bool {
-	v, ok := cfg.Get("HTTP_API_USER_HEADER_TRUST_ANY")
-	if !ok {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "true", "1", "yes", "on":
-		return true
-	}
-	return false
+	return knobs.UserHeaderTrustAny.Get(cfg)
 }
 
 // setupCollector creates collector from CLI flag or config
@@ -2533,7 +2537,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 
 	// Check if IDP should be enabled
 	enableIDP := false
-	if idpEnable, ok := cfg.Get("HTTP_API_ENABLE_IDP"); ok && idpEnable == "true" {
+	if knobs.EnableIDP.Get(cfg) {
 		enableIDP = true
 		log.Println("Built-in IDP enabled via configuration")
 	}
@@ -2545,15 +2549,15 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	var idpAccessLifespan, idpRefreshLifespan time.Duration
 	if enableIDP {
 		// Load IDP issuer
-		if issuer, ok := cfg.Get("HTTP_API_IDP_ISSUER"); ok && issuer != "" {
+		if issuer := knobs.IDPIssuer.Get(cfg); issuer != "" {
 			idpIssuer = issuer
 		} else {
 			idpIssuer = loadOAuth2Issuer(cfg, listenAddrFromConfig)
 		}
 		log.Printf("IDP issuer: %s", idpIssuer)
 
-		idpAccessLifespan = loadTokenLifespan(cfg, "HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN", logger)
-		idpRefreshLifespan = loadTokenLifespan(cfg, "HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN", logger)
+		idpAccessLifespan = loadTokenLifespan(cfg, knobs.IDPAccessTokenLifespan, logger)
+		idpRefreshLifespan = loadTokenLifespan(cfg, knobs.IDPRefreshTokenLifespan, logger)
 	}
 
 	// Compute HTTP base URL for MCP file download links
@@ -2667,7 +2671,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	server, err := httpserver.NewServer(httpserver.Config{
 		ListenAddr:               listenAddrFromConfig,
 		MCPListenAddr:            mcpListenAddrFromConfig,
-		MCPBaseURL:               firstConfigValue(cfg, "HTTP_API_MCP_BASE_URL"),
+		MCPBaseURL:               knobs.MCPBaseURL.Get(cfg),
 		CCB:                      ccbDialer,
 		ScheddName:               scheddNameValue,
 		ScheddAddr:               scheddAddrValue,
@@ -2813,12 +2817,12 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		VSCodeImage:                 firstConfigValue(cfg, "HTTP_API_VSCODE_IMAGE"),
 		Build:                       loadBuildConfig(cfg, logger),
 		DBMirrorTokenSubject:        firstConfigValue(cfg, "HTTP_API_DBMIRROR_TOKEN_SUBJECT"),
-		SubmitFileDefaults:          loadSubmitFileLines(cfg, "HTTP_API_SUBMIT_FILE_DEFAULTS"),
-		SubmitFileOverrides:         loadSubmitFileLines(cfg, "HTTP_API_SUBMIT_FILE_OVERRIDES"),
-		IdempotencyKeyCheck:         firstConfigValue(cfg, "HTTP_API_IDEMPOTENCY_KEY_CHECK"),
-		IdempotencyKeyRetention:     configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_RETENTION", logger),
-		IdempotencyKeyTimeout:       configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_TIMEOUT", logger),
-		IdempotencyKeyHistoryWindow: configSeconds(cfg, "HTTP_API_IDEMPOTENCY_KEY_HISTORY_WINDOW", logger),
+		SubmitFileDefaults:          loadSubmitFileLines(cfg, knobs.SubmitFileDefaults),
+		SubmitFileOverrides:         loadSubmitFileLines(cfg, knobs.SubmitFileOverrides),
+		IdempotencyKeyCheck:         knobs.IdempotencyKeyCheck.Get(cfg),
+		IdempotencyKeyRetention:     configSeconds(cfg, knobs.IdempotencyKeyRetention, logger),
+		IdempotencyKeyTimeout:       configSeconds(cfg, knobs.IdempotencyKeyTimeout, logger),
+		IdempotencyKeyHistoryWindow: configSeconds(cfg, knobs.IdempotencyKeyHistoryWindow, logger),
 		TemplateGlobalPath:          loadTemplateGlobalPath(cfg),
 		HTCondorConfig:              cfg,
 		// LLM/chat configuration. Optional; the chat endpoint
@@ -4420,7 +4424,10 @@ func loadUpstreamRefresh(cfg *config.Config, logger *logging.Logger) string {
 // A bare number is refused rather than read as nanoseconds, which is what
 // ParseDuration would do with "90" and is never what anybody means.
 func loadTokenRetention(cfg *config.Config, logger *logging.Logger) string {
-	raw, ok := cfg.Get("HTTP_API_TOKEN_RETENTION")
+	// The raw string, not a typed read: the value is a duration or the
+	// word "off", which no knob type parses, and the strictness below
+	// is the point.
+	raw, ok := cfg.Get(knobs.TokenRetention.Name())
 	if !ok {
 		return ""
 	}
@@ -4507,7 +4514,7 @@ func loadMCPWatchMaxWait(cfg *config.Config, logger *logging.Logger) time.Durati
 // from the shipped binary at all: nothing read this setting, and the
 // library coerced its documented "off" value back to the default.
 func loadPingInterval(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_PING_INTERVAL")
+	raw, ok := cfg.Get(knobs.PingInterval.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return defaultPingInterval
 	}
