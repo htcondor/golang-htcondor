@@ -96,3 +96,150 @@ func TestPublishAdMyAddressCarriesTheAlias(t *testing.T) {
 		t.Errorf("MyAddress = %q, double-bracketed", got)
 	}
 }
+
+// withAlias is how WithHostAlias renders an address for the configured
+// alias, so a test can say what it expects without restating that rule.
+func withAlias(cfg *config.Config, addr string) string {
+	if alias := configGet(cfg, "HOST_ALIAS"); alias != "" {
+		return addr + "?alias=" + alias
+	}
+	return addr
+}
+
+// TestAdvertisedAddressRewritesAWildcardBind: a daemon that bound the
+// wildcard must not publish it.
+//
+// BIND_ALL_INTERFACES defaults to true, so a wildcard bind is the
+// ordinary case off the shared port -- both for the command socket
+// inherited from condor_master and for a caller's own fallback bind --
+// and Addr() is then "[::]:PORT" or "0.0.0.0:PORT". Publishing that
+// verbatim put MyAddress = "<[::]:PORT?alias=...>" in the collector ad,
+// which no peer can dial: it reaches its own loopback or is refused. C++
+// substitutes the host's local IP in condor_getsockname_ex before the
+// sinful is built, and lets TCP_FORWARDING_HOST override it.
+func TestAdvertisedAddressRewritesAWildcardBind(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		network string
+		bind    string
+		knobs   map[string]string
+		want    string
+	}{
+		{
+			name:    "IPv4 wildcard takes the detected IPv4 address",
+			network: "tcp4",
+			bind:    "0.0.0.0:0",
+			knobs:   map[string]string{"IPV4_ADDRESS": "192.0.2.10"},
+			want:    "192.0.2.10",
+		},
+		{
+			name:    "TCP_FORWARDING_HOST wins, as it does in get_sinful_public",
+			network: "tcp4",
+			bind:    "0.0.0.0:0",
+			knobs:   map[string]string{"TCP_FORWARDING_HOST": "gw.example.org", "IPV4_ADDRESS": "192.0.2.10"},
+			want:    "gw.example.org",
+		},
+		{
+			// An IPv6 wildcard must not become an IPv4 literal, or an
+			// IPv6-only peer has nothing to dial.
+			name:    "IPv6 wildcard keeps the family",
+			network: "tcp6",
+			bind:    "[::]:0",
+			knobs:   map[string]string{"IPV6_ADDRESS": "2001:db8::10", "IPV4_ADDRESS": "192.0.2.10"},
+			want:    "2001:db8::10",
+		},
+		{
+			// IP_ADDRESS is whichever family the machine prefers, so it
+			// has to be family-checked like any other candidate.
+			name:    "an IPv4 wildcard does not take an IPv6 IP_ADDRESS",
+			network: "tcp4",
+			bind:    "0.0.0.0:0",
+			knobs: map[string]string{
+				"IPV4_ADDRESS": "", "IPV6_ADDRESS": "", "IP_ADDRESS": "2001:db8::10",
+				"FULL_HOSTNAME": "ep1.chtc.wisc.edu",
+			},
+			want: "ep1.chtc.wisc.edu",
+		},
+		{
+			name:    "FULL_HOSTNAME is the last resort",
+			network: "tcp4",
+			bind:    "0.0.0.0:0",
+			knobs: map[string]string{
+				"IPV4_ADDRESS": "", "IPV6_ADDRESS": "", "IP_ADDRESS": "",
+				"FULL_HOSTNAME": "ep1.chtc.wisc.edu",
+			},
+			want: "ep1.chtc.wisc.edu",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.NewEmpty()
+			for k, v := range tc.knobs {
+				cfg.Set(k, v)
+			}
+			d := testDaemon(t, cfg)
+
+			var lc net.ListenConfig
+			ln, err := lc.Listen(t.Context(), tc.network, tc.bind)
+			if err != nil {
+				t.Skipf("cannot bind %s here: %v", tc.bind, err)
+			}
+			defer func() { _ = ln.Close() }()
+			d.commandListener = ln
+
+			_, port, err := net.SplitHostPort(ln.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := withAlias(cfg, net.JoinHostPort(tc.want, port))
+			if got := d.AdvertisedAddress(); got != want {
+				t.Errorf("AdvertisedAddress() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// A concrete bind address is the operator's or the OS's answer and is
+// left alone -- the de-wildcarding must not rewrite a loopback or
+// pinned-interface daemon into something it did not ask for.
+func TestAdvertisedAddressLeavesAConcreteBindAlone(t *testing.T) {
+	cfg := config.NewEmpty()
+	cfg.Set("IPV4_ADDRESS", "192.0.2.10")
+	cfg.Set("TCP_FORWARDING_HOST", "gw.example.org")
+	d := testDaemon(t, cfg)
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	d.commandListener = ln
+
+	want := withAlias(cfg, ln.Addr().String())
+	if got := d.AdvertisedAddress(); got != want {
+		t.Errorf("AdvertisedAddress() = %q, want the bound address %q", got, want)
+	}
+}
+
+// With nothing to substitute, the address is published as it was: a
+// wrong address is bad, an invented one is worse.
+func TestAdvertisedAddressKeepsTheWildcardWhenNothingIsKnown(t *testing.T) {
+	cfg := config.NewEmpty()
+	for _, k := range []string{"TCP_FORWARDING_HOST", "IPV4_ADDRESS", "IPV6_ADDRESS", "IP_ADDRESS", "FULL_HOSTNAME"} {
+		cfg.Set(k, "")
+	}
+	d := testDaemon(t, cfg)
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	d.commandListener = ln
+
+	want := withAlias(cfg, ln.Addr().String())
+	if got := d.AdvertisedAddress(); got != want {
+		t.Errorf("AdvertisedAddress() = %q, want the bound address %q unchanged", got, want)
+	}
+}

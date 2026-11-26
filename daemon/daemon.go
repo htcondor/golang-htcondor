@@ -447,7 +447,69 @@ func (d *Daemon) AdvertisedAddress() string {
 	if ln == nil || ln.Addr() == nil {
 		return ""
 	}
-	return WithHostAlias(ln.Addr().String(), d.Config())
+	return WithHostAlias(deWildcard(ln.Addr().String(), d.Config()), d.Config())
+}
+
+// deWildcard replaces an unspecified host in a bound address with one a
+// peer can actually dial, leaving anything else alone.
+//
+// A wildcard bind is the ordinary case -- BIND_ALL_INTERFACES defaults
+// to true, so both non-shared-port paths produce one: the command socket
+// inherited from condor_master and the caller's own fallback bind. Its
+// Addr() is "[::]:PORT" or "0.0.0.0:PORT", and publishing that verbatim
+// put MyAddress = "<[::]:PORT?alias=...>" in the collector ad, which is
+// not an address: a peer that dials it reaches its own loopback or is
+// refused. The alias does not rescue it, being checked against the SSL
+// certificate rather than dialled.
+//
+// C++ never publishes one, because condor_getsockname_ex substitutes the
+// host's local IP before Sock::get_sinful builds the string, and
+// get_sinful_public lets TCP_FORWARDING_HOST override that. This is the
+// same ladder:
+//
+//  1. TCP_FORWARDING_HOST, the operator's explicit answer;
+//  2. the detected local address OF THE SAME FAMILY -- an IPv6 wildcard
+//     must not come back as an IPv4 literal, or an IPv6-only peer has
+//     nothing to dial;
+//  3. FULL_HOSTNAME, which is already what the ad's Machine attribute is
+//     built from.
+//
+// If none of those is available the address is returned untouched: a
+// wrong address is bad, an invented one is worse.
+func deWildcard(addr string, cfg *config.Config) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if host != "" && (ip == nil || !ip.IsUnspecified()) {
+		return addr // a concrete host the operator or the OS chose
+	}
+
+	// Order the detected addresses by the bound family, but check every
+	// candidate's family before taking it: IP_ADDRESS is whichever of
+	// the two the machine happens to prefer, so an IPv4 wildcard could
+	// otherwise come back as an IPv6 literal. A candidate that is not an
+	// IP literal is a hostname and resolves to either.
+	candidates := []string{"TCP_FORWARDING_HOST"}
+	if ip != nil && ip.To4() == nil {
+		candidates = append(candidates, "IPV6_ADDRESS", "IP_ADDRESS")
+	} else {
+		candidates = append(candidates, "IPV4_ADDRESS", "IP_ADDRESS")
+	}
+	candidates = append(candidates, "FULL_HOSTNAME")
+
+	for _, key := range candidates {
+		h := configGet(cfg, key)
+		if h == "" {
+			continue
+		}
+		if hip := net.ParseIP(h); hip != nil && ip != nil && (hip.To4() == nil) != (ip.To4() == nil) {
+			continue // right address, wrong family
+		}
+		return net.JoinHostPort(h, port)
+	}
+	return addr
 }
 
 // deriveAdvertisedSinful builds this daemon's reachable address from the command address
