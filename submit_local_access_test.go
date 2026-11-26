@@ -165,3 +165,100 @@ queue 3
 		t.Errorf("expected 3 jobs, got %d", got)
 	}
 }
+
+// TestIncludedSubmitCommandsAreHonoured: a submit command whose only
+// assignment lives in an `include`d file has to count as set.
+//
+// Every submit command is gated on the set of names the file assigned,
+// and that set was built by walking the parsed statements. An included
+// file never appears there: includeFile re-enters the config parser and
+// executes the included assignments in place, so they exist in the
+// Config and nowhere else. The command therefore read back as unset and
+// the ad took the param_info or JOB_DEFAULT_REQUEST* default instead --
+// while $(NAME) still expanded to the included value, which is what
+// makes it so confusing to diagnose.
+//
+// Reachable only with AllowLocalAccess: without it an include is refused
+// outright, which is loud rather than silent. That is the
+// condor_submit-style local client, which is what include exists for.
+func TestIncludedSubmitCommandsAreHonoured(t *testing.T) {
+	dir := t.TempDir()
+	common := filepath.Join(dir, "common.sub")
+	if err := os.WriteFile(common, []byte(
+		"executable = /bin/sleep\n"+
+			"request_memory = 4096\n"+
+			"batch_name = fromInclude\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sf, err := ParseSubmitFileWithOptions(strings.NewReader(
+		"include : "+common+"\narguments = hi\nqueue\n"),
+		SubmitParseOptions{AllowLocalAccess: true})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ad, err := sf.MakeJobAd(JobID{Cluster: 1, Proc: 0}, nil)
+	if err != nil {
+		// "executable is required" is the symptom when Cmd came only
+		// from the include.
+		t.Fatalf("MakeJobAd: %v", err)
+	}
+
+	for _, tc := range []struct{ attr, want string }{
+		{"Cmd", "/bin/sleep"},
+		{"JobBatchName", "fromInclude"},
+	} {
+		expr, ok := ad.Lookup(tc.attr)
+		if !ok {
+			t.Errorf("%s is absent; the included assignment was dropped", tc.attr)
+			continue
+		}
+		got, err := expr.Eval(nil).StringValue()
+		if err != nil {
+			t.Errorf("%s is not a string: %v", tc.attr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.attr, got, tc.want)
+		}
+	}
+
+	// The numeric one is where a dropped assignment is quietest: the ad
+	// still has a RequestMemory, just the configured default.
+	expr, ok := ad.Lookup("RequestMemory")
+	if !ok {
+		t.Fatal("RequestMemory is absent")
+	}
+	mem, err := expr.Eval(nil).IntValue()
+	if err != nil {
+		t.Fatalf("RequestMemory is not an integer: %v", err)
+	}
+	if mem != 4096 {
+		t.Errorf("RequestMemory = %d, want 4096 from the include (a default surfaced instead)", mem)
+	}
+}
+
+// A `+Foo` assignment in an included file defines the macro MY.Foo, and
+// must not make Foo look like a submit command the file set -- the same
+// rule the statement walk follows.
+func TestIncludedCustomAttributeIsNotASubmitCommand(t *testing.T) {
+	dir := t.TempDir()
+	common := filepath.Join(dir, "attrs.sub")
+	if err := os.WriteFile(common, []byte("universe = vanilla\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sf, err := ParseSubmitFileWithOptions(strings.NewReader(
+		"include : "+common+"\nexecutable = /bin/true\nqueue\n"),
+		SubmitParseOptions{AllowLocalAccess: true})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, ok := sf.assigned["MY.FOO"]; ok {
+		t.Error("MY.Foo leaked into the assigned set from nowhere")
+	}
+	// The include did set universe, which must be visible.
+	if _, ok := sf.assigned["UNIVERSE"]; !ok {
+		t.Error("an included `universe` assignment did not register as set")
+	}
+}

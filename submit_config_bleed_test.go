@@ -100,3 +100,72 @@ queue 1
 		t.Error("a name assigned inside a conditional was not recorded")
 	}
 }
+
+// TestUntakenBranchDoesNotResurrectAConfigDefault is the other half of
+// TestSubmitDoesNotInheritConfigDefaults, and the case that slipped
+// through it.
+//
+// assignedNames counts a name assigned inside a conditional branch the
+// executor did not run. The name then passes the gate while cfg holds no
+// value the file wrote, so cfg.Get answers with the param_info default of
+// the knob that shares the name -- which is exactly the bleed the gate
+// exists to stop, arriving through the gate itself.
+//
+// condor_submit on the identical file writes none of these attributes.
+func TestUntakenBranchDoesNotResurrectAConfigDefault(t *testing.T) {
+	// FOO is undefined, so the branch does not run.
+	attrs := adAttrs(t, `executable = /bin/sleep
+if defined FOO
+  max_transfer_input_mb = 64
+  max_transfer_output_mb = 64
+  mount_under_scratch = /scratch
+  encrypt_execute_directory = true
+endif
+queue 1
+`)
+	for _, attr := range []string{
+		"MaxTransferInputMB",
+		"MaxTransferOutputMB",
+		"MountUnderScratch",
+		"EncryptExecuteDirectory",
+	} {
+		if got, ok := attrs[attr]; ok {
+			t.Errorf("%s = %q, want absent: the branch did not run, so the file set no value "+
+				"and this is the knob's default", attr, got)
+		}
+	}
+}
+
+// The taken branch must still come through, or the fix above would have
+// turned a bleed into a silent loss -- which is the worse of the two.
+func TestTakenBranchStillAssigns(t *testing.T) {
+	attrs := adAttrs(t, `executable = /bin/sleep
+FOO = 1
+if defined FOO
+  max_transfer_input_mb = 64
+  mount_under_scratch = /scratch
+endif
+queue 1
+`)
+	if got := attrs["MaxTransferInputMB"]; got != "64" {
+		t.Errorf("MaxTransferInputMB = %q, want 64 from the taken branch", got)
+	}
+	if got := attrs["MountUnderScratch"]; !strings.Contains(got, "/scratch") {
+		t.Errorf("MountUnderScratch = %q, want the taken branch's /scratch", got)
+	}
+}
+
+// And an else-branch that DOES run is a taken branch.
+func TestElseBranchThatRunsStillAssigns(t *testing.T) {
+	attrs := adAttrs(t, `executable = /bin/sleep
+if defined NOPE
+  max_transfer_input_mb = 1
+else
+  max_transfer_input_mb = 77
+endif
+queue 1
+`)
+	if got := attrs["MaxTransferInputMB"]; got != "77" {
+		t.Errorf("MaxTransferInputMB = %q, want 77 from the else branch", got)
+	}
+}

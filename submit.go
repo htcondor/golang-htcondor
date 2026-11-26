@@ -65,7 +65,12 @@ type SubmitFile struct {
 	// capitalization into the job attribute; see
 	// setCustomResourceRequests.
 	assigned map[string]string
-	universe int
+	// cfgAssigned is the subset of assigned that the configuration
+	// actually executed an assignment for -- so it excludes a name that
+	// appears only in a conditional branch which did not run. See
+	// assignedCommand.
+	cfgAssigned map[string]string
+	universe    int
 	// params answers the configuration knobs condor_submit reads with
 	// param(); nil means HTCondor's built-in defaults. See SubmitParams.
 	params SubmitParams
@@ -337,7 +342,8 @@ func ParseSubmitFileWithOptions(r io.Reader, opts SubmitParseOptions) (*SubmitFi
 
 	sf := &SubmitFile{
 		cfg:         cfg,
-		assigned:    assignedNames(configStmts),
+		assigned:    unionAssigned(assignedNames(configStmts), cfg.AssignedNames()),
+		cfgAssigned: cfg.AssignedNames(),
 		universe:    UniverseVanilla, // Default
 		queueCount:  1,               // Default if no queue statement
 		params:      opts.Params,
@@ -4725,8 +4731,20 @@ func (sf *SubmitFile) pushMacroContext(jobID JobID, queueVars map[string]string)
 		sf.cfg.Set("Step", strconv.Itoa(jobID.Proc))
 	}
 
+	// $(Row) is $(ItemIndex) -- condor_submit declares them as one macro
+	// (both "Row" and "ItemIndex" map to UnliveRowMacroDef in
+	// SubmitMacroDefaults) bound to the same item_index. So Row follows
+	// whatever ItemIndex resolved to above rather than carrying its own
+	// default: an iterator that reports one necessarily reports the other.
+	//
+	// Defaulting it to the proc id instead made Row count procs for every
+	// iterator that does not spell it out -- "queue 2 x in (a b)" gave
+	// 0,1,2,3 where condor_submit gives 0,0,1,1 -- which is $(Process),
+	// not $(Row).
 	if row, ok := queueVars["Row"]; ok {
 		sf.cfg.Set("Row", row)
+	} else if itemIndex, ok := queueVars["ItemIndex"]; ok {
+		sf.cfg.Set("Row", itemIndex)
 	} else {
 		sf.cfg.Set("Row", strconv.Itoa(jobID.Proc))
 	}
@@ -5012,6 +5030,29 @@ func (sf *SubmitFile) setExtendedJobExprs(ad *classad.ClassAd) error {
 	return nil
 }
 
+// unionAssigned merges the names a statement walk found with the names
+// the configuration actually executed.
+//
+// Both are needed, and neither is a superset of the other. The walk
+// counts names in conditional branches that did not execute, which is
+// deliberate (see assignedNames) and which the executor cannot know
+// about. The executor knows the names an `include`d file assigned, which
+// never appear as statements to a caller at all, because includeFile
+// re-enters the parser and executes them in place.
+//
+// The walk's spelling wins on a collision: it is the one in the file the
+// user is looking at.
+func unionAssigned(walked, executed map[string]string) map[string]string {
+	out := make(map[string]string, len(walked)+len(executed))
+	for k, v := range executed {
+		out[k] = v
+	}
+	for k, v := range walked {
+		out[k] = v
+	}
+	return out
+}
+
 // assignedNames collects every name the submit file assigns, including
 // inside conditionals, keyed upper-cased for case-insensitive lookup
 // and holding the spelling the file used.
@@ -5107,7 +5148,26 @@ func (sf *SubmitFile) assignedCommand(key string) (string, bool) {
 	if sf == nil {
 		return "", false
 	}
-	if _, ok := sf.assigned[strings.ToUpper(key)]; !ok {
+	upper := strings.ToUpper(key)
+	if _, ok := sf.assigned[upper]; !ok {
+		return "", false
+	}
+	// Named, but on a path that did not run: a command assigned only
+	// inside a conditional branch the executor skipped. The file wrote no
+	// value for it, and cfg.Get would answer with the param_info default
+	// of a knob that happens to share the name -- MaxTransferInputMB =
+	// -1, MountUnderScratch = "/tmp,/var/tmp", UserLog = the LOG knob --
+	// where condor_submit on the same file writes nothing at all.
+	//
+	// assignedNames counts untaken branches deliberately, and still
+	// should: its job is to keep a name the submitter wrote from being
+	// answered out of the configuration. Its doc comment reasoned that
+	// cfg could not tell "the file set this" from "param_info has a
+	// default of the same name", which was true until Config started
+	// recording what it assigned. Now it can, so the gate can be exact
+	// instead of generous: mentioned-but-not-executed reads as absent,
+	// which writes no attribute rather than the knob's default.
+	if _, executed := sf.cfgAssigned[upper]; !executed {
 		return "", false
 	}
 	return sf.cfg.Get(key)

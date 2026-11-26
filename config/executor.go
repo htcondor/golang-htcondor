@@ -305,3 +305,24 @@ func (c *Config) executeWarning(w *WarningDirective) error {
 	fmt.Fprintf(os.Stderr, "Configuration warning: %s\n", msg)
 	return nil
 }
+
+// AssignedNames returns every name an assignment statement in this
+// configuration set, keyed upper-cased and holding the spelling used.
+//
+// Its reason for existing is `include`: an included file's assignments
+// are read and executed inside the executor, so a caller that walks the
+// parsed statements never sees them. Anything gated on "did the file set
+// this?" has to ask here as well as walking the tree -- and as well,
+// not instead, because a statement walk deliberately counts names in
+// conditional branches that did not execute, which this cannot know
+// about.
+//
+// A `+Foo = <expr>` assignment is recorded as MY.Foo, the macro it
+// actually defines, so it does not read back as an assignment of Foo.
+func (c *Config) AssignedNames() map[string]string {
+	out := make(map[string]string, len(c.assignedByText))
+	for k, v := range c.assignedByText {
+		out[k] = v
+	}
+	return out
+}
