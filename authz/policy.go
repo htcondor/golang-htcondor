@@ -130,16 +130,30 @@ func (p *Policy) buildEntry(cfg ConfigGetter, perm Perm) *permEntry {
 // trying "<key>_<subsys>" before "<key>" at each level, returning the first set
 // value and the knob that set it (mirrors SecMan::getSecSetting). fmt is
 // "ALLOW_%s" / "DENY_%s".
+//
+// A key whose value is empty does not count as set, and the walk continues
+// past it. SecMan::getSecSetting reads these through param(), which returns
+// NULL both for an empty raw value and for one that expands to empty
+// (condor_config.cpp param_ctx), so the C++ chain cannot stop on an empty
+// knob either.
+//
+// Stopping on one used to void the broader level silently, and in the DENY
+// direction that widens access: with the ALLOW_WRITE = * that
+// `use SECURITY:recommended` sets, an empty DENY_WRITE -- a bare
+// `DENY_WRITE =`, or one referring to an undefined macro -- produced an
+// empty deny table, so DENY_DEFAULT was never applied and every peer the
+// operator meant to block was admitted, with no second gate and nothing in
+// the log.
 func (p *Policy) getSecSetting(cfg ConfigGetter, format string, perm Perm) (value, knob string, ok bool) {
 	for _, pp := range FallbackChain(perm) {
 		base := fmt.Sprintf(format, string(pp))
 		if p.subsys != "" {
 			k := base + "_" + strings.ToUpper(p.subsys)
-			if v, ok := cfg.Get(k); ok {
+			if v, ok := cfg.Get(k); ok && v != "" {
 				return v, k, true
 			}
 		}
-		if v, ok := cfg.Get(base); ok {
+		if v, ok := cfg.Get(base); ok && v != "" {
 			return v, base, true
 		}
 	}
@@ -327,15 +341,29 @@ func (p *Policy) Verify(perm Perm, addr net.IP, user string) bool {
 		allowed = true
 	}
 
-	if !allowed && !denied {
+	// The hostname leg runs while either question is still open. C++ keeps
+	// two separate "resolved" masks for that: deny_resolved is the deny bit
+	// alone, while allow_resolved is allow|deny, so an allow already found
+	// closes the ALLOW question but leaves the DENY question open -- and
+	// hostnames are resolved when EITHER is open. An allow by IP therefore
+	// does not stop the lookup, which is the case this used to skip: a DENY
+	// reachable only by resolved hostname (a wildcard pattern such as
+	// *.example.org, which is keyed literally and cannot match on the IP
+	// leg, or a hostname whose forward resolution at Init missed this
+	// address) never fired, and the Go daemon granted where C++ refuses.
+	//
+	// No break on an allow, for the same reason: C++ scans every alias,
+	// gating each lookup on its own mask, so a DENY on a later PTR alias
+	// still overrides an allow found on an earlier one. Deny is final once
+	// found, so breaking on it is faithful.
+	if !denied {
 		for _, host := range p.reverseResolve(addr) {
 			if lookupUser(e.denyUsers, user, nil, host) {
 				denied = true
 				break
 			}
-			if lookupUser(e.allowUsers, user, nil, host) {
+			if !allowed && lookupUser(e.allowUsers, user, nil, host) {
 				allowed = true
-				break
 			}
 		}
 	}

@@ -141,3 +141,97 @@ func TestAuthorize(t *testing.T) {
 		t.Error("ALLOW must always authorize")
 	}
 }
+
+// TestEmptyKnobDoesNotEndTheFallbackChain: a knob whose value is empty is
+// not set, and the walk continues past it.
+//
+// SecMan::getSecSetting reads these through param(), which returns NULL for
+// an empty raw value and for one that expands to empty, so the C++ chain
+// cannot stop on an empty knob. Stopping on one voided the broader level
+// silently, and in the DENY direction that admits exactly the peers the
+// operator blocked.
+func TestEmptyKnobDoesNotEndTheFallbackChain(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  mapConfig
+	}{
+		{
+			// The shape `use SECURITY:recommended` leaves behind, with
+			// the operator's own DENY_WRITE emptied out.
+			name: "empty DENY_WRITE must not void DENY_DEFAULT",
+			cfg: mapConfig{
+				"ALLOW_WRITE":  "*",
+				"DENY_WRITE":   "",
+				"DENY_DEFAULT": "10.0.0.5",
+			},
+		},
+		{
+			// A knob referring to an undefined macro expands to empty,
+			// which is the same case arrived at by accident.
+			name: "empty DENY_WRITE_<SUBSYS> must not void DENY_DEFAULT",
+			cfg: mapConfig{
+				"ALLOW_WRITE":    "*",
+				"DENY_WRITE_CCB": "",
+				"DENY_DEFAULT":   "10.0.0.5",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newTestPolicy(t, tc.cfg, nil, nil)
+			if p.Verify(PermWrite, ip("10.0.0.5"), "someone@example.org") {
+				t.Error("the peer DENY_DEFAULT names was allowed: an empty knob ended the chain")
+			}
+			if !p.Verify(PermWrite, ip("10.0.0.6"), "someone@example.org") {
+				t.Error("a peer no DENY names was refused")
+			}
+		})
+	}
+}
+
+// TestDenyByHostnameFiresAfterAnAllowByIP: an allow matched on the IP leg
+// closes the ALLOW question, not the DENY question, so the hostname leg
+// still runs.
+//
+// C++ keeps the two apart -- deny_resolved is the deny bit alone while
+// allow_resolved is allow|deny -- and resolves hostnames while either is
+// open. Skipping the leg after an IP allow silenced every DENY that only a
+// resolved name can reach: a wildcard pattern is keyed literally and can
+// never match on the IP leg.
+func TestDenyByHostnameFiresAfterAnAllowByIP(t *testing.T) {
+	cfg := mapConfig{
+		"ALLOW_WRITE": "10.0.0.0/24",
+		"DENY_WRITE":  "*.evil.example.org",
+	}
+	rev := map[string][]string{
+		"10.0.0.7": {"host.evil.example.org"},
+		"10.0.0.8": {"host.good.example.org"},
+	}
+	p := newTestPolicy(t, cfg, nil, rev)
+
+	if p.Verify(PermWrite, ip("10.0.0.7"), "someone@example.org") {
+		t.Error("a wildcard-hostname DENY did not fire for a peer the IP leg allowed")
+	}
+	if !p.Verify(PermWrite, ip("10.0.0.8"), "someone@example.org") {
+		t.Error("a peer inside ALLOW_WRITE and outside DENY_WRITE was refused")
+	}
+}
+
+// TestDenyOnALaterAliasOverridesAnEarlierAllow: the alias scan does not stop
+// at the first allow. C++ walks every name get_hostname_with_alias returns,
+// gating each lookup on its own mask, so a DENY on a later PTR alias still
+// overrides an allow found on an earlier one.
+func TestDenyOnALaterAliasOverridesAnEarlierAllow(t *testing.T) {
+	cfg := mapConfig{
+		"ALLOW_WRITE": "good.example.org",
+		"DENY_WRITE":  "*.evil.example.org",
+	}
+	rev := map[string][]string{
+		// The allowed name comes first on purpose: the bug was a break.
+		"10.0.0.9": {"good.example.org", "host.evil.example.org"},
+	}
+	p := newTestPolicy(t, cfg, nil, rev)
+
+	if p.Verify(PermWrite, ip("10.0.0.9"), "someone@example.org") {
+		t.Error("a DENY on a later alias was abandoned after an allow matched an earlier one")
+	}
+}
