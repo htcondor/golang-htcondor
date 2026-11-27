@@ -78,6 +78,12 @@ contents:
     file_info:
       mode: 0644
 
+  - src: docs/operator/connectors.md
+    dst: /usr/share/doc/htcondor-api/operator/connectors.md
+    type: doc
+    file_info:
+      mode: 0644
+
   - src: docs/operator/idempotency.md
     dst: /usr/share/doc/htcondor-api/operator/idempotency.md
     type: doc
@@ -158,6 +164,24 @@ contents:
 
   - src: docs/user/assistant.md
     dst: /usr/share/doc/htcondor-api/user/assistant.md
+    type: doc
+    file_info:
+      mode: 0644
+
+  - src: docs/user/jobs.md
+    dst: /usr/share/doc/htcondor-api/user/jobs.md
+    type: doc
+    file_info:
+      mode: 0644
+
+  - src: docs/user/interactive.md
+    dst: /usr/share/doc/htcondor-api/user/interactive.md
+    type: doc
+    file_info:
+      mode: 0644
+
+  - src: docs/user/connectors.md
+    dst: /usr/share/doc/htcondor-api/user/connectors.md
     type: doc
     file_info:
       mode: 0644

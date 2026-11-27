@@ -2,6 +2,7 @@ package htcondor
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -108,7 +109,7 @@ func (s *Schedd) ReceiveJobSandboxWithOptions(ctx context.Context, constraint st
 }
 
 // doReceiveJobSandbox implements the actual transfer logic
-func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer, opts SandboxOptions) error {
+func (s *Schedd) doReceiveJobSandbox(ctx context.Context, constraint string, w io.Writer, opts SandboxOptions) (err error) {
 	// Get SecurityConfig from context, HTCondor config, or defaults
 	secConfig, err := GetSecurityConfigOrDefault(ctx, s.cfg, commands.TRANSFER_DATA_WITH_PERMS, "CLIENT", s.address)
 	if err != nil {
@@ -422,7 +423,7 @@ func (s *Schedd) SpoolJobFilesFromFS(ctx context.Context, jobAds []*classad.Clas
 	return s.afterSpool(ctx, jobAds)
 }
 
-func (s *Schedd) spoolJobFilesFromFS(ctx context.Context, jobAds []*classad.ClassAd, fsys fs.FS) error {
+func (s *Schedd) spoolJobFilesFromFS(ctx context.Context, jobAds []*classad.ClassAd, fsys fs.FS) (err error) {
 	if len(jobAds) == 0 {
 		return fmt.Errorf("no job ads provided")
 	}
@@ -638,7 +639,7 @@ func (s *Schedd) SpoolJobFilesFromTar(ctx context.Context, jobAds []*classad.Cla
 	return s.afterSpool(ctx, jobAds)
 }
 
-func (s *Schedd) spoolJobFilesFromTar(ctx context.Context, jobAds []*classad.ClassAd, r io.Reader) error {
+func (s *Schedd) spoolJobFilesFromTar(ctx context.Context, jobAds []*classad.ClassAd, r io.Reader) (err error) {
 	if len(jobAds) == 0 {
 		return fmt.Errorf("no job ads provided")
 	}
@@ -1042,6 +1043,13 @@ func SpoolInputAllowSet(ad *classad.ClassAd) []string {
 // the schedd does not release the job.
 var ErrInvalidTarEntry = errors.New("invalid tar entry name")
 
+// ErrSpoolTarOutOfOrder is returned (wrapped) by SpoolJobFilesFromTar when a
+// multi-job tar does not keep each job's entries together and in the order of
+// the job list. The schedd pairs the i'th transfer segment with the i'th
+// PROC_ID it was sent, and a stream cannot be reordered, so the upload is
+// abandoned rather than delivered into the wrong job's spool.
+var ErrSpoolTarOutOfOrder = errors.New("spool tar entries are out of job order")
+
 // validateSpoolEntryName refuses a tar entry name (a directory's without
 // its trailing "/") that is empty, absolute, not in canonical form
 // ("foo/../bar", "./x", "a//b"), contains a ".." segment, a backslash or
@@ -1105,6 +1113,80 @@ func (s *Schedd) sendJobFilesFromTar(ctx context.Context, cedarStream *stream.St
 	processedJobs := make(map[procID]bool) // Track which jobs have been processed
 	peerGoesAheadAlways := false           // Track GoAhead state
 	fileIndex := 0                         // Track file index for GoAhead handshake
+
+	// Where the stream has got to in the PROC_ID list. The schedd pairs
+	// the i'th transfer segment with the i'th PROC_ID it was sent, so the
+	// segments have to leave in that order whatever order the tar is in.
+	// switchToJob keeps them in it.
+	jobOrder := make(map[procID]int, len(jobIDs))
+	for i, id := range jobIDs {
+		jobOrder[id] = i
+	}
+	nextJob := 0
+
+	// switchToJob opens the segment for the job the tar has reached,
+	// closing the open one first.
+	//
+	// A job the tar skips over -- one with no files of its own, sitting
+	// earlier in the list -- gets an empty segment here rather than at
+	// the end, because a segment appended at the end is a segment in the
+	// wrong place: the schedd would pair it with some other job's
+	// PROC_ID and that job's files with this one's. The symptom is a job
+	// released with another job's sandbox and no sign of a failed
+	// transfer.
+	//
+	// A tar that revisits a job whose segment is already closed cannot be
+	// served: this is a stream, so there is nothing to reorder, and
+	// sending the files now would put them in whichever segment is open.
+	switchToJob := func(parsedJobID procID) error {
+		if currentJobID != nil && *currentJobID == parsedJobID {
+			return nil
+		}
+		idx, ok := jobOrder[parsedJobID]
+		if !ok {
+			return fmt.Errorf("%w: %d.%d is not one of the jobs being spooled",
+				ErrSpoolTarOutOfOrder, parsedJobID.cluster, parsedJobID.proc)
+		}
+		if idx < nextJob {
+			return fmt.Errorf("%w: entries for job %d.%d appear after another job's; "+
+				"a spool tar must keep each job's entries together and in the order of the job list",
+				ErrSpoolTarOutOfOrder, parsedJobID.cluster, parsedJobID.proc)
+		}
+
+		if currentJobID != nil && currentJobInfo != nil {
+			if err := s.sendCommandFinished(ctx, cedarStream); err != nil {
+				return fmt.Errorf("failed to send CommandFinished for job %d.%d: %w",
+					currentJobID.cluster, currentJobID.proc, err)
+			}
+			processedJobs[*currentJobID] = true
+		}
+		for ; nextJob < idx; nextJob++ {
+			skipped := jobIDs[nextJob]
+			if processedJobs[skipped] {
+				continue
+			}
+			if err := s.sendTransferProtocolHeaders(ctx, cedarStream, 0); err != nil {
+				return fmt.Errorf("failed to send protocol headers for job %d.%d: %w",
+					skipped.cluster, skipped.proc, err)
+			}
+			if err := s.sendCommandFinished(ctx, cedarStream); err != nil {
+				return fmt.Errorf("failed to send CommandFinished for job %d.%d: %w",
+					skipped.cluster, skipped.proc, err)
+			}
+			processedJobs[skipped] = true
+		}
+		nextJob = idx + 1
+
+		currentJobID = &parsedJobID
+		currentJobInfo = jobInfoMap[parsedJobID]
+		fileIndex = 0
+		peerGoesAheadAlways = false
+		if err := s.sendTransferProtocolHeaders(ctx, cedarStream, 1*1024*1024); err != nil {
+			return fmt.Errorf("failed to send protocol headers for job %d.%d: %w",
+				parsedJobID.cluster, parsedJobID.proc, err)
+		}
+		return nil
+	}
 
 	// In single job mode, set the current job immediately
 	if singleJobMode {
@@ -1175,28 +1257,8 @@ func (s *Schedd) sendJobFilesFromTar(ctx context.Context, cedarStream *stream.St
 					continue
 				}
 
-				// Check if we're switching to a new job
-				if currentJobID == nil || *currentJobID != parsedJobID {
-					// Send CommandFinished for the previous job if there was one
-					if currentJobID != nil && currentJobInfo != nil {
-						if err := s.sendCommandFinished(ctx, cedarStream); err != nil {
-							return fmt.Errorf("failed to send CommandFinished for job %d.%d: %w", currentJobID.cluster, currentJobID.proc, err)
-						}
-						processedJobs[*currentJobID] = true
-					}
-
-					// Switch to new job
-					currentJobID = &parsedJobID
-					currentJobInfo = jobInfoMap[parsedJobID]
-
-					// Reset file index and GoAhead state for new job
-					fileIndex = 0
-					peerGoesAheadAlways = false
-
-					// Send protocol headers for this job
-					if err := s.sendTransferProtocolHeaders(ctx, cedarStream, 1*1024*1024); err != nil {
-						return fmt.Errorf("failed to send protocol headers for job %d.%d: %w", parsedJobID.cluster, parsedJobID.proc, err)
-					}
+				if err := switchToJob(parsedJobID); err != nil {
+					return err
 				}
 			}
 
@@ -1273,28 +1335,8 @@ func (s *Schedd) sendJobFilesFromTar(ctx context.Context, cedarStream *stream.St
 				continue
 			}
 
-			// Check if we're switching to a new job
-			if currentJobID == nil || *currentJobID != parsedJobID {
-				// Send CommandFinished for the previous job if there was one
-				if currentJobID != nil && currentJobInfo != nil {
-					if err := s.sendCommandFinished(ctx, cedarStream); err != nil {
-						return fmt.Errorf("failed to send CommandFinished for job %d.%d: %w", currentJobID.cluster, currentJobID.proc, err)
-					}
-					processedJobs[*currentJobID] = true
-				}
-
-				// Switch to new job
-				currentJobID = &parsedJobID
-				currentJobInfo = jobInfoMap[parsedJobID]
-
-				// Reset file index and GoAhead state for new job
-				fileIndex = 0
-				peerGoesAheadAlways = false
-
-				// Send protocol headers for this job (final_transfer flag, xfer_info ClassAd)
-				if err := s.sendTransferProtocolHeaders(ctx, cedarStream, 1*1024*1024); err != nil {
-					return fmt.Errorf("failed to send protocol headers for job %d.%d: %w", parsedJobID.cluster, parsedJobID.proc, err)
-				}
+			if err := switchToJob(parsedJobID); err != nil {
+				return err
 			}
 		}
 
@@ -1380,15 +1422,18 @@ func (s *Schedd) sendTransferProtocolHeaders(ctx context.Context, cedarStream *s
 // releaseJobsWithEmptySpool performs an empty spool for jobs that don't need input files.
 // This triggers the schedd to release the job from the hold state and set the Iwd.
 func (s *Schedd) releaseJobsWithEmptySpool(ctx context.Context, jobAds []*classad.ClassAd) error {
-	// Create an empty tarball
-	pr, pw := io.Pipe()
-	go func() {
-		tw := tar.NewWriter(pw)
-		_ = tw.Close()
-		_ = pw.Close()
-	}()
+	// An empty archive, built here rather than piped from a goroutine.
+	// It is one kilobyte, and a pipe needs someone to read it:
+	// SpoolJobFilesFromTar can return before it reads a byte -- the
+	// security config, the connect, the handshake and the PROC_ID sends
+	// all come first -- and the writer would then park on the pipe for
+	// the life of the process, once per failed submission.
+	var empty bytes.Buffer
+	if err := tar.NewWriter(&empty).Close(); err != nil {
+		return fmt.Errorf("failed to build the empty spool archive: %w", err)
+	}
 
-	return s.SpoolJobFilesFromTar(ctx, jobAds, pr)
+	return s.SpoolJobFilesFromTar(ctx, jobAds, bytes.NewReader(empty.Bytes()))
 }
 
 // OutputRemap represents a single output file remap entry

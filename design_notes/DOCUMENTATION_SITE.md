@@ -638,31 +638,93 @@ has.
 
 **5. Screenshots.**
 
+## The largest remaining gap: connectors
+
+`webapi/connectors` is a shipped feature with **no page in `docs/` at
+all** -- not user, not operator. A user grants this server access to
+their own Google account; their job's input can come out of Drive and
+its results can be written to a Sheet; an administrator configures each
+connector with a dozen settings and a per-connector group gate. The
+only prose about it is `design_notes/CONNECTORS.md`, which is a design
+note written for whoever builds the two bootstraps that are still
+unbuilt, not for either audience.
+
+It is the largest gap because of what it asks of the user. Every other
+undocumented thing here is a mechanism; this one is a consent decision
+about an account that is not ours, made by somebody who has to
+understand what they are granting and how to take it back. That is the
+one place prose is not a convenience.
+
+It wants two pages. A user page: what a connector is, what granting one
+lets this access point do as you, that the grant outlives the browser
+session, and how to revoke it. An operator page: the kinds, the group
+gate, `transfer: spool` versus `direct` and why spool is the default
+that keeps a third-party token off every execute node.
+
+Neither is written here because both need their claims checked against
+`handlers_connect.go` and the store the way the two user-guide pages
+were, and that is a session's work rather than a paragraph's.
+
+## What the conversion keeps finding in shipped artifacts
+
+The knob work's record -- forty-three settings in `reconfigParams`
+nowhere -- is the same shape as what documenting a surface turns up in
+it, and two more came out of writing the user guide.
+
+`DELETE /jobs/{jobId}` and `PATCH /jobs/{jobId}` were described in
+`openapi.json` as "NOT YET IMPLEMENTED" with a single 501 response,
+long after both handlers grew owner scoping, superuser impersonation
+and an audit trail. A client generated from the document could not
+remove or edit a job. Nothing caught it: the routes exist, so the
+route-coverage check passed, and the document agreed with itself, so
+every check inside it passed too. Both halves were wrong together, and
+that is the general case -- a stale document is self-consistent.
+
+The guard added with the fix does not read the handler, and says so.
+Deciding whether a route is implemented means calling it, and these
+need a credential and a schedd first. What it does is make the claim
+expensive: an operation documented as unimplemented has to be on a
+named list that cannot outlive what it excuses, and the list is empty.
+Nobody chose to leave those two stale; they were never revisited, and
+that is the half a check can close.
+
+A user-guide draft written in the same pass said `GET
+/jobs/{id}/stdout` worked "while it runs, and after". It does not -- it
+reads the returned output sandbox, and `/peek` is the mid-run path --
+and nothing would have failed. A prose page compiles nothing, so the
+only defence is checking each claim against the code that implements
+it, one at a time. That is slow and there is no substitute for it; what
+makes it affordable is that the claims worth making are few.
+
 ## A setting hidden before its replacement exists
 
-`HTTP_API_MCP_ADMIN_GROUP` and `HTTP_API_MCP_SUPERUSER_GROUP` are
+*Resolved.* The two MCP group settings now have replacements, so the
+shape this section described has been chosen rather than left open; the
+history is kept because the trap generalises.
+
+`HTTP_API_MCP_ADMIN_GROUP` and `HTTP_API_MCP_SUPERUSER_GROUP` were
 marked obsolete and left out of the documentation, which is what was
-asked for. They are also, as of this writing, the **only** source of
-the `mcp:admin`, `mcp:superuser`, `anyuser:read` and `anyuser:write`
-scope grants: `oauth2_sso.go` grants each of those from these two group
-sets and from nothing else. `HTTP_API_WEBUI_ADMIN_GROUP` and
-`HTTP_API_SUPERUSER_GROUP` are where the same power lives for a browser
-or API caller -- `handlers_admin.go` is the authoritative map -- but
-they do not reach the OAuth2 scope path.
+asked for. They were also the **only** source of the `mcp:admin`,
+`mcp:superuser`, `anyuser:read` and `anyuser:write` scope grants, so an
+operator needing an OAuth2 client to read across users had no
+documented way to configure it -- and neither setting could carry a
+`superseded_by`, because a pointer at a setting that would not restore
+what they had is worse than no pointer.
 
-So an operator who needs an OAuth2 or MCP client to read across users
-now has no documented way to configure it. That is why neither carries
-a `superseded_by`: a pointer at a setting that would not restore what
-they had is worse than no pointer.
+The fix was the first of the two shapes: the scope grants now answer to
+settings of their own,
+`HTTP_API_ANYUSER_{READ,WRITE}_{GROUPS,USERS}`, which is step 3 of
+`design_notes/ENTITLEMENT_VOCABULARY.md` for that pair. Both old
+settings now point at a replacement that a page really documents, so
+`TestObsoleteReplacementsAreDocumented` is checking a real pointer
+rather than skipping.
 
-Resolving it is a product decision rather than a documentation one, and
-it is one of two shapes. Either the scope grants start answering to the
-unified groups, after which both settings get a `superseded_by` and
-this paragraph goes away; or the capability is deliberately
-browser-only, in which case the scopes should stop being advertised
-rather than being grantable from a setting nobody may find. The comment
-in `oauth2_sso.go` -- "until the two settings are split apart" --
-suggests the first was intended.
+**The generalisable part**: marking a setting obsolete is a claim that
+something else does its job. Where nothing does, hiding it removes the
+only documented way to configure a live capability, and the
+`superseded_by` check cannot see that -- it verifies a pointer that was
+set, not one that is missing. The order has to be replacement first,
+marker second.
 
 ## Open questions
 
