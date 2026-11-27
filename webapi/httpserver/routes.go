@@ -439,9 +439,21 @@ func (h *Handler) setupRoutes() {
 	// see whether a change they just made worked.
 	mux.Handle("/api/v1/dbmirror/test", cors(http.HandlerFunc(h.handleDBMirrorTest)))
 
-	// Ping endpoints
-	mux.HandleFunc("/api/v1/ping", h.handlePing)              // Ping both collector and schedd
-	mux.HandleFunc("/api/v1/schedd/ping", h.handleScheddPing) // Ping schedd only
+	// Ping endpoints. Gated like every other route that dials a daemon:
+	// both handlers go through createAuthenticatedContext and then open a
+	// real CEDAR session to the schedd and collector, so "is the caller
+	// authenticated at all" is not the question to be asking. Without the
+	// gate a grant approved for nothing -- [] or ["openid"], which
+	// getScopesForGroups produces for a user outside the read and access
+	// groups -- gets an IDTOKEN minted at authz=[READ] and a handshake to
+	// both daemons, while the same grant is refused 403 everywhere else,
+	// including on /api/v1/collector/ping, which is this same operation
+	// under a different spelling.
+	//
+	// Both are GET, so the gate asks for condor:/READ, which any working
+	// client already carries.
+	mux.Handle("/api/v1/ping", cors(h.requireCondorScope(http.HandlerFunc(h.handlePing))))              // Ping both collector and schedd
+	mux.Handle("/api/v1/schedd/ping", cors(h.requireCondorScope(http.HandlerFunc(h.handleScheddPing)))) // Ping schedd only
 	// Collector ping is handled via /api/v1/collector/ping in handleCollectorPath
 
 	// OAuth2: served whenever the provider exists, which is whenever the

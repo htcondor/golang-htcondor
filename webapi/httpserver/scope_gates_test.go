@@ -424,3 +424,43 @@ func TestMCPRefusedMintIsForbidden(t *testing.T) {
 		})
 	}
 }
+
+// Ping dials the daemons, so it belongs behind the gate like everything else
+// that does.
+//
+// Both handlers call createAuthenticatedContext and then open a real CEDAR
+// session -- handlePing to the collector and the schedd, handleScheddPing to
+// the schedd. A grant approved for nothing still authenticates: with no
+// condor:/* scope generateGrantHTCondorToken mints an IDTOKEN at
+// authz=[READ], so the handshake goes ahead as the caller. The third path
+// here is the control: /api/v1/collector/ping is the same operation under a
+// spelling that was already gated, and the gap between it and the other two
+// is what this test exists to keep closed.
+func TestEmptyOAuth2GrantIsRefusedOnPing(t *testing.T) {
+	paths := []string{"/api/v1/ping", "/api/v1/schedd/ping", "/api/v1/collector/ping"}
+	for _, grant := range [][]string{{}, {"openid"}} {
+		for _, path := range paths {
+			t.Run(path+" grant="+strings.Join(grant, "+"), func(t *testing.T) {
+				s := newMCPScopeServer(t, false)
+				tok := mintMCPAccessToken(t, s, grant)
+				rec := restAs(t, s, http.MethodGet, path, tok)
+				if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), gateRefusal) {
+					t.Errorf("status %d, want the gate's 403: %s", rec.Code, rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+// The positive control: a grant that does carry a read scope still pings.
+// Without this the refusal above is satisfied by a gate that refuses
+// everyone.
+func TestReadScopedGrantStillPings(t *testing.T) {
+	s := newMCPScopeServer(t, false)
+	tok := mintMCPAccessToken(t, s, []string{"condor:/READ"})
+	for _, path := range []string{"/api/v1/ping", "/api/v1/schedd/ping"} {
+		if rec := restAs(t, s, http.MethodGet, path, tok); strings.Contains(rec.Body.String(), gateRefusal) {
+			t.Errorf("%s: a read-scoped grant was refused: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
