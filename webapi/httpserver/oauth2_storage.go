@@ -1020,6 +1020,31 @@ func (s *OAuth2Storage) MarkDeviceCodePolled(ctx context.Context, deviceCode str
 	return false, nil
 }
 
+// deviceCodeClientID reports the client a device code was issued to,
+// without reading or interpreting the rest of the row.
+//
+// The token endpoint needs the binding before it is willing to write
+// anything keyed on the code -- the poll timestamp as much as the
+// 'used' status -- and GetDeviceCodeSession cannot serve that: it
+// refuses a pending, denied, expired or spent code before it ever
+// reaches the client column, which is exactly the set of states a
+// binding check has to be able to refuse from.
+//
+// found is false when no such code exists, which is not an error: the
+// caller carries on and lets the ordinary lookup answer for it.
+func (s *OAuth2Storage) deviceCodeClientID(ctx context.Context, deviceCode string) (clientID string, found bool, err error) {
+	err = s.db.QueryRowContext(ctx, `
+		SELECT client_id FROM oauth2_device_codes WHERE device_code = ?
+	`, sessionKey(deviceCode)).Scan(&clientID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return clientID, true, nil
+}
+
 // InvalidateDeviceCodeSession invalidates a device code after it's been used
 func (s *OAuth2Storage) InvalidateDeviceCodeSession(ctx context.Context, deviceCode string) error {
 	_, err := s.db.ExecContext(ctx, `
