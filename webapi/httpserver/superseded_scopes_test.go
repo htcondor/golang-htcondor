@@ -161,8 +161,8 @@ func TestSupersededScopesMapToAdvertisedEquivalents(t *testing.T) {
 			t.Errorf("%s and %s describe themselves differently", old, canonical)
 		}
 		for _, groups := range [][]string{{"condor-admins"}, {"condor-supers"}, {"nobody"}} {
-			oldGranted := slices.Contains(h.getScopesForGroups(groups, []string{old}), old)
-			newGranted := slices.Contains(h.getScopesForGroups(groups, []string{canonical}), canonical)
+			oldGranted := slices.Contains(h.getScopesForGroups("", groups, []string{old}), old)
+			newGranted := slices.Contains(h.getScopesForGroups("", groups, []string{canonical}), canonical)
 			if oldGranted != newGranted {
 				t.Errorf("%v: %s granted = %v but %s granted = %v",
 					groups, old, oldGranted, canonical, newGranted)

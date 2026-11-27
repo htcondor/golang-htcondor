@@ -203,7 +203,7 @@ func TestTokenExchangeExternalUsesSystemGroups(t *testing.T) {
 	}
 	server.extIssuers = newExtIssuerValidator(issuers,
 		func(_ context.Context, _ string) ([]byte, error) { return jwksJSON(t, key), nil })
-	server.mcpAdminGroups = newGroupSet("condor-admins")
+	server.anyUserRead = newPrincipalSet("condor-admins", "")
 	system := &recordingGroups{byUser: map[string][]string{
 		"bob@idp.example.org":   {"users"},
 		"carol@idp.example.org": {"users", "condor-admins"},

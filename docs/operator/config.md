@@ -32,6 +32,51 @@ code uses rather than a second copy of them. Alphabetical by parameter.
 
 <!-- BEGIN GENERATED SETTINGS: edit webapi/knobs/knobs.yaml, then run `make knobs` -->
 
+### `HTTP_API_ANYUSER_READ_GROUPS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Groups whose members may request the anyuser:read entitlement, which
+reads every user's jobs on this access point rather than only the
+caller's own. Comma-separated, or a JSON array to spell a group name
+containing a comma. Unset means nobody may request it, so the
+entitlement is off until this or `HTTP_API_ANYUSER_READ_USERS` names
+somebody. Membership is permission to ask for the entitlement, never
+the entitlement itself: a credential holds it only by requesting it
+and being granted it.
+
+### `HTTP_API_ANYUSER_READ_USERS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Users who may request the anyuser:read entitlement, named individually
+rather than through a group -- which is the only half that works where
+`HTTP_API_GROUP_SOURCE` is token and the token carries no groups.
+Identities are compared the way HTCondor compares two users: the
+domain case-insensitively, the part before the @ exactly, and a bare
+name matches only a bare name. Write alice@example.org, not alice,
+where the access point reports fully-qualified users.
+
+### `HTTP_API_ANYUSER_WRITE_GROUPS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Groups whose members may request the anyuser:write entitlement, which
+removes, holds, releases and edits any user's jobs on this access
+point. Deliberately not implied by anyuser:read and not implying it:
+seeing every job and being able to remove every job are different
+privileges, and the group that should hold the second is usually much
+smaller. Unset means nobody may request it, here or in
+`HTTP_API_ANYUSER_WRITE_USERS`.
+
+### `HTTP_API_ANYUSER_WRITE_USERS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Users who may request the anyuser:write entitlement, named
+individually rather than through a group. Identities are compared as
+for `HTTP_API_ANYUSER_READ_USERS`.
+
 ### `HTTP_API_BUILD_DEFAULT_CPUS`
 
 **Whole number.** Unset requests 8 CPUs. Changing it needs a restart.

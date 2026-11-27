@@ -385,7 +385,7 @@ func TestCondorWriteFollowsTheWriteGroup(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, spelling := range []string{"condor:/WRITE", "condor:/write"} {
-				got := tc.h.getScopesForGroups(tc.groups, []string{"condor:/READ", spelling})
+				got := tc.h.getScopesForGroups("", tc.groups, []string{"condor:/READ", spelling})
 				granted := false
 				for _, s := range got {
 					if s == spelling {

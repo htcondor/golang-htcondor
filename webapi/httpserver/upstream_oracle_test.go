@@ -47,7 +47,7 @@ func upstreamOracleFor(t *testing.T, refresh tokenRefresher, info userInfoFetche
 			}
 			return errors.New("not a member of " + required)
 		},
-		scopesFor: func(groups, requested []string) []string {
+		scopesFor: func(_ string, groups, requested []string) []string {
 			write := false
 			for _, g := range groups {
 				if g == testWriteGroup {

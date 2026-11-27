@@ -387,13 +387,15 @@ type Config struct {
 	// default.
 	ServiceKeyMaxLifetime time.Duration
 
-	// MCPAdminGroup / MCPSuperuserGroup gate the two cross-user MCP
+	// The AnyUser* pairs gate the two cross-user MCP
 	// privileges. Empty means NOBODY, not everybody -- see
 	// HandlerConfig for why these invert the default above.
-	MCPAdminGroup     string
-	MCPSuperuserGroup string
-	ScheddHost        string // SCHEDD_HOST: the host (optionally name@host, optionally with a port) whose schedd to use
-	MCPInstructions   string // Server-level instructions provided to all MCP agents (e.g., AP-specific guidance)
+	AnyUserReadGroups  string
+	AnyUserReadUsers   string
+	AnyUserWriteGroups string
+	AnyUserWriteUsers  string
+	ScheddHost         string // SCHEDD_HOST: the host (optionally name@host, optionally with a port) whose schedd to use
+	MCPInstructions    string // Server-level instructions provided to all MCP agents (e.g., AP-specific guidance)
 	// MCPDisabledTools (HTTP_API_MCP_DISABLED_TOOLS) names tools this site cannot
 	// offer, as path.Match patterns separated by commas or whitespace.
 	MCPDisabledTools string
@@ -692,8 +694,10 @@ func NewServer(cfg Config) (*Server, error) {
 		MCPAccessGroup:              cfg.MCPAccessGroup,
 		MCPReadGroup:                cfg.MCPReadGroup,
 		MCPWriteGroup:               cfg.MCPWriteGroup,
-		MCPAdminGroup:               cfg.MCPAdminGroup,
-		MCPSuperuserGroup:           cfg.MCPSuperuserGroup,
+		AnyUserReadGroups:           cfg.AnyUserReadGroups,
+		AnyUserReadUsers:            cfg.AnyUserReadUsers,
+		AnyUserWriteGroups:          cfg.AnyUserWriteGroups,
+		AnyUserWriteUsers:           cfg.AnyUserWriteUsers,
 		MCPInstructions:             cfg.MCPInstructions,
 		MCPDisabledTools:            cfg.MCPDisabledTools,
 		MCPReadOnly:                 cfg.MCPReadOnly,

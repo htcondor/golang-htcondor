@@ -234,36 +234,101 @@ knobs:
       HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is
       used. HTTP_API_LISTEN_ADDR wins where both are set.
 
-  # The two cross-user MCP privileges. Obsolete, so they are declared
-  # here -- the table is the only place a setting may be spelled -- and
-  # left out of the reference on purpose.
+  # Who may REQUEST the two cross-user entitlements. Each is a pair:
+  # a group list and a user list, either of which can name somebody.
+  # Membership is permission to ask for the scope, never the scope
+  # itself -- a credential holds it only by requesting it and being
+  # granted it.
   #
-  # Deliberately without superseded_by. HTTP_API_WEBUI_ADMIN_GROUP and
-  # HTTP_API_SUPERUSER_GROUP are where the equivalent power lives for a
-  # browser or API caller (handlers_admin.go names them), but they do
-  # not grant the mcp:admin, mcp:superuser, anyuser:read or
-  # anyuser:write scopes: oauth2_sso.go grants each of those from these
-  # two group sets and from nothing else. Pointing an operator at a
-  # setting that would not restore what they had is worse than pointing
-  # them nowhere.
+  # Unset means NOBODY, which is the opposite of the _ACCESS_ and
+  # _READ_/_WRITE_ gates nearby: those are opt-in restrictions where an
+  # empty value means "no requirement", while these are cross-user
+  # privileges where an empty value has to mean "no one".
+  - name: HTTP_API_ANYUSER_READ_GROUPS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Groups whose members may request the anyuser:read entitlement,
+      which reads every user's jobs on this access point rather than
+      only the caller's own. Comma-separated, or a JSON array to spell
+      a group name containing a comma. Unset means nobody may request
+      it, so the entitlement is off until this or
+      HTTP_API_ANYUSER_READ_USERS names somebody. Membership is
+      permission to ask for the entitlement, never the entitlement
+      itself: a credential holds it only by requesting it and being
+      granted it.
+
+  - name: HTTP_API_ANYUSER_READ_USERS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Users who may request the anyuser:read entitlement, named
+      individually rather than through a group -- which is the only
+      half that works where HTTP_API_GROUP_SOURCE is token and the
+      token carries no groups. Identities are compared the way
+      HTCondor compares two users: the domain case-insensitively, the
+      part before the @ exactly, and a bare name matches only a bare
+      name. Write alice@example.org, not alice, where the access point
+      reports fully-qualified users.
+
+  - name: HTTP_API_ANYUSER_WRITE_GROUPS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Groups whose members may request the anyuser:write entitlement,
+      which removes, holds, releases and edits any user's jobs on this
+      access point. Deliberately not implied by anyuser:read and not
+      implying it: seeing every job and being able to remove every job
+      are different privileges, and the group that should hold the
+      second is usually much smaller. Unset means nobody may request
+      it, here or in HTTP_API_ANYUSER_WRITE_USERS.
+
+  - name: HTTP_API_ANYUSER_WRITE_USERS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Users who may request the anyuser:write entitlement, named
+      individually rather than through a group. Identities are
+      compared as for HTTP_API_ANYUSER_READ_USERS.
+
+  # The older spellings of the two above. Obsolete, so they are
+  # declared here -- the table is the only place a setting may be
+  # spelled -- and left out of the reference on purpose.
+  #
+  # Each still works: where the new setting is unset, the old value is
+  # read in its place and the startup log names the replacement. The
+  # new setting wins where both are set, so an operator migrating does
+  # not have to delete the old line in the same edit.
   - name: HTTP_API_MCP_ADMIN_GROUP
     type: string
     default: ""
     scope: reconfig
-    obsolete: {}
+    obsolete:
+      superseded_by: HTTP_API_ANYUSER_READ_GROUPS
     doc: >
-      Group(s) whose members may read every user's jobs through MCP.
-      Read as a raw string and split downstream, so a change to how
-      lists are parsed does not change who is privileged.
+      Group(s) whose members may read every user's jobs. Honored
+      where HTTP_API_ANYUSER_READ_GROUPS is unset, and named as
+      superseded in the startup log when it is read -- which is the
+      only place an operator still running it meets the replacement,
+      since this setting appears in no page. Read as a raw string and
+      split downstream, so a change to how lists are parsed does not
+      change who is privileged.
 
   - name: HTTP_API_MCP_SUPERUSER_GROUP
     type: string
     default: ""
     scope: reconfig
-    obsolete: {}
+    obsolete:
+      superseded_by: HTTP_API_ANYUSER_WRITE_GROUPS
     doc: >
-      Group(s) whose members may change any user's jobs through MCP.
-      Read as a raw string and split downstream, as above.
+      Group(s) whose members may change any user's jobs. Honored
+      where HTTP_API_ANYUSER_WRITE_GROUPS is unset, and named as
+      superseded in the startup log when it is read. Read as a raw
+      string and split downstream, as above.
 
 
   - name: HTTP_API_ENABLE_IDP

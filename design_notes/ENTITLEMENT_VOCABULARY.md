@@ -8,17 +8,19 @@ line between them is drawn here rather than left to be inferred:
 
 | Landed | Proposed |
 | --- | --- |
-| `anyuser:read` and `anyuser:write` exist, mintable on an API key and grantable through OAuth2 | every rename below |
-| Both are advertised, consent-unchecked, and gated on the groups their older spellings answer to | the `*_GROUPS` / `*_USERS` scheme |
+| `anyuser:read` and `anyuser:write` exist, mintable on an API key and grantable through OAuth2 | the remaining renames below |
+| Both are advertised, consent-unchecked, and gated on their own settings | the `*_GROUPS` / `*_USERS` pairs for everything *except* the two `anyuser:*` entitlements |
 | Both are honoured on REST and MCP alike, and named by `whoami` | |
 | `mcp:admin` and `mcp:superuser` are requestable but no longer advertised or shown; each power is offered once, under its `anyuser:*` name | |
 | Entitlements are granted at mint and re-verified on use (service keys) | splitting `HTTP_API_WEBUI_ADMIN_GROUP` |
 | `MCP_ADMIN_USERS` keeps its behaviour | deprecating it in earnest |
-| | both MCP scope-challenge fixes |
+| `principalSet`, and `HTTP_API_ANYUSER_{READ,WRITE}_{GROUPS,USERS}` as the configuration for the two cross-user entitlements | both MCP scope-challenge fixes |
+| `HTTP_API_MCP_ADMIN_GROUP` / `HTTP_API_MCP_SUPERUSER_GROUP` read as superseded spellings, undocumented, naming their replacement at startup | |
 
-Nothing landed changes a power anyone holds today: the two new scopes
-answer to the same groups as `mcp:admin` and `mcp:superuser`, so they
-add a name, not a privilege.
+Nothing landed changes a power anyone holds today. The two new scopes
+add a name, not a privilege; the four new settings add a second way to
+say who may request them, and a deployment that writes none of them
+keeps reading the old settings exactly as before.
 
 ## The problem
 
@@ -257,9 +259,16 @@ settling on different names is two edits.
 Advertising them was the step with teeth. `getScopesForGroups` ends in
 a default branch that grants an unrecognized scope unconditionally, so
 a scope advertised without a case of its own is handed to every client
-that asks. They therefore answer to `HTTP_API_MCP_ADMIN_GROUP` and
-`HTTP_API_MCP_SUPERUSER_GROUP` — the groups their older spellings
-already answer to — until those settings are renamed.
+that asks.
+
+**Now settled.** They answer to `HTTP_API_ANYUSER_READ_GROUPS` /
+`_USERS` and `HTTP_API_ANYUSER_WRITE_GROUPS` / `_USERS`, through
+`principalSet`. The older spellings `mcp:admin` and `mcp:superuser`
+answer to the same settings — an obsolete name for a scope must not
+become a second, laxer door to it — and
+`TestObsoleteScopeSpellingsAnswerToTheNewSettings` is what keeps that
+true alongside
+`TestAdvertisedPrivilegedScopesAreNotGrantedByDefault`.
 `TestAdvertisedPrivilegedScopesAreNotGrantedByDefault` is what keeps
 that true.
 
@@ -441,6 +450,23 @@ can change what anybody can do.
    aliases of the current settings, both spellings accepted, old names
    logging their replacement. Still no behaviour change — a `*_USERS`
    list that nobody is on grants nobody anything.
+
+   **Done for the two `anyuser:*` entitlements**, which are the pair
+   this document was written about. The current setting wins where both
+   are set and the old one is read where it is not, resolved the same
+   way at startup (`supersededGroupSetting`) and on reconfigure
+   (`reconfigParam.supersedes`) — a daemon restarted on a file must not
+   come up with a different policy from one that reloaded it. The two
+   old settings are declared obsolete in the knob table and appear in no
+   page, so the startup log line is the only place an operator still
+   running one meets its replacement; that is why the line names it.
+
+   **Not done for the rest of the table** — `MCP_READ`, `MCP_WRITE`,
+   `MCP_ACCESS`, `WEBUI_ACCESS`, `SERVICE_ADMIN`, `IMPERSONATION`,
+   `PROJECT_LEADS`. Each is a pluralisation plus a user half, on the
+   pattern now established, and none is urgent: unlike the two above,
+   they were never the only configuration source for a scope the server
+   advertises.
 4. **Move internal call sites and documentation** to the new names.
 5. **Deprecate `MCP_ADMIN_USERS` in earnest**: keep the behaviour, name
    the replacement at startup, and give the removal a release.

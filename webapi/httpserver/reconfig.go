@@ -217,15 +217,24 @@ func (h *Handler) SetMCPReadGroups(raw string) { h.mcpReadGroups.set(raw) }
 // SetMCPWriteGroups installs the groups required for MCP write access.
 func (h *Handler) SetMCPWriteGroups(raw string) { h.mcpWriteGroups.set(raw) }
 
-// SetMCPAdminGroups installs the groups whose members may read every
-// user's jobs through MCP. Emptying it revokes the privilege for
-// everyone -- these two, unlike the read/write groups above, have no
-// fallback to a broader group.
-func (h *Handler) SetMCPAdminGroups(raw string) { h.mcpAdminGroups.set(raw) }
+// SetAnyUserReadGroups installs the groups whose members may request
+// the anyuser:read entitlement -- reading every user's jobs. Emptying
+// it revokes the privilege for everyone named by a group: these two,
+// unlike the read/write groups above, have no fallback to a broader
+// group. The user half is set separately and is not affected.
+func (h *Handler) SetAnyUserReadGroups(raw string) { h.anyUserRead.setGroups(raw) }
 
-// SetMCPSuperuserGroups installs the groups whose members may change
-// another user's jobs through MCP.
-func (h *Handler) SetMCPSuperuserGroups(raw string) { h.mcpSuperuserGroups.set(raw) }
+// SetAnyUserReadUsers installs the identities that may request
+// anyuser:read without belonging to a configured group.
+func (h *Handler) SetAnyUserReadUsers(raw string) { h.anyUserRead.setUsers(raw) }
+
+// SetAnyUserWriteGroups installs the groups whose members may request
+// the anyuser:write entitlement -- changing any user's jobs.
+func (h *Handler) SetAnyUserWriteGroups(raw string) { h.anyUserWrite.setGroups(raw) }
+
+// SetAnyUserWriteUsers installs the identities that may request
+// anyuser:write without belonging to a configured group.
+func (h *Handler) SetAnyUserWriteUsers(raw string) { h.anyUserWrite.setUsers(raw) }
 
 // SetWebUIAccessGroups installs the groups required to log in to the web
 // interface. Emptying it restores the fallback to the MCP access groups.

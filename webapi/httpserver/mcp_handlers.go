@@ -810,9 +810,9 @@ func (h *Handler) handleOAuth2Authorize(w http.ResponseWriter, r *http.Request) 
 // Enforcement is unchanged and still lives in getScopesForGroups. This only
 // decides what is worth showing; a caller who posts a scope that was never
 // rendered still does not receive it.
-func (h *Handler) grantableScopes(userGroups, requested []string) []string {
+func (h *Handler) grantableScopes(actor string, userGroups, requested []string) []string {
 	allowed := make(map[string]bool, len(requested))
-	for _, scope := range h.getScopesForGroups(userGroups, requested) {
+	for _, scope := range h.getScopesForGroups(actor, userGroups, requested) {
 		allowed[scope] = true
 	}
 	out := make([]string, 0, len(requested))
@@ -1008,7 +1008,7 @@ func (h *Handler) handleOAuth2Consent(w http.ResponseWriter, r *http.Request) {
 
 			// Grant scopes based on group membership intersected
 			// with what the user accepted on the form.
-			grantedScopes := h.getScopesForGroups(groups, acceptedScopes)
+			grantedScopes := h.getScopesForGroups(username, groups, acceptedScopes)
 			grantedScopes = h.scopesAllowedByScheddACL(ctx, username, grantedScopes)
 			for _, scope := range grantedScopes {
 				ar.GrantScope(scope)
@@ -2469,7 +2469,7 @@ func (h *Handler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) {
 		// intersection was always empty and every device login came back
 		// with "openid" alone.
 		acceptedScopes := narrowConsentScopes(request.GetRequestedScopes(), r.Form)
-		acceptedScopes = h.getScopesForGroups(userGroups, acceptedScopes)
+		acceptedScopes = h.getScopesForGroups(username, userGroups, acceptedScopes)
 		acceptedScopes = h.scopesAllowedByScheddACL(ctx, username, acceptedScopes)
 		// The set an operator may later restore this grant to. Same
 		// reasoning as the consent handler: recorded where what the
@@ -2589,7 +2589,7 @@ func (h *Handler) renderConsentPage(ctx context.Context, w http.ResponseWriter, 
 	// group policy allows, and then what the access point itself would
 	// authorize. Asking here is what keeps the page honest -- otherwise
 	// it offers scopes the first refresh will strip.
-	p.RequestedScopes = h.grantableScopes(userGroups, p.RequestedScopes)
+	p.RequestedScopes = h.grantableScopes(p.Username, userGroups, p.RequestedScopes)
 	p.RequestedScopes = h.scopesAllowedByScheddACL(ctx, p.Username, p.RequestedScopes)
 	p.RequestedScopes = withoutDeprecatedScopes(p.RequestedScopes)
 	p.RequestedScopes = withoutSupersededDuplicates(p.RequestedScopes)

@@ -13,7 +13,7 @@ func TestReadOnlyMCPDoesNotGrantWriteScope(t *testing.T) {
 	h := &Handler{}
 	h.mcpReadOnly.Store(true)
 
-	granted := h.getScopesForGroups(nil, []string{"mcp:read", "mcp:write"})
+	granted := h.getScopesForGroups("", nil, []string{"mcp:read", "mcp:write"})
 	if slices.Contains(granted, "mcp:write") {
 		t.Errorf("mcp:write was granted on a read-only server; granted = %v", granted)
 	}
@@ -30,7 +30,7 @@ func TestReadOnlyMCPDoesNotGrantWriteScope(t *testing.T) {
 // untouched.
 func TestWriteScopeStillGrantedWhenNotReadOnly(t *testing.T) {
 	h := &Handler{}
-	granted := h.getScopesForGroups(nil, []string{"mcp:read", "mcp:write"})
+	granted := h.getScopesForGroups("", nil, []string{"mcp:read", "mcp:write"})
 	if !slices.Contains(granted, "mcp:write") {
 		t.Errorf("mcp:write was refused on an ordinary server; granted = %v", granted)
 	}

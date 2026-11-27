@@ -518,6 +518,9 @@ var initialisms = map[string]string{
 	"API": "API", "CA": "CA", "DB": "DB", "ID": "ID", "IDP": "IDP",
 	"GB": "GB", "LLM": "LLM", "MB": "MB", "MCP": "MCP", "OAUTH2": "OAuth2", "SSH": "SSH", "TLS": "TLS",
 	"UI": "UI", "URL": "URL", "VSCODE": "VSCode", "AP": "AP", "KEK": "KEK", "CPUS": "CPUs",
+	// Not an initialism: one configuration word for the two words in
+	// the scope it configures, anyuser:read.
+	"ANYUSER": "AnyUser",
 }
 
 // Identifier turns HTTP_API_TLS_CA_CERT into TLSCACert.

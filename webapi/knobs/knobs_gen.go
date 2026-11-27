@@ -8,6 +8,52 @@ import (
 	"github.com/htcondor/golang-htcondor/config"
 )
 
+// AnyUserReadGroups is HTTP_API_ANYUSER_READ_GROUPS.
+//
+// Groups whose members may request the anyuser:read entitlement, which
+// reads every user's jobs on this access point rather than only the
+// caller's own. Comma-separated, or a JSON array to spell a group name
+// containing a comma. Unset means nobody may request it, so the
+// entitlement is off until this or HTTP_API_ANYUSER_READ_USERS names
+// somebody. Membership is permission to ask for the entitlement, never
+// the entitlement itself: a credential holds it only by requesting it
+// and being granted it.
+var AnyUserReadGroups = config.DefineString("HTTP_API_ANYUSER_READ_GROUPS", "", config.Reconfig,
+	"Groups whose members may request the anyuser:read entitlement, which reads every user's jobs on this access point rather than only the caller's own. Comma-separated, or a JSON array to spell a group name containing a comma. Unset means nobody may request it, so the entitlement is off until this or HTTP_API_ANYUSER_READ_USERS names somebody. Membership is permission to ask for the entitlement, never the entitlement itself: a credential holds it only by requesting it and being granted it.")
+
+// AnyUserReadUsers is HTTP_API_ANYUSER_READ_USERS.
+//
+// Users who may request the anyuser:read entitlement, named
+// individually rather than through a group -- which is the only half
+// that works where HTTP_API_GROUP_SOURCE is token and the token
+// carries no groups. Identities are compared the way HTCondor compares
+// two users: the domain case-insensitively, the part before the @
+// exactly, and a bare name matches only a bare name. Write
+// alice@example.org, not alice, where the access point reports
+// fully-qualified users.
+var AnyUserReadUsers = config.DefineString("HTTP_API_ANYUSER_READ_USERS", "", config.Reconfig,
+	"Users who may request the anyuser:read entitlement, named individually rather than through a group -- which is the only half that works where HTTP_API_GROUP_SOURCE is token and the token carries no groups. Identities are compared the way HTCondor compares two users: the domain case-insensitively, the part before the @ exactly, and a bare name matches only a bare name. Write alice@example.org, not alice, where the access point reports fully-qualified users.")
+
+// AnyUserWriteGroups is HTTP_API_ANYUSER_WRITE_GROUPS.
+//
+// Groups whose members may request the anyuser:write entitlement,
+// which removes, holds, releases and edits any user's jobs on this
+// access point. Deliberately not implied by anyuser:read and not
+// implying it: seeing every job and being able to remove every job are
+// different privileges, and the group that should hold the second is
+// usually much smaller. Unset means nobody may request it, here or in
+// HTTP_API_ANYUSER_WRITE_USERS.
+var AnyUserWriteGroups = config.DefineString("HTTP_API_ANYUSER_WRITE_GROUPS", "", config.Reconfig,
+	"Groups whose members may request the anyuser:write entitlement, which removes, holds, releases and edits any user's jobs on this access point. Deliberately not implied by anyuser:read and not implying it: seeing every job and being able to remove every job are different privileges, and the group that should hold the second is usually much smaller. Unset means nobody may request it, here or in HTTP_API_ANYUSER_WRITE_USERS.")
+
+// AnyUserWriteUsers is HTTP_API_ANYUSER_WRITE_USERS.
+//
+// Users who may request the anyuser:write entitlement, named
+// individually rather than through a group. Identities are compared as
+// for HTTP_API_ANYUSER_READ_USERS.
+var AnyUserWriteUsers = config.DefineString("HTTP_API_ANYUSER_WRITE_USERS", "", config.Reconfig,
+	"Users who may request the anyuser:write entitlement, named individually rather than through a group. Identities are compared as for HTTP_API_ANYUSER_READ_USERS.")
+
 // BuildDefaultCPUs is HTTP_API_BUILD_DEFAULT_CPUS.
 //
 // CPUs a container build requests when the caller does not say. A
@@ -374,14 +420,17 @@ var Log = config.DefineString("HTTP_API_LOG", "", config.Startup,
 
 // MCPAdminGroup is HTTP_API_MCP_ADMIN_GROUP.
 //
-// Obsolete: do not use it in new configuration. Group(s) whose members
-// may read every user's jobs through MCP. Read as a raw string and
-// split downstream, so a change to how lists are parsed does not
-// change who is privileged.
+// Obsolete: superseded by HTTP_API_ANYUSER_READ_GROUPS. Group(s) whose
+// members may read every user's jobs. Honored where
+// HTTP_API_ANYUSER_READ_GROUPS is unset, and named as superseded in
+// the startup log when it is read -- which is the only place an
+// operator still running it meets the replacement, since this setting
+// appears in no page. Read as a raw string and split downstream, so a
+// change to how lists are parsed does not change who is privileged.
 //
-// Deprecated: do not use it in new configuration.
+// Deprecated: superseded by HTTP_API_ANYUSER_READ_GROUPS.
 var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.Reconfig,
-	"Obsolete: do not use it in new configuration. Group(s) whose members may read every user's jobs through MCP. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
+	"Obsolete: superseded by HTTP_API_ANYUSER_READ_GROUPS. Group(s) whose members may read every user's jobs. Honored where HTTP_API_ANYUSER_READ_GROUPS is unset, and named as superseded in the startup log when it is read -- which is the only place an operator still running it meets the replacement, since this setting appears in no page. Read as a raw string and split downstream, so a change to how lists are parsed does not change who is privileged.")
 
 // MCPBaseURL is HTTP_API_MCP_BASE_URL.
 //
@@ -486,13 +535,15 @@ var MCPSkillsReloadInterval = config.DefineDuration("HTTP_API_MCP_SKILLS_RELOAD_
 
 // MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
 //
-// Obsolete: do not use it in new configuration. Group(s) whose members
-// may change any user's jobs through MCP. Read as a raw string and
-// split downstream, as above.
+// Obsolete: superseded by HTTP_API_ANYUSER_WRITE_GROUPS. Group(s)
+// whose members may change any user's jobs. Honored where
+// HTTP_API_ANYUSER_WRITE_GROUPS is unset, and named as superseded in
+// the startup log when it is read. Read as a raw string and split
+// downstream, as above.
 //
-// Deprecated: do not use it in new configuration.
+// Deprecated: superseded by HTTP_API_ANYUSER_WRITE_GROUPS.
 var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
-	"Obsolete: do not use it in new configuration. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
+	"Obsolete: superseded by HTTP_API_ANYUSER_WRITE_GROUPS. Group(s) whose members may change any user's jobs. Honored where HTTP_API_ANYUSER_WRITE_GROUPS is unset, and named as superseded in the startup log when it is read. Read as a raw string and split downstream, as above.")
 
 // MCPWatchMaxWait is HTTP_API_MCP_WATCH_MAX_WAIT.
 //
@@ -1190,6 +1241,10 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 // that check the table against the code. A family's per-instance settings
 // are not here: they have no name until an instance does.
 var All = []config.Knob{
+	AnyUserReadGroups.Knob,
+	AnyUserReadUsers.Knob,
+	AnyUserWriteGroups.Knob,
+	AnyUserWriteUsers.Knob,
 	BuildDefaultCPUs.Knob,
 	BuildDefaultDiskMB.Knob,
 	BuildDefaultMemoryMB.Knob,
@@ -1300,6 +1355,6 @@ var All = []config.Knob{
 // operator still has in their configuration.
 var Obsolete = map[string]string{
 	"HTTP_API_LISTEN":              "HTTP_API_LISTEN_ADDR",
-	"HTTP_API_MCP_ADMIN_GROUP":     "",
-	"HTTP_API_MCP_SUPERUSER_GROUP": "",
+	"HTTP_API_MCP_ADMIN_GROUP":     "HTTP_API_ANYUSER_READ_GROUPS",
+	"HTTP_API_MCP_SUPERUSER_GROUP": "HTTP_API_ANYUSER_WRITE_GROUPS",
 }

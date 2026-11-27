@@ -368,7 +368,7 @@ func (h *Handler) reevaluateSubjectWith(ctx context.Context, username string, gr
 				"username", username, "request_id", requestID, "groups", groups)
 			return nil, fmt.Sprintf("user no longer has required group membership: %v", err)
 		}
-		allowed := h.getScopesForGroups(groups, granted)
+		allowed := h.getScopesForGroups(username, groups, granted)
 		if narrowed := intersectScopes(granted, allowed); len(narrowed) != len(granted) {
 			h.logger.Info(logging.DestinationHTTP, "Narrowing grant to current group policy",
 				"username", username, "request_id", requestID,

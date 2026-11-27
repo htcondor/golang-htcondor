@@ -57,7 +57,7 @@ type upstreamUserInfoOracle struct {
 	// two systemGroupOracle consults, so a group read from the provider
 	// is judged by exactly the rules a group read at login was.
 	validate  func(groups []string) error
-	scopesFor func(groups, requested []string) []string
+	scopesFor func(actor string, groups, requested []string) []string
 
 	logger *logging.Logger
 	now    func() time.Time
@@ -156,7 +156,7 @@ func (o *upstreamUserInfoOracle) Check(ctx context.Context, username string, sco
 	// Still entitled to something, perhaps less. Report the difference
 	// rather than failing the refresh, so a user who lost write access
 	// keeps working read-only -- the same shape systemGroupOracle uses.
-	allowed := o.scopesFor(groups, scopes)
+	allowed := o.scopesFor(username, groups, scopes)
 	var denied []string
 	for _, s := range scopes {
 		if !containsString(allowed, s) {
