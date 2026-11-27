@@ -83,11 +83,20 @@ func TestIDPAuthorizationCodeFlow(t *testing.T) {
 		t.Fatalf("Failed to create test client: %v", err)
 	}
 
+	// The client is public, so it holds no secret and PKCE is the only
+	// thing binding the code it receives to the requester. The IDP
+	// enforces that for public clients, as a real one -- Swagger UI --
+	// already satisfies.
+	const verifier = "idp-flow-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
+	challenge := pkceChallenge(t, "S256", verifier)
+
 	// ==============================================
 	// Test 1: OAuth2 client initiates authorization
 	// ==============================================
 	// OAuth2 Client: Request authorization without user being logged in
-	authURL := "/idp/authorize?client_id=test-client&response_type=code&redirect_uri=" + url.QueryEscape(redirectURI) + "&scope=openid+profile+offline_access&state=test-state-12345678"
+	authURL := "/idp/authorize?client_id=test-client&response_type=code&redirect_uri=" + url.QueryEscape(redirectURI) +
+		"&scope=openid+profile+offline_access&state=test-state-12345678" +
+		"&code_challenge=" + challenge + "&code_challenge_method=S256"
 	req := httptest.NewRequestWithContext(context.Background(), "GET", authURL, nil)
 	w := httptest.NewRecorder()
 	server.handleIDPAuthorize(w, req)
@@ -169,6 +178,7 @@ func TestIDPAuthorizationCodeFlow(t *testing.T) {
 	tokenForm.Set("code", authCode)
 	tokenForm.Set("redirect_uri", redirectURI)
 	tokenForm.Set("client_id", "test-client")
+	tokenForm.Set("code_verifier", verifier)
 
 	req = httptest.NewRequestWithContext(context.Background(), "POST", "/idp/token", strings.NewReader(tokenForm.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
