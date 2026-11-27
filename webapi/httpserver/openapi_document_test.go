@@ -146,3 +146,89 @@ func TestOpenAPIRefsResolve(t *testing.T) {
 		t.Errorf("unresolved $ref: %s", strings.Join(names, ", "))
 	}
 }
+
+// unimplementedOperations names every operation the document says this
+// server does not implement, by operationId.
+//
+// Empty on purpose. An entry here is a promise that the handler really
+// does refuse the request, and the point of the list is that adding one
+// takes a deliberate edit to a file whose comment says what the promise
+// costs.
+var unimplementedOperations = map[string]string{}
+
+// An operation that documents itself as unimplemented has to still be
+// unimplemented.
+//
+// deleteJob and editJob were both described as "NOT YET IMPLEMENTED"
+// with a single 501 response, for long enough that the handlers behind
+// them had grown owner scoping, superuser impersonation and an audit
+// trail. A client generated from the document could not remove or edit
+// a job at all, and nothing failed: the route existed, so the
+// route-coverage check in openapi_routes_test.go passed, and the
+// document was self-consistent, so every check inside it passed too.
+//
+// What this does NOT do is read the handler. It cannot: deciding
+// whether a route is implemented means calling it, and every one of
+// these needs a credential and a schedd first. What it does is make the
+// claim expensive to make and impossible to make silently -- which is
+// the half that was missing, since nobody chose to leave those two
+// stale, they were simply never revisited.
+func TestNoOperationSilentlyClaimsToBeUnimplemented(t *testing.T) {
+	doc := specDoc(t)
+	paths, _ := doc["paths"].(map[string]any)
+
+	seen := map[string]bool{}
+	for path, item := range paths {
+		methods, _ := item.(map[string]any)
+		for method, raw := range methods {
+			op, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := op["operationId"].(string)
+			where := fmt.Sprintf("%s %s", strings.ToUpper(method), path)
+			if id != "" {
+				where += " (" + id + ")"
+			}
+
+			desc, _ := op["description"].(string)
+			saysSo := strings.Contains(strings.ToUpper(desc), "NOT YET IMPLEMENTED")
+
+			responses, _ := op["responses"].(map[string]any)
+			onlyRefusal := false
+			if len(responses) == 1 {
+				_, onlyRefusal = responses["501"]
+			}
+
+			if !saysSo && !onlyRefusal {
+				continue
+			}
+			seen[id] = true
+			if _, allowed := unimplementedOperations[id]; allowed {
+				continue
+			}
+			switch {
+			case saysSo && onlyRefusal:
+				t.Errorf("%s is documented as unimplemented. If that is still true, add its "+
+					"operationId to unimplementedOperations with the reason; if the handler "+
+					"does the work now, describe what it does and declare the responses it "+
+					"really returns.", where)
+			case saysSo:
+				t.Errorf("%s says it is not implemented but declares responses other than 501; "+
+					"one of the two is wrong.", where)
+			default:
+				t.Errorf("%s declares 501 as its only response, so no client can call it "+
+					"successfully. Declare what it returns, or add it to "+
+					"unimplementedOperations.", where)
+			}
+		}
+	}
+
+	// The other direction, so the list cannot outlive what it excuses.
+	for id, why := range unimplementedOperations {
+		if !seen[id] {
+			t.Errorf("unimplementedOperations lists %s (%q), but no operation by that id is "+
+				"documented as unimplemented; drop the entry.", id, why)
+		}
+	}
+}
