@@ -77,12 +77,31 @@ func sshConsentRedirect(sshSession, userCode string, embedded bool) string {
 // sshSessionFromRequester reads the SSH workspace a device code was
 // started for, or "" when it was not started by the SSH gateway.
 //
+// The client is checked, not just the form field. The field is written
+// by the device-authorization endpoint, which authenticates no client
+// and validates only the name's syntax, so on its own it says what some
+// caller asked for rather than who asked -- and it alone used to decide
+// that a code belonged to the SSH approval screen. That screen names no
+// client and offers no per-scope choices, both of which are deliberate
+// for a shell login and neither of which is safe for an arbitrary
+// client's grant: the privileged cross-user scopes are rendered
+// unchecked behind a warning on the generic consent page and would be
+// granted here by a plain "Sign in".
+//
+// Returning "" for a foreign code is what routes it back to the generic
+// page, so this is the whole fix rather than a refusal bolted on: the
+// redirect declines, the lookup 404s, and the per-scope page serves the
+// code as it always should have.
+//
 // Re-validated on the way out as well as on the way in. What is in the
 // row was written by an endpoint that authenticates no client, and the
 // row may predate whatever the validator says today; a name that would
 // not be accepted now must not be rendered or submitted now either.
 func sshSessionFromRequester(request fosite.Requester) string {
 	if request == nil {
+		return ""
+	}
+	if c := request.GetClient(); c == nil || c.GetID() != sshGatewayClientID {
 		return ""
 	}
 	name := strings.TrimSpace(request.GetRequestForm().Get(sshgateway.SessionFormField))
@@ -573,7 +592,14 @@ func (h *Handler) sshConsentLookup(w http.ResponseWriter, r *http.Request, usern
 	// answering for it here would let this pair of endpoints approve
 	// any device code at all while skipping the per-scope choices that
 	// page offers.
-	if sshSessionFromRequester(request) == "" {
+	//
+	// The client is tested here too, not only inside
+	// sshSessionFromRequester. This is the gate in front of an approval,
+	// and it should not depend on a helper elsewhere continuing to make
+	// the same check -- nor on no future writer of the session field
+	// appearing.
+	if request.GetClient() == nil || request.GetClient().GetID() != sshGatewayClientID ||
+		sshSessionFromRequester(request) == "" {
 		h.writeError(w, http.StatusNotFound, sshConsentNotFound)
 		return "", nil, false
 	}

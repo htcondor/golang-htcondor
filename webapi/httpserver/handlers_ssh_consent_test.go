@@ -507,3 +507,69 @@ func TestAFailedCreateLeavesTheLoginWaiting(t *testing.T) {
 		t.Error("the login was approved even though the workspace was not created")
 	}
 }
+
+// startForeignLogin registers a second device-grant client and mints a
+// code for it carrying the SSH session field, which the
+// device-authorization endpoint accepts from any caller: it
+// authenticates no client and validates only the name's syntax.
+func (f *sshConsentFixture) startForeignLogin(t *testing.T, session string) string {
+	t.Helper()
+	foreign := &fosite.DefaultClient{
+		ID:         "client-not-the-gateway",
+		GrantTypes: []string{"urn:ietf:params:oauth:grant-type:device_code"},
+		Scopes:     append(append([]string(nil), sshGatewayScopes...), scopeAnyUserWrite),
+		Public:     true,
+	}
+	if err := f.storage.CreateClient(context.Background(), foreign); err != nil {
+		t.Fatalf("create foreign client: %v", err)
+	}
+	dh := NewDeviceCodeHandler(f.storage,
+		&fosite.Config{AccessTokenIssuer: "https://ap.example.edu"}) //nolint:gosec // G101: test issuer URL
+	resp, err := dh.HandleDeviceAuthorizationRequest(
+		context.Background(), foreign, foreign.Scopes, session)
+	if err != nil {
+		t.Fatalf("device authorization: %v", err)
+	}
+	return resp.UserCode
+}
+
+// TestOnlyTheGatewaysCodesReachTheSSHScreen: a device code belongs to
+// the SSH approval surface because of the client it was issued to, not
+// because of a form field.
+//
+// The session field is written by the device-authorization endpoint,
+// which authenticates no client, so on its own it records what some
+// caller asked for rather than who asked. It alone used to route a code
+// onto this screen -- which names no client and offers no per-scope
+// choices, both deliberate for a shell login and neither appropriate for
+// another client's grant.
+//
+// The code must fall back to the generic per-scope consent page rather
+// than hit a dead end, which is what returning "" from
+// sshSessionFromRequester arranges.
+func TestOnlyTheGatewaysCodesReachTheSSHScreen(t *testing.T) {
+	f := newSSHConsentFixture(t)
+	userCode := f.startForeignLogin(t, "workspace")
+
+	if rec := f.get(t, "alice", userCode); rec.Code != http.StatusNotFound {
+		t.Errorf("read of a foreign client's code = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+
+	// And it cannot be approved here either, token or no token.
+	rec := f.post(t, "alice", sshConsentDecision{UserCode: userCode, Action: "approve"})
+	if rec.Code == http.StatusOK {
+		t.Error("a foreign client's code was approved on the SSH screen")
+	}
+
+	// The generic page still owns it: the row is untouched and pending.
+	if _, _, err := f.storage.GetDeviceCodeSessionByUserCode(context.Background(), userCode); err != nil {
+		t.Errorf("the foreign code stopped being servable by the generic page: %v", err)
+	}
+
+	// The gateway's own code still works, so this is a client test and
+	// not a blanket refusal.
+	ours := f.startLogin(t, "workspace")
+	if rec := f.get(t, "alice", ours); rec.Code != http.StatusOK {
+		t.Errorf("read of the gateway's own code = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
