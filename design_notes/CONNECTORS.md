@@ -2,9 +2,31 @@
 
 ## Status
 
-Design only. Nothing here is built. The one piece that already exists is
-the `use_oauth_services` submit keyword, which reached the job ad in #988
-and without which none of this has anywhere to land.
+**Partly built, and the line between the halves is the `kind` column in
+the table below.** This said "design only, nothing here is built" long
+after the `oauth2` kind shipped, which is the worst way for a status
+line to be wrong: a reader checking whether to build something is told
+it does not exist.
+
+| | State |
+| --- | --- |
+| `kind: oauth2` | **Built.** `webapi/connectors` is the package: the auth-code flow, per-user refresh tokens in the app database, the Google Drive and Sheets integrations, the file picker, spooling a connector's files into a job's input sandbox, binding a submission's results to a spreadsheet, and the admin pages that configure one. Reached at `/api/v1/connect`, configured by the `HTTP_API_CONNECTOR_<NS>_<ID>_*` family, gated per connector by a `_GROUPS` list. |
+| `kind: credd` | **Not built.** `beginConnect` answers 501 naming the kind, rather than redirecting nowhere. |
+| `kind: vault` | **Not built.** Same. |
+| `transfer: spool` | **Built**, and the default: this server fetches the bytes and spools them, so no third-party token reaches an execute node. |
+| `transfer: direct` | **Declared, with no plugin shipping for any builtin.** The admin usability check reports that as a problem rather than letting it fail at run time. |
+| `use_oauth_services` | Reached the job ad in #988, and is what any of this has to land in. |
+
+So the mechanism most of this document is about is the one that exists.
+What remains designed-and-unbuilt is the two bootstraps where somebody
+else holds the OAuth2 client registration, which is also where the
+analysis below is doing the most work and is worth re-reading before
+building either.
+
+There is **no documentation page for any of this** -- not in
+`docs/user/`, not in `docs/operator/` -- for a feature users grant
+their own Google accounts to. That is the largest single gap in the
+documentation tree; see `design_notes/DOCUMENTATION_SITE.md`.
 
 Written after tracing HTCondor's three credential-bootstrap mechanisms to
 their source, because from the outside they look like one mechanism and
