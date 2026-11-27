@@ -315,3 +315,125 @@ func handWrittenPart(body string) (string, error) {
 	}
 	return body[:i] + body[j+len(end):], nil
 }
+
+// settingLiterals is every HTTP_API_ name spelled as a string literal
+// in a file that is neither generated nor a test, with the files that
+// spell it.
+func settingLiterals(t *testing.T) map[string][]string {
+	t.Helper()
+	name := regexp.MustCompile(`"(HTTP_API_[A-Z0-9_]*)"`)
+	out := map[string][]string{}
+	err := filepath.Walk("..", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			switch info.Name() {
+			case "node_modules", "testdata", ".worktrees":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch {
+		case !strings.HasSuffix(path, ".go"),
+			strings.HasSuffix(path, "_test.go"),
+			strings.HasSuffix(path, "_gen.go"),
+			// The generator spells names in the strings it emits.
+			strings.HasSuffix(path, "generate.go"):
+			return nil
+		}
+		b, err := os.ReadFile(path) //nolint:gosec // G304: path comes from walking the module
+		if err != nil {
+			return err
+		}
+		for _, m := range name.FindAllStringSubmatch(string(b), -1) {
+			if !slices.Contains(out[m[1]], path) {
+				out[m[1]] = append(out[m[1]], path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// A setting that is in the table has an accessor, and the accessor
+// carries its name. Spelling the name by hand as well puts the same
+// string in two places, which is the drift this table exists to end --
+// and it is not caught by anything else, because both spellings are
+// correct today.
+//
+// Where the value cannot go through the typed accessor -- a strictness
+// the type does not implement, a log message, a provenance label --
+// the name still comes from the knob, as k.Name().
+func TestNoDeclaredSettingIsAlsoSpelledByHand(t *testing.T) {
+	declared := map[string]bool{}
+	for _, k := range knobs.All {
+		declared[k.Name()] = true
+	}
+	for name, files := range settingLiterals(t) {
+		if declared[name] {
+			t.Errorf("%s is declared in knobs.yaml and also written as a string literal in "+
+				"%s. Use the generated accessor, or its .Name() where the read cannot go "+
+				"through one.", name, strings.Join(files, ", "))
+		}
+	}
+}
+
+// undeclaredInventory is the recorded list of names still spelled by
+// hand, read from testdata so the Go file stays readable and declaring
+// a setting shows up as one line leaving a list.
+func undeclaredInventory(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", "undeclared-settings.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			out[line] = true
+		}
+	}
+	return out
+}
+
+// The migration's remaining surface, frozen so it can only shrink.
+//
+// Checked in both directions. A name spelled by hand and absent from
+// the inventory is new stringly configuration, which is what this
+// stops: without it, the settings that no page documents would start
+// accumulating again the moment attention moved elsewhere. A name in
+// the inventory that is no longer spelled by hand is a line somebody
+// forgot to delete, and leaving it would let the list stop meaning
+// anything.
+func TestUndeclaredSettingsOnlyShrink(t *testing.T) {
+	declared := map[string]bool{}
+	for _, k := range knobs.All {
+		declared[k.Name()] = true
+	}
+	spelled := settingLiterals(t)
+	inventory := undeclaredInventory(t)
+
+	for name, files := range spelled {
+		if declared[name] || inventory[name] {
+			continue
+		}
+		t.Errorf("%s is read as a string literal in %s and is in neither knobs.yaml nor "+
+			"testdata/undeclared-settings.txt. Declare it in the table -- which is what "+
+			"puts it in the configuration reference -- rather than adding it to the "+
+			"inventory, which exists to be emptied.", name, strings.Join(files, ", "))
+	}
+	for name := range inventory {
+		if _, still := spelled[name]; !still {
+			t.Errorf("%s is in testdata/undeclared-settings.txt but nothing spells it by "+
+				"hand any more; remove the line.", name)
+		}
+		if declared[name] {
+			t.Errorf("%s is in testdata/undeclared-settings.txt and is now declared in "+
+				"knobs.yaml; remove the line.", name)
+		}
+	}
+}

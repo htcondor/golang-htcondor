@@ -14,6 +14,7 @@ import (
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/connectors"
 	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 	"github.com/htcondor/golang-htcondor/webapi/ownerscope"
 )
 
@@ -458,7 +459,7 @@ func (h *Handler) startConnectorOutputSweeper(ctx context.Context) {
 	if h.multi != nil {
 		h.logger.Warn(logging.DestinationHTTP,
 			"Not starting the connector output sweep: it is not available in multi-AP mode",
-			"parameter", "HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL")
+			"parameter", knobs.ConnectorOutputSweepInterval.Name())
 		return
 	}
 	if h.connectorStore() == nil {

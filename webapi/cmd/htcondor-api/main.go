@@ -2041,7 +2041,7 @@ func reportStartupFailureToLog(startupErr error) {
 	if cfg == nil {
 		return
 	}
-	logPath, ok := cfg.Get("HTTP_API_LOG")
+	logPath, ok := cfg.Get(knobs.Log.Name())
 	if !ok || logPath == "" || logPath == "stdout" || logPath == "stderr" {
 		return
 	}
