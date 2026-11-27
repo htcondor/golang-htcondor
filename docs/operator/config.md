@@ -185,9 +185,14 @@ The OAuth2 client id this access point registered with the provider.
 
 **String.** Unset by default. A change is installed by `condor_reconfig`.
 
-File holding the OAuth2 client secret. A connector with no readable
-secret is refused rather than offered. Holds or names a credential:
-keep it readable only by the account the server runs as.
+File holding the OAuth2 client secret, re-read on each use so a
+rotated secret at an unchanged path needs no restart. A connector may
+instead carry a secret stored through the admin pages; this setting
+wins where both exist. A connector whose secret cannot be read is
+still LISTED, and fails when somebody tries to connect it with a 503
+naming it -- so check a new connector with the admin test rather than
+waiting for a user to find it. Holds or names a credential: keep it
+readable only by the account the server runs as.
 
 #### `HTTP_API_CONNECTOR_<instance>_ENABLED`
 
@@ -201,8 +206,13 @@ configuration.
 
 **Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
 
-Group(s) whose members may connect this account. Unset offers it to
-everyone who may sign in.
+Group(s) whose members may connect this account. A connector with none
+may be connected by NOBODY, the same way a site app with no groups is
+not published: an empty value is far more often a mistake than a
+deliberate "nobody". Write "*" for every signed-in user. Membership is
+re-read on each use rather than recorded when the account was
+connected, so removing somebody from the group takes their access
+away.
 
 #### `HTTP_API_CONNECTOR_<instance>_KIND`
 
