@@ -57,7 +57,97 @@ Demo mode will:
 
 ## MCP Tools
 
-The server provides the following MCP tools:
+The whole catalogue is below. A few tools then get a section of their
+own further down, where an example is worth more than a line — those
+sections are **not** the catalogue, and for a while this heading
+promised one and listed sixteen of fifty-two.
+
+What a tool actually accepts is served live: `tools/list` on `/mcp` is
+authoritative, and `doc_guide` with the `tools` topic is how an agent
+reads the same thing. This table is the human-readable index, kept
+complete by `TestEveryToolIsNamedInTheREADME`.
+
+The split is the one the server publishes as MCP behavioural hints, so
+it is the same split a client sees.
+
+### Read-only
+
+| Tool | |
+| --- | --- |
+| `aggregate_jobs` | Summarize jobs |
+| `analyze_issues` | Diagnose job failures |
+| `analyze_job_match` | Diagnose job matching |
+| `analyze_utilization` | Report resource utilization |
+| `cancel_watch` | Cancel a watch |
+| `check_watches` | Collect watch results |
+| `doc_config_variables` | Look up config settings |
+| `doc_guide` | Read the agent guide |
+| `doc_job_attributes` | Look up job attributes |
+| `doc_machine_attributes` | Look up machine attributes |
+| `doc_search` | Search the HTCondor manual |
+| `doc_submit_syntax` | Look up submit syntax |
+| `get_access_point_policy` | Read access point policy |
+| `get_credential_status` | Check credential status |
+| `get_job` | Job details |
+| `get_job_output` | Fetch job output files |
+| `get_job_stderr` | Read job stderr |
+| `get_job_stdout` | Read job stdout |
+| `get_version` | Server version |
+| `interactive_session_list` | List interactive sessions |
+| `list_access_points` | List access points (multi-AP mode) |
+| `list_service_credentials` | List stored credentials |
+| `query_history_db` | Query the history database |
+| `query_job_archive` | Search completed jobs |
+| `query_job_epochs` | Read job run attempts |
+| `query_jobs` | Query the job queue |
+| `query_jobs_as_of` | Query past job state |
+| `query_pool` | Query pool machines |
+| `query_transfer_history` | Read file transfer history |
+| `skills_get` | Read a site skill |
+| `skills_list` | List site skills |
+| `tail_job_output` | Tail a running job's output |
+| `watch_jobs` | Watch jobs for a change |
+| `whoami` | Who am I here |
+
+`watch_jobs`, `check_watches` and `cancel_watch` register and read
+bookkeeping in this server but touch no job, which is why the scope
+model treats them as reads.
+
+### Changing something
+
+| Tool | |
+| --- | --- |
+| `advertise_to_collector` | Advertise to the collector |
+| `build_container` | Build a container image |
+| `create_input_upload_url` | Create an input upload link |
+| `create_output_download_url` | Create an output download link |
+| `create_watch_url` | Create a watch link |
+| `delete_service_credential` | Delete a credential |
+| `edit_job` | Edit job attributes |
+| `exec_in_job` | Run a command in a job |
+| `hold_job` | Hold a job |
+| `interactive_session_exec` | Run a command in a session |
+| `interactive_session_start` | Start an interactive session |
+| `interactive_session_stop` | Stop an interactive session |
+| `release_job` | Release a held job |
+| `remove_job` | Remove a job |
+| `remove_jobs` | Remove several jobs |
+| `store_service_credential` | Store a credential |
+| `submit_dag` | Submit a DAG workflow |
+| `submit_job` | Submit a job |
+| `upload_job_input` | Upload job input files |
+
+The three `create_*_url` tools mint a link rather than moving bytes,
+and are writes because the link is a capability they created.
+
+**Not every tool is offered by every server.** Credential tools need a
+credd, `list_access_points` needs multi-AP mode, interactive tools and
+builds follow their own settings, and a site can withdraw any of them
+with `HTTP_API_MCP_DISABLED_TOOLS`. A read-only server offers no tool
+from the second table at all. See
+[Agents: MCP, site skills, chat](../../docs/operator/agents.md).
+
+## Tools with an example
 
 ### submit_job
 
