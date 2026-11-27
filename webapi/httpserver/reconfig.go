@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Dynamic parameters: the setters a reconfigure (SIGHUP, or condor_reconfig via
@@ -115,18 +116,18 @@ func (h *Handler) reconfigOffered(name, spec string) bool {
 // being made, which is the opposite of what these settings are careful
 // about.
 func (h *Handler) SetInteractiveJupyter(spec string) {
-	h.interactive.set(appJupyter, h.reconfigOffered("HTTP_API_INTERACTIVE_JUPYTER", spec))
+	h.interactive.set(appJupyter, h.reconfigOffered(knobs.InteractiveJupyter.Name(), spec))
 }
 
 // SetInteractiveVSCode turns the VS Code application on or off.
 func (h *Handler) SetInteractiveVSCode(spec string) {
-	h.interactive.set(appVSCode, h.reconfigOffered("HTTP_API_INTERACTIVE_VSCODE", spec))
+	h.interactive.set(appVSCode, h.reconfigOffered(knobs.InteractiveVSCode.Name(), spec))
 }
 
 // SetInteractiveTerminal turns the Terminal application on or off,
 // and with it the MCP tool that starts the same kind of session.
 func (h *Handler) SetInteractiveTerminal(spec string) {
-	on := h.reconfigOffered("HTTP_API_INTERACTIVE_TERMINAL", spec)
+	on := h.reconfigOffered(knobs.InteractiveTerminal.Name(), spec)
 	h.interactive.set(appTerminal, on)
 	// The MCP interactive-session tools are the other front door onto
 	// the same thing, so they follow it. See interactive_apps.go.

@@ -303,6 +303,43 @@ Extra submit-file lines added to every interactive session job --
 terminal, VS Code and JupyterLab. Operator-only configuration, spliced
 in as written, as with the submit-file settings above.
 
+### `HTTP_API_INTERACTIVE_JUPYTER`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Offer JupyterLab sessions. On by default. Turning it off refuses new
+ones while sessions already running keep working, so they drain rather
+than being dropped -- which is why it is applied by a reconfigure and
+not by a restart. A value that is not a boolean refuses to start.
+
+See [Which applications this access point
+offers](interactive.md#which-applications-this-access-point-offers).
+
+### `HTTP_API_INTERACTIVE_REQUIREMENTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+ClassAd expression ANDed into the Requirements of every interactive
+session job. A terminal is only worth starting on a machine it can be
+attached to, and whether that works is a property of the machine. An
+expression that does not parse refuses to start rather than being
+dropped, since a dropped requirement sends sessions to machines they
+cannot be used on.
+
+### `HTTP_API_INTERACTIVE_TERMINAL`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Offer terminal sessions. On by default, and otherwise as above.
+Turning it off also withdraws the MCP interactive_session_start tool,
+which starts the same thing.
+
+### `HTTP_API_INTERACTIVE_VSCODE`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Offer VS Code sessions. On by default, and otherwise exactly as above.
+
 ### `HTTP_API_JOB_QUEUE_LOG`
 
 **String.** Unset uses JOB_QUEUE_LOG when that file is actually present. Changing it needs a restart.
@@ -314,6 +351,51 @@ server shares a host with its schedd; where it does not -- an API
 server in its own container, the usual deployment -- there is nothing
 to tail and that is not a misconfiguration. Named explicitly and
 absent is an operator error, and is reported as one.
+
+### `HTTP_API_JUPYTER_KERNEL_IDLE_SEC`
+
+**Whole number.** Default `3600`. Changing it needs a restart.
+
+How long in whole seconds a JupyterLab kernel may sit without
+executing before it is culled and the server shuts down. Measured from
+kernel execution rather than HTTP traffic, so a tab polling in the
+background does not look busy. Zero disables it, and an unreadable
+value is reported as above.
+
+### `HTTP_API_JUPYTER_MAX_LIFETIME_SEC`
+
+**Whole number.** Default `28800`. Changing it needs a restart.
+
+Wall-clock ceiling on a JupyterLab session in whole seconds, counted
+from when it starts running. Enforced by the schedd through
+periodic_remove, so it holds whatever the sandbox or the browser are
+doing. Zero disables it. A value that is not a non-negative whole
+number is reported and the default applies.
+
+### `HTTP_API_JUPYTER_RECONNECT_GRACE_SEC`
+
+**Whole number.** Default `300`. Changing it needs a restart.
+
+How long in whole seconds a session whose tunnel dropped is kept for
+its helper to dial back. Meanwhile the session stays listed and its
+proxy answers 503 with Retry-After; past it the session is closed and
+a late redial is refused, which ends the job. Not turnable off either:
+zero, negative and unreadable values fall back to the default and
+anything above 3600 is clamped, each with a report.
+
+### `HTTP_API_JUPYTER_START_GRACE_SEC`
+
+**Whole number.** Default `14400`. Changing it needs a restart.
+
+How long in whole seconds a JupyterLab job may wait to start
+executing, counted from submission. Past it the schedd removes the job
+and the token it would have connected with expires ten minutes later,
+so a job never starts holding a token that is already dead. A job that
+ran and went back to the queue -- evicted, or held and released -- is
+removed too, because it would rerun with a token its first run spent.
+This cannot be turned off: zero, negative and unreadable values fall
+back to the default and anything above 604800 (seven days) is clamped,
+each with a report.
 
 ### `HTTP_API_JUPYTER_WORK_DIR`
 
@@ -884,6 +966,18 @@ authentication rather than relaxing it. Off by default, and the server
 logs a warning for as long as it is on. Leave it off anywhere a real
 person has an account.
 
+### `HTTP_API_VSCODE_IMAGE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The container image a VS Code session runs. Any transfer scheme works,
+so a .sif staged on OSDF can be named directly. Set, it wins outright
+and a caller cannot override it; unset, a caller may name an image,
+which grants them nothing new since they can already submit a job with
+any image. Unset otherwise runs a published code-server image.
+
+See [VS Code sessions](interactive.md#vs-code-sessions).
+
 ### `HTTP_API_WRITE_TIMEOUT`
 
 **Duration.** Default `30s`. Changing it needs a restart.
@@ -974,15 +1068,7 @@ each one.
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
 | `HTTP_API_MCP_SKILLS_DIR` | Directory of site-authored Markdown skills to publish to agents. Re-read periodically and on SIGHUP. See [Site skills](agents.md#site-skills). |
 | `HTTP_API_MCP_SKILLS_RELOAD_INTERVAL` | How often to re-read `HTTP_API_MCP_SKILLS_DIR` so a checkout updated underneath the daemon is noticed without a reconfigure (a duration, e.g. `1m`). Default `5m`; `0` disables the poll and leaves reloads to `condor_reconfig`. The check is stat-only until something actually changes. Read at startup. |
-| `HTTP_API_JUPYTER_MAX_LIFETIME_SEC` | Wall-clock ceiling on a JupyterLab session, from when it starts running. Enforced by the schedd (`periodic_remove`), so it holds whatever the sandbox or the browser are doing. Default 28800 (8h); `0` disables. |
-| `HTTP_API_JUPYTER_KERNEL_IDLE_SEC` | How long a JupyterLab kernel may sit without executing before it is culled and the server shuts down. Measured from kernel execution, not HTTP traffic, so a tab polling in the background does not look busy. Default 3600; `0` disables. |
-| `HTTP_API_JUPYTER_START_GRACE_SEC` | How long a JupyterLab job may wait to start executing, from when it is submitted. Past it the schedd removes the job (`periodic_remove`, with the remove reason "JupyterLab session did not start within …"), and the token it would have connected with expires 10 minutes later, so a job never starts with a token that is already dead. A job that ran and went back to the queue (evicted, or held and released) is removed too, as "JupyterLab session was interrupted and cannot restart": it would rerun with a token its first run spent. Default 14400 (4h). Cannot be turned off: `0`, negative or unreadable values fall back to the default, and values above 604800 (7 days) are clamped, each with a warning. |
-| `HTTP_API_JUPYTER_RECONNECT_GRACE_SEC` | How long a session whose tunnel dropped is kept for its helper to dial back. Meanwhile the session stays listed and its proxy answers 503 with `Retry-After`; past it the session is closed and a late redial is refused, which ends the job. Default 300. Cannot be turned off: `0`, negative or unreadable values fall back to the default, and values above 3600 are clamped, each with a warning. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |
-| `HTTP_API_INTERACTIVE_JUPYTER` | Offer JupyterLab sessions. Default `true`. `false` refuses new ones; sessions already running keep working so they drain. Applied on SIGHUP. See [Which applications this access point offers](interactive.md#which-applications-this-access-point-offers). |
-| `HTTP_API_INTERACTIVE_VSCODE` | Offer VS Code sessions. Default `true`, and otherwise as above. |
-| `HTTP_API_INTERACTIVE_TERMINAL` | Offer terminal sessions. Default `true`, and otherwise as above. Also withdraws the MCP `interactive_session_start` tool, which starts the same thing. |
-| `HTTP_API_VSCODE_IMAGE` | Container image a VS Code session runs. Any transfer scheme works, so a `.sif` staged on OSDF can be named directly. Set, it wins outright and a caller cannot override it; unset, a caller may name an image, which grants nothing new since they can already submit a job with any image. Defaults to a published code-server image. See [VS Code sessions](interactive.md#vs-code-sessions). |
 | `HTTP_API_MCP_READ_ONLY` | Serve MCP with no tool that changes anything, for every caller whatever their scopes. Default `false`. `mcp:write` is neither advertised nor granted while it is on. Applied on SIGHUP. See [A read-only access point](agents.md#a-read-only-access-point). |
 | `HTTP_API_MCP_CONFIRM_SUBMIT_OVER` | Ask the person running the client to confirm before `submit_job` submits more than this many jobs. Default `0`, which is off. Needs a client that can present the question: one that cannot — including any client older than MCP protocol 2026-07-28 — proceeds unasked, logged at `WARN`. This is a prompt, not a limit. Applied on SIGHUP. See [Asking a person before a bulk operation](agents.md#asking-a-person-before-a-bulk-operation). |
 | `HTTP_API_MCP_CONFIRM_REMOVE_OVER` | The same, for the number of jobs `remove_jobs` would remove. Default `0`, off. Counting the matches costs one extra queue query per gated call. |

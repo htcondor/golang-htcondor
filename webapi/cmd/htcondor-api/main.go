@@ -657,16 +657,17 @@ func loadJupyterWorkDir(cfg *config.Config) string {
 // The lifetime ceiling matches the interactive terminal's DefaultMaxLease:
 // both are "how long may one interactive slot be held", and a site that
 // wants them to differ can say so.
-const (
-	defaultJupyterMaxLifetimeSec = 8 * 60 * 60
-	defaultJupyterKernelIdleSec  = 60 * 60
-)
+const ()
 
 // loadJupyterLimitSec reads one of the JupyterLab session limits, in
 // seconds. An explicit 0 turns the limit off, which is why this
 // distinguishes "unset" from "set to zero" rather than treating both as
 // "use the default".
-func loadJupyterLimitSec(cfg *config.Config, logger *logging.Logger, name string, def int) int {
+// The default comes from the knob rather than a constant beside it, so
+// the number an operator reads in the configuration reference is the
+// number that applies.
+func loadJupyterLimitSec(cfg *config.Config, logger *logging.Logger, k config.IntKnob) int {
+	name, def := k.Name(), int(k.Default())
 	v, ok := cfg.Get(name)
 	if !ok || strings.TrimSpace(v) == "" {
 		return def
@@ -690,7 +691,8 @@ func loadJupyterLimitSec(cfg *config.Config, logger *logging.Logger, name string
 // unbounded reconnect grace a session nobody can reach that never leaves
 // the list. Zero, negative or unreadable falls back to the default and a
 // value past the ceiling is clamped, each with a warning.
-func loadJupyterGraceSec(cfg *config.Config, logger *logging.Logger, name string, def, ceiling int) int {
+func loadJupyterGraceSec(cfg *config.Config, logger *logging.Logger, k config.IntKnob, ceiling int) int {
+	name, def := k.Name(), int(k.Default())
 	v, ok := cfg.Get(name)
 	if !ok || strings.TrimSpace(v) == "" {
 		return def
@@ -929,7 +931,7 @@ func privilegedPortOf(addr string) (int, error) {
 }
 
 func loadInteractiveRequirements(cfg *config.Config, logger *logging.Logger) string {
-	raw, ok := cfg.Get("HTTP_API_INTERACTIVE_REQUIREMENTS")
+	raw, ok := cfg.Get(knobs.InteractiveRequirements.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return ""
 	}
@@ -2801,12 +2803,12 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		IDPAccessTokenLifespan:     idpAccessLifespan,
 		IDPRefreshTokenLifespan:    idpRefreshLifespan,
 		JupyterWorkDir:             loadJupyterWorkDir(cfg),
-		JupyterMaxLifetimeSec:      loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_MAX_LIFETIME_SEC", defaultJupyterMaxLifetimeSec),
-		JupyterKernelIdleSec:       loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_KERNEL_IDLE_SEC", defaultJupyterKernelIdleSec),
-		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_START_GRACE_SEC",
-			httpserver.DefaultJupyterStartGraceSec, httpserver.MaxJupyterStartGraceSec),
-		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_RECONNECT_GRACE_SEC",
-			httpserver.DefaultJupyterReconnectGraceSec, httpserver.MaxJupyterReconnectGraceSec),
+		JupyterMaxLifetimeSec:      loadJupyterLimitSec(cfg, logger, knobs.JupyterMaxLifetimeSec),
+		JupyterKernelIdleSec:       loadJupyterLimitSec(cfg, logger, knobs.JupyterKernelIdleSec),
+		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterStartGraceSec,
+			httpserver.MaxJupyterStartGraceSec),
+		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterReconnectGraceSec,
+			httpserver.MaxJupyterReconnectGraceSec),
 		InteractiveExtraSubmit:  loadInteractiveExtraSubmit(cfg),
 		DagmanPath:              firstConfigValue(cfg, "HTTP_API_DAGMAN_PATH"),
 		JobQueueLogPath:         jobQueueLogPath,
@@ -2819,10 +2821,10 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		// Which of the three built-in interactive applications this
 		// access point offers. All three unless the operator says
 		// otherwise.
-		InteractiveJupyterDisabled:  !featureOffered(cfg, "HTTP_API_INTERACTIVE_JUPYTER"),
-		InteractiveVSCodeDisabled:   !featureOffered(cfg, "HTTP_API_INTERACTIVE_VSCODE"),
-		InteractiveTerminalDisabled: !featureOffered(cfg, "HTTP_API_INTERACTIVE_TERMINAL"),
-		VSCodeImage:                 firstConfigValue(cfg, "HTTP_API_VSCODE_IMAGE"),
+		InteractiveJupyterDisabled:  !featureOffered(cfg, knobs.InteractiveJupyter.Name()),
+		InteractiveVSCodeDisabled:   !featureOffered(cfg, knobs.InteractiveVSCode.Name()),
+		InteractiveTerminalDisabled: !featureOffered(cfg, knobs.InteractiveTerminal.Name()),
+		VSCodeImage:                 knobs.VSCodeImage.Get(cfg),
 		Build:                       loadBuildConfig(cfg, logger),
 		DBMirrorTokenSubject:        firstConfigValue(cfg, "HTTP_API_DBMIRROR_TOKEN_SUBJECT"),
 		SubmitFileDefaults:          loadSubmitFileLines(cfg, knobs.SubmitFileDefaults),
@@ -3288,12 +3290,12 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 		IdentityMapPasswdFile: demoPasswdFile,
 		IDPIssuer:             httpBaseURL,
 		JupyterWorkDir:        loadJupyterWorkDir(cfg),
-		JupyterMaxLifetimeSec: loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_MAX_LIFETIME_SEC", defaultJupyterMaxLifetimeSec),
-		JupyterKernelIdleSec:  loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_KERNEL_IDLE_SEC", defaultJupyterKernelIdleSec),
-		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_START_GRACE_SEC",
-			httpserver.DefaultJupyterStartGraceSec, httpserver.MaxJupyterStartGraceSec),
-		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_RECONNECT_GRACE_SEC",
-			httpserver.DefaultJupyterReconnectGraceSec, httpserver.MaxJupyterReconnectGraceSec),
+		JupyterMaxLifetimeSec: loadJupyterLimitSec(cfg, logger, knobs.JupyterMaxLifetimeSec),
+		JupyterKernelIdleSec:  loadJupyterLimitSec(cfg, logger, knobs.JupyterKernelIdleSec),
+		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterStartGraceSec,
+			httpserver.MaxJupyterStartGraceSec),
+		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterReconnectGraceSec,
+			httpserver.MaxJupyterReconnectGraceSec),
 		InteractiveExtraSubmit: loadInteractiveExtraSubmit(cfg),
 		TemplateGlobalPath:     loadTemplateGlobalPath(cfg),
 		SpoolMaxUploadBytes:    loadSpoolMaxUploadBytes(cfg, logger),

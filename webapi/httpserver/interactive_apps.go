@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync/atomic"
+
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Which built-in interactive applications this access point offers.
@@ -59,9 +61,9 @@ const (
 // on or off. Named in the refusal, because the person who can change it
 // is usually the one reading the error.
 var interactiveAppParam = map[interactiveApp]string{
-	appJupyter:  "HTTP_API_INTERACTIVE_JUPYTER",
-	appVSCode:   "HTTP_API_INTERACTIVE_VSCODE",
-	appTerminal: "HTTP_API_INTERACTIVE_TERMINAL",
+	appJupyter:  knobs.InteractiveJupyter.Name(),
+	appVSCode:   knobs.InteractiveVSCode.Name(),
+	appTerminal: knobs.InteractiveTerminal.Name(),
 }
 
 // interactiveAppTitle is what the app is called in a message to a

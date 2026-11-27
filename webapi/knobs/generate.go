@@ -517,7 +517,7 @@ func knobType(kind string) string {
 var initialisms = map[string]string{
 	"API": "API", "CA": "CA", "DB": "DB", "ID": "ID", "IDP": "IDP",
 	"GB": "GB", "MB": "MB", "MCP": "MCP", "OAUTH2": "OAuth2", "SSH": "SSH", "TLS": "TLS",
-	"UI": "UI", "URL": "URL", "AP": "AP", "KEK": "KEK", "CPUS": "CPUs",
+	"UI": "UI", "URL": "URL", "VSCODE": "VSCode", "AP": "AP", "KEK": "KEK", "CPUS": "CPUs",
 }
 
 // Identifier turns HTTP_API_TLS_CA_CERT into TLSCACert.

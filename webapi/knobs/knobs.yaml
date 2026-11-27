@@ -887,6 +887,116 @@ knobs:
       above when it is not a whole number.
 
 
+  # Interactive sessions: which applications this access point offers,
+  # where they may run, and the JupyterLab limits.
+  - name: HTTP_API_INTERACTIVE_JUPYTER
+    type: bool
+    default: "true"
+    scope: reconfig
+    doc: >
+      Offer JupyterLab sessions. On by default. Turning it off refuses
+      new ones while sessions already running keep working, so they
+      drain rather than being dropped -- which is why it is applied by
+      a reconfigure and not by a restart. A value that is not a boolean
+      refuses to start.
+    see:
+      - text: Which applications this access point offers
+        url: interactive.md#which-applications-this-access-point-offers
+
+  - name: HTTP_API_INTERACTIVE_VSCODE
+    type: bool
+    default: "true"
+    scope: reconfig
+    doc: Offer VS Code sessions. On by default, and otherwise exactly as above.
+
+  - name: HTTP_API_INTERACTIVE_TERMINAL
+    type: bool
+    default: "true"
+    scope: reconfig
+    doc: >
+      Offer terminal sessions. On by default, and otherwise as above.
+      Turning it off also withdraws the MCP interactive_session_start
+      tool, which starts the same thing.
+
+  - name: HTTP_API_INTERACTIVE_REQUIREMENTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      ClassAd expression ANDed into the Requirements of every
+      interactive session job. A terminal is only worth starting on a
+      machine it can be attached to, and whether that works is a
+      property of the machine. An expression that does not parse
+      refuses to start rather than being dropped, since a dropped
+      requirement sends sessions to machines they cannot be used on.
+
+  - name: HTTP_API_VSCODE_IMAGE
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The container image a VS Code session runs. Any transfer scheme
+      works, so a .sif staged on OSDF can be named directly. Set, it
+      wins outright and a caller cannot override it; unset, a caller
+      may name an image, which grants them nothing new since they can
+      already submit a job with any image. Unset otherwise runs a
+      published code-server image.
+    see:
+      - text: VS Code sessions
+        url: interactive.md#vs-code-sessions
+
+  - name: HTTP_API_JUPYTER_MAX_LIFETIME_SEC
+    type: int
+    default: "28800"
+    scope: startup
+    doc: >
+      Wall-clock ceiling on a JupyterLab session in whole seconds,
+      counted from when it starts running. Enforced by the schedd
+      through periodic_remove, so it holds whatever the sandbox or the
+      browser are doing. Zero disables it. A value that is not a
+      non-negative whole number is reported and the default applies.
+
+  - name: HTTP_API_JUPYTER_KERNEL_IDLE_SEC
+    type: int
+    default: "3600"
+    scope: startup
+    doc: >
+      How long in whole seconds a JupyterLab kernel may sit without
+      executing before it is culled and the server shuts down.
+      Measured from kernel execution rather than HTTP traffic, so a tab
+      polling in the background does not look busy. Zero disables it,
+      and an unreadable value is reported as above.
+
+  - name: HTTP_API_JUPYTER_START_GRACE_SEC
+    type: int
+    default: "14400"
+    scope: startup
+    doc: >
+      How long in whole seconds a JupyterLab job may wait to start
+      executing, counted from submission. Past it the schedd removes
+      the job and the token it would have connected with expires ten
+      minutes later, so a job never starts holding a token that is
+      already dead. A job that ran and went back to the queue --
+      evicted, or held and released -- is removed too, because it would
+      rerun with a token its first run spent. This cannot be turned
+      off: zero, negative and unreadable values fall back to the
+      default and anything above 604800 (seven days) is clamped, each
+      with a report.
+
+  - name: HTTP_API_JUPYTER_RECONNECT_GRACE_SEC
+    type: int
+    default: "300"
+    scope: startup
+    doc: >
+      How long in whole seconds a session whose tunnel dropped is kept
+      for its helper to dial back. Meanwhile the session stays listed
+      and its proxy answers 503 with Retry-After; past it the session
+      is closed and a late redial is refused, which ends the job. Not
+      turnable off either: zero, negative and unreadable values fall
+      back to the default and anything above 3600 is clamped, each with
+      a report.
+
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

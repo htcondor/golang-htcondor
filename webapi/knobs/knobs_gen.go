@@ -202,6 +202,43 @@ var IDPRefreshTokenLifespan = config.DefineDuration("HTTP_API_IDP_REFRESH_TOKEN_
 var InteractiveExtraSubmit = config.DefineString("HTTP_API_INTERACTIVE_EXTRA_SUBMIT", "", config.Startup,
 	"Extra submit-file lines added to every interactive session job -- terminal, VS Code and JupyterLab. Operator-only configuration, spliced in as written, as with the submit-file settings above.")
 
+// InteractiveJupyter is HTTP_API_INTERACTIVE_JUPYTER.
+//
+// Offer JupyterLab sessions. On by default. Turning it off refuses new
+// ones while sessions already running keep working, so they drain
+// rather than being dropped -- which is why it is applied by a
+// reconfigure and not by a restart. A value that is not a boolean
+// refuses to start. See "Which applications this access point offers"
+// in the operator guide.
+var InteractiveJupyter = config.DefineBool("HTTP_API_INTERACTIVE_JUPYTER", true, config.Reconfig,
+	"Offer JupyterLab sessions. On by default. Turning it off refuses new ones while sessions already running keep working, so they drain rather than being dropped -- which is why it is applied by a reconfigure and not by a restart. A value that is not a boolean refuses to start. See \"Which applications this access point offers\" in the operator guide.")
+
+// InteractiveRequirements is HTTP_API_INTERACTIVE_REQUIREMENTS.
+//
+// ClassAd expression ANDed into the Requirements of every interactive
+// session job. A terminal is only worth starting on a machine it can
+// be attached to, and whether that works is a property of the machine.
+// An expression that does not parse refuses to start rather than being
+// dropped, since a dropped requirement sends sessions to machines they
+// cannot be used on.
+var InteractiveRequirements = config.DefineString("HTTP_API_INTERACTIVE_REQUIREMENTS", "", config.Startup,
+	"ClassAd expression ANDed into the Requirements of every interactive session job. A terminal is only worth starting on a machine it can be attached to, and whether that works is a property of the machine. An expression that does not parse refuses to start rather than being dropped, since a dropped requirement sends sessions to machines they cannot be used on.")
+
+// InteractiveTerminal is HTTP_API_INTERACTIVE_TERMINAL.
+//
+// Offer terminal sessions. On by default, and otherwise as above.
+// Turning it off also withdraws the MCP interactive_session_start
+// tool, which starts the same thing.
+var InteractiveTerminal = config.DefineBool("HTTP_API_INTERACTIVE_TERMINAL", true, config.Reconfig,
+	"Offer terminal sessions. On by default, and otherwise as above. Turning it off also withdraws the MCP interactive_session_start tool, which starts the same thing.")
+
+// InteractiveVSCode is HTTP_API_INTERACTIVE_VSCODE.
+//
+// Offer VS Code sessions. On by default, and otherwise exactly as
+// above.
+var InteractiveVSCode = config.DefineBool("HTTP_API_INTERACTIVE_VSCODE", true, config.Reconfig,
+	"Offer VS Code sessions. On by default, and otherwise exactly as above.")
+
 // JobQueueLog is HTTP_API_JOB_QUEUE_LOG.
 //
 // The schedd's job queue log, tailed to serve the job change stream,
@@ -213,6 +250,51 @@ var InteractiveExtraSubmit = config.DefineString("HTTP_API_INTERACTIVE_EXTRA_SUB
 // and absent is an operator error, and is reported as one.
 var JobQueueLog = config.DefineString("HTTP_API_JOB_QUEUE_LOG", "", config.Startup,
 	"The schedd's job queue log, tailed to serve the job change stream, or the word none to switch the stream off. Unset falls back to JOB_QUEUE_LOG where the file is there, which is the case when this server shares a host with its schedd; where it does not -- an API server in its own container, the usual deployment -- there is nothing to tail and that is not a misconfiguration. Named explicitly and absent is an operator error, and is reported as one.")
+
+// JupyterKernelIdleSec is HTTP_API_JUPYTER_KERNEL_IDLE_SEC.
+//
+// How long in whole seconds a JupyterLab kernel may sit without
+// executing before it is culled and the server shuts down. Measured
+// from kernel execution rather than HTTP traffic, so a tab polling in
+// the background does not look busy. Zero disables it, and an
+// unreadable value is reported as above.
+var JupyterKernelIdleSec = config.DefineInt("HTTP_API_JUPYTER_KERNEL_IDLE_SEC", 3600, config.Startup,
+	"How long in whole seconds a JupyterLab kernel may sit without executing before it is culled and the server shuts down. Measured from kernel execution rather than HTTP traffic, so a tab polling in the background does not look busy. Zero disables it, and an unreadable value is reported as above.")
+
+// JupyterMaxLifetimeSec is HTTP_API_JUPYTER_MAX_LIFETIME_SEC.
+//
+// Wall-clock ceiling on a JupyterLab session in whole seconds, counted
+// from when it starts running. Enforced by the schedd through
+// periodic_remove, so it holds whatever the sandbox or the browser are
+// doing. Zero disables it. A value that is not a non-negative whole
+// number is reported and the default applies.
+var JupyterMaxLifetimeSec = config.DefineInt("HTTP_API_JUPYTER_MAX_LIFETIME_SEC", 28800, config.Startup,
+	"Wall-clock ceiling on a JupyterLab session in whole seconds, counted from when it starts running. Enforced by the schedd through periodic_remove, so it holds whatever the sandbox or the browser are doing. Zero disables it. A value that is not a non-negative whole number is reported and the default applies.")
+
+// JupyterReconnectGraceSec is HTTP_API_JUPYTER_RECONNECT_GRACE_SEC.
+//
+// How long in whole seconds a session whose tunnel dropped is kept for
+// its helper to dial back. Meanwhile the session stays listed and its
+// proxy answers 503 with Retry-After; past it the session is closed
+// and a late redial is refused, which ends the job. Not turnable off
+// either: zero, negative and unreadable values fall back to the
+// default and anything above 3600 is clamped, each with a report.
+var JupyterReconnectGraceSec = config.DefineInt("HTTP_API_JUPYTER_RECONNECT_GRACE_SEC", 300, config.Startup,
+	"How long in whole seconds a session whose tunnel dropped is kept for its helper to dial back. Meanwhile the session stays listed and its proxy answers 503 with Retry-After; past it the session is closed and a late redial is refused, which ends the job. Not turnable off either: zero, negative and unreadable values fall back to the default and anything above 3600 is clamped, each with a report.")
+
+// JupyterStartGraceSec is HTTP_API_JUPYTER_START_GRACE_SEC.
+//
+// How long in whole seconds a JupyterLab job may wait to start
+// executing, counted from submission. Past it the schedd removes the
+// job and the token it would have connected with expires ten minutes
+// later, so a job never starts holding a token that is already dead. A
+// job that ran and went back to the queue -- evicted, or held and
+// released -- is removed too, because it would rerun with a token its
+// first run spent. This cannot be turned off: zero, negative and
+// unreadable values fall back to the default and anything above 604800
+// (seven days) is clamped, each with a report.
+var JupyterStartGraceSec = config.DefineInt("HTTP_API_JUPYTER_START_GRACE_SEC", 14400, config.Startup,
+	"How long in whole seconds a JupyterLab job may wait to start executing, counted from submission. Past it the schedd removes the job and the token it would have connected with expires ten minutes later, so a job never starts holding a token that is already dead. A job that ran and went back to the queue -- evicted, or held and released -- is removed too, because it would rerun with a token its first run spent. This cannot be turned off: zero, negative and unreadable values fall back to the default and anything above 604800 (seven days) is clamped, each with a report.")
 
 // JupyterWorkDir is HTTP_API_JUPYTER_WORK_DIR.
 //
@@ -707,6 +789,17 @@ var TokenRetention = config.DefineString("HTTP_API_TOKEN_RETENTION", "", config.
 var UserHeaderTrustAny = config.DefineBool("HTTP_API_USER_HEADER_TRUST_ANY", false, config.Startup,
 	"Accept the user header from any source address. Written true, t, 1, yes or on -- the last two are accepted here although HTCondor configuration does not take them generally, because this setting always has. For demonstration and testing only: with it on, anything that can reach this server can claim to be any user, so it undoes authentication rather than relaxing it. Off by default, and the server logs a warning for as long as it is on. Leave it off anywhere a real person has an account.")
 
+// VSCodeImage is HTTP_API_VSCODE_IMAGE.
+//
+// The container image a VS Code session runs. Any transfer scheme
+// works, so a .sif staged on OSDF can be named directly. Set, it wins
+// outright and a caller cannot override it; unset, a caller may name
+// an image, which grants them nothing new since they can already
+// submit a job with any image. Unset otherwise runs a published
+// code-server image. See "VS Code sessions" in the operator guide.
+var VSCodeImage = config.DefineString("HTTP_API_VSCODE_IMAGE", "", config.Startup,
+	"The container image a VS Code session runs. Any transfer scheme works, so a .sif staged on OSDF can be named directly. Set, it wins outright and a caller cannot override it; unset, a caller may name an image, which grants them nothing new since they can already submit a job with any image. Unset otherwise runs a published code-server image. See \"VS Code sessions\" in the operator guide.")
+
 // WriteTimeout is HTTP_API_WRITE_TIMEOUT.
 //
 // How long a response may take to write, as a Go duration. This bounds
@@ -973,7 +1066,15 @@ var All = []config.Knob{
 	IDPIssuer.Knob,
 	IDPRefreshTokenLifespan.Knob,
 	InteractiveExtraSubmit.Knob,
+	InteractiveJupyter.Knob,
+	InteractiveRequirements.Knob,
+	InteractiveTerminal.Knob,
+	InteractiveVSCode.Knob,
 	JobQueueLog.Knob,
+	JupyterKernelIdleSec.Knob,
+	JupyterMaxLifetimeSec.Knob,
+	JupyterReconnectGraceSec.Knob,
+	JupyterStartGraceSec.Knob,
 	JupyterWorkDir.Knob,
 	Listen.Knob,
 	Log.Knob,
@@ -1026,6 +1127,7 @@ var All = []config.Knob{
 	TLSKey.Knob,
 	TokenRetention.Knob,
 	UserHeaderTrustAny.Knob,
+	VSCodeImage.Knob,
 	WriteTimeout.Knob,
 	ConnectorInstances.Knob,
 	PickerInstances.Knob,

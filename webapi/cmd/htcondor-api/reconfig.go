@@ -175,15 +175,15 @@ var reconfigParams = []reconfigParam{
 	// notebooks being made would drop every notebook already running,
 	// which is precisely what these settings take care not to do.
 	{
-		name:  "HTTP_API_INTERACTIVE_JUPYTER",
+		name:  knobs.InteractiveJupyter.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetInteractiveJupyter(v) },
 	},
 	{
-		name:  "HTTP_API_INTERACTIVE_VSCODE",
+		name:  knobs.InteractiveVSCode.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetInteractiveVSCode(v) },
 	},
 	{
-		name:  "HTTP_API_INTERACTIVE_TERMINAL",
+		name:  knobs.InteractiveTerminal.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetInteractiveTerminal(v) },
 	},
 
@@ -429,6 +429,16 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.SSHGatewaySessionMemoryMB.Knob),
 	fromKnob(knobs.SSHGatewaySessionDiskMB.Knob),
 
+	// The JupyterLab limits and grace periods. Each is stamped into a
+	// session's submit description when the session is created, so a
+	// change reaches sessions created after a restart and no others --
+	// and none of the four was listed before, so a change reached
+	// nothing at all and nothing said so.
+	fromKnob(knobs.JupyterMaxLifetimeSec.Knob),
+	fromKnob(knobs.JupyterKernelIdleSec.Knob),
+	fromKnob(knobs.JupyterStartGraceSec.Knob),
+	fromKnob(knobs.JupyterReconnectGraceSec.Knob),
+
 	// The +jobs sandbox cache, sized when the file service is built.
 	fromKnob(knobs.SandboxCacheDir.Knob),
 	fromKnob(knobs.SandboxCacheMB.Knob),
@@ -501,14 +511,14 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.IdempotencyKeyRetention.Knob),
 	fromKnob(knobs.IdempotencyKeyTimeout.Knob),
 	fromKnob(knobs.IdempotencyKeyHistoryWindow.Knob),
-	{name: "HTTP_API_INTERACTIVE_REQUIREMENTS"},
+	fromKnob(knobs.InteractiveRequirements.Knob),
 	{name: "HTTP_API_DAGMAN_PATH"},
 	{name: "HTTP_API_DAGMAN_ENVIRONMENT"},
 	fromKnob(knobs.InteractiveExtraSubmit.Knob),
 	fromKnob(knobs.BuildExtraSubmit.Knob),
 	fromKnob(knobs.BuildRequirements.Knob),
 	fromKnob(knobs.BuildStagingBase.Knob),
-	{name: "HTTP_API_VSCODE_IMAGE"},
+	fromKnob(knobs.VSCodeImage.Knob),
 	fromKnob(knobs.BuildDefaultCPUs.Knob),
 	fromKnob(knobs.BuildDefaultMemoryMB.Knob),
 	fromKnob(knobs.BuildDefaultDiskMB.Knob),
