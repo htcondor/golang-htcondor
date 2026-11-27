@@ -1126,6 +1126,61 @@ knobs:
       configured for a longer tool timeout. It needs a unit, as above.
 
 
+  # The chat assistant. It needs MCP as well: the chat surface reuses
+  # the MCP tool layer for owner-scoped job queries, so a key with
+  # HTTP_API_ENABLE_MCP off leaves the endpoint disabled and says so.
+  - name: HTTP_API_LLM_API_KEY_FILE
+    type: string
+    default: ""
+    scope: startup
+    secret: true
+    doc: >
+      File holding the API key for the model this server talks to.
+      Setting it is what enables the chat assistant. The file must not
+      be world-accessible: 0600, 0400 or 0440, the last being what a
+      Kubernetes secret volume is under fsGroup.
+
+  - name: HTTP_API_LLM_API_URL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The full URL of the upstream messages endpoint, for a proxy or
+      gateway in place of the vendor's own. Unset talks to the vendor
+      directly.
+
+  - name: HTTP_API_LLM_MODEL
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      The model to use, as the upstream knows it -- which behind a
+      gateway is the gateway's name for it rather than the vendor's.
+      Unset uses the built-in default.
+
+  - name: HTTP_API_LLM_AUTH_SCHEME
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset sends the key as x-api-key.
+    doc: >
+      How the key is presented upstream: x-api-key, which is what the
+      vendor's own API reads, or bearer, which is what an
+      OpenAI-style gateway fronting it authenticates.
+
+  - name: HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE
+    type: string
+    default: ""
+    scope: reconfig
+    secret: true
+    doc: >
+      File of site-policy text appended to every chat system prompt,
+      last, so that it outranks the standard prompts. Re-read on
+      reconfigure whether or not the path changed, and a read that
+      fails keeps the previous text rather than dropping the policy.
+      Like the key file it must not be world-accessible.
+
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

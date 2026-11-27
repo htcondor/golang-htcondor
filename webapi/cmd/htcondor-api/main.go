@@ -543,21 +543,11 @@ func discoverOIDCEndpoints(issuerURL string) (authURL, tokenURL, userInfoURL str
 // empty apiKeyFile as "feature disabled" and the others have safe
 // defaults.
 func loadLLMConfig(cfg *config.Config) (apiKeyFile, url, model, authScheme, operatorInstructionsFile string) {
-	if v, ok := cfg.Get("HTTP_API_LLM_API_KEY_FILE"); ok {
-		apiKeyFile = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_API_URL"); ok {
-		url = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_MODEL"); ok {
-		model = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_AUTH_SCHEME"); ok {
-		authScheme = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE"); ok {
-		operatorInstructionsFile = strings.TrimSpace(v)
-	}
+	apiKeyFile = strings.TrimSpace(knobs.LLMAPIKeyFile.Get(cfg))
+	url = strings.TrimSpace(knobs.LLMAPIURL.Get(cfg))
+	model = strings.TrimSpace(knobs.LLMModel.Get(cfg))
+	authScheme = strings.TrimSpace(knobs.LLMAuthScheme.Get(cfg))
+	operatorInstructionsFile = strings.TrimSpace(knobs.LLMOperatorInstructionsFile.Get(cfg))
 	return
 }
 

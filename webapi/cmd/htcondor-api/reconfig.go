@@ -258,7 +258,7 @@ var reconfigParams = []reconfigParam{
 	// usual reason to reload is that the file's contents were edited --
 	// the same reasoning as HTTP_API_MCP_SKILLS_DIR above.
 	{
-		name:  "HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE",
+		name:  knobs.LLMOperatorInstructionsFile.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetChatInstructions(v) },
 	},
 	{
@@ -428,6 +428,16 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.SSHGatewaySessionCPUs.Knob),
 	fromKnob(knobs.SSHGatewaySessionMemoryMB.Knob),
 	fromKnob(knobs.SSHGatewaySessionDiskMB.Knob),
+
+	// The chat assistant's upstream. All four are read when the chat
+	// engine is built and none was listed, so a site that pointed the
+	// server at a different gateway and reconfigured kept talking to
+	// the old one with nothing said. The site-policy file is the
+	// exception and is applied dynamically, above.
+	fromKnob(knobs.LLMAPIKeyFile.Knob),
+	fromKnob(knobs.LLMAPIURL.Knob),
+	fromKnob(knobs.LLMModel.Knob),
+	fromKnob(knobs.LLMAuthScheme.Knob),
 
 	// The two MCP request deadlines. Both are captured when the
 	// handler is built and advertised to agents in a tool schema, so a

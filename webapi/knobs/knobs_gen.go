@@ -316,6 +316,51 @@ var JupyterWorkDir = config.DefineString("HTTP_API_JUPYTER_WORK_DIR", "", config
 var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
 	"Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of the listen address, honored when HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins where both are set.")
 
+// LLMAPIKeyFile is HTTP_API_LLM_API_KEY_FILE.
+//
+// File holding the API key for the model this server talks to. Setting
+// it is what enables the chat assistant. The file must not be
+// world-accessible: 0600, 0400 or 0440, the last being what a
+// Kubernetes secret volume is under fsGroup. Holds or names a
+// credential: keep it readable only by the account the server runs as.
+var LLMAPIKeyFile = config.DefineString("HTTP_API_LLM_API_KEY_FILE", "", config.Startup,
+	"File holding the API key for the model this server talks to. Setting it is what enables the chat assistant. The file must not be world-accessible: 0600, 0400 or 0440, the last being what a Kubernetes secret volume is under fsGroup. Holds or names a credential: keep it readable only by the account the server runs as.")
+
+// LLMAPIURL is HTTP_API_LLM_API_URL.
+//
+// The full URL of the upstream messages endpoint, for a proxy or
+// gateway in place of the vendor's own. Unset talks to the vendor
+// directly.
+var LLMAPIURL = config.DefineString("HTTP_API_LLM_API_URL", "", config.Startup,
+	"The full URL of the upstream messages endpoint, for a proxy or gateway in place of the vendor's own. Unset talks to the vendor directly.")
+
+// LLMAuthScheme is HTTP_API_LLM_AUTH_SCHEME.
+//
+// How the key is presented upstream: x-api-key, which is what the
+// vendor's own API reads, or bearer, which is what an OpenAI-style
+// gateway fronting it authenticates.
+var LLMAuthScheme = config.DefineString("HTTP_API_LLM_AUTH_SCHEME", "", config.Startup,
+	"How the key is presented upstream: x-api-key, which is what the vendor's own API reads, or bearer, which is what an OpenAI-style gateway fronting it authenticates.")
+
+// LLMModel is HTTP_API_LLM_MODEL.
+//
+// The model to use, as the upstream knows it -- which behind a gateway
+// is the gateway's name for it rather than the vendor's. Unset uses
+// the built-in default.
+var LLMModel = config.DefineString("HTTP_API_LLM_MODEL", "", config.Startup,
+	"The model to use, as the upstream knows it -- which behind a gateway is the gateway's name for it rather than the vendor's. Unset uses the built-in default.")
+
+// LLMOperatorInstructionsFile is HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE.
+//
+// File of site-policy text appended to every chat system prompt, last,
+// so that it outranks the standard prompts. Re-read on reconfigure
+// whether or not the path changed, and a read that fails keeps the
+// previous text rather than dropping the policy. Like the key file it
+// must not be world-accessible. Holds or names a credential: keep it
+// readable only by the account the server runs as.
+var LLMOperatorInstructionsFile = config.DefineString("HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE", "", config.Reconfig,
+	"File of site-policy text appended to every chat system prompt, last, so that it outranks the standard prompts. Re-read on reconfigure whether or not the path changed, and a read that fails keeps the previous text rather than dropping the policy. Like the key file it must not be world-accessible. Holds or names a credential: keep it readable only by the account the server runs as.")
+
 // Log is HTTP_API_LOG.
 //
 // Where this daemon writes its log: a file, or the words stdout or
@@ -1177,6 +1222,11 @@ var All = []config.Knob{
 	JupyterStartGraceSec.Knob,
 	JupyterWorkDir.Knob,
 	Listen.Knob,
+	LLMAPIKeyFile.Knob,
+	LLMAPIURL.Knob,
+	LLMAuthScheme.Knob,
+	LLMModel.Knob,
+	LLMOperatorInstructionsFile.Knob,
 	Log.Knob,
 	MCPAdminGroup.Knob,
 	MCPBaseURL.Knob,

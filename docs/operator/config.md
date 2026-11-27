@@ -406,6 +406,50 @@ staged. The helper itself is built into this binary, so nothing has to
 be found on disk; this is only where it is written out to be
 transferred.
 
+### `HTTP_API_LLM_API_KEY_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+File holding the API key for the model this server talks to. Setting
+it is what enables the chat assistant. The file must not be
+world-accessible: 0600, 0400 or 0440, the last being what a Kubernetes
+secret volume is under fsGroup. Holds or names a credential: keep it
+readable only by the account the server runs as.
+
+### `HTTP_API_LLM_API_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The full URL of the upstream messages endpoint, for a proxy or gateway
+in place of the vendor's own. Unset talks to the vendor directly.
+
+### `HTTP_API_LLM_AUTH_SCHEME`
+
+**String.** Unset sends the key as x-api-key. Changing it needs a restart.
+
+How the key is presented upstream: x-api-key, which is what the
+vendor's own API reads, or bearer, which is what an OpenAI-style
+gateway fronting it authenticates.
+
+### `HTTP_API_LLM_MODEL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The model to use, as the upstream knows it -- which behind a gateway
+is the gateway's name for it rather than the vendor's. Unset uses the
+built-in default.
+
+### `HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+File of site-policy text appended to every chat system prompt, last,
+so that it outranks the standard prompts. Re-read on reconfigure
+whether or not the path changed, and a read that fails keeps the
+previous text rather than dropping the policy. Like the key file it
+must not be world-accessible. Holds or names a credential: keep it
+readable only by the account the server runs as.
+
 ### `HTTP_API_LOG`
 
 **String.** Unset logs to stdout. Changing it needs a restart.
@@ -1173,11 +1217,6 @@ each one.
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |
 | `HTTP_API_TRUSTED_PROXIES` | Comma-separated CIDRs (or bare addresses) whose `X-Forwarded-For` / `X-Real-IP` are honored when recording a client address. Unset means none are, and the peer address is logged. |
-| `HTTP_API_LLM_API_KEY_FILE` | Path to a file with the LLM API key. Enables the chat assistant. The file must not be world-accessible: 0600, 0400, or 0440 (what a Kubernetes secret volume is under `fsGroup`). |
-| `HTTP_API_LLM_API_URL` | Override the upstream Anthropic Messages endpoint (proxy / gateway). The full URL of the `/v1/messages` route. |
-| `HTTP_API_LLM_MODEL` | Override the default Claude model. With a gateway, the model name as the gateway knows it. |
-| `HTTP_API_LLM_AUTH_SCHEME` | How the key is sent: `x-api-key` (default; what api.anthropic.com reads) or `bearer` (`Authorization: Bearer`, what an OpenAI-style gateway fronting the Messages API, such as Envoy AI Gateway or LiteLLM, authenticates). |
-| `HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE` | Site-policy text appended to every chat system prompt, last, so it outranks the standard prompts. Re-read on `condor_reconfig`, whether or not the path changed; a read that fails keeps the previous text. Like the API key file, it must not be world-accessible. |
 | `PRIVATE_NETWORK_NAME` | This host's private network name. When it equals a daemon's advertised `PrivNet`, that daemon is dialed directly instead of through its CCB broker. Defaults to `$(FULL_HOSTNAME)`, as in C++. See [Reaching jobs behind CCB](networking.md). |
 | `HOST_ALIAS` | The host name a client verifies this server's SSL certificate against, published as `alias=` on the advertised address. Defaults to `$(FULL_HOSTNAME)`, as in C++. Behind a shared port the address itself carries only the shared-port server's IP, and HTCondor host certificates have no IP SANs, so without the alias SSL authentication from another host fails the certificate check. Set it only when the certificate names something else — a load balancer, a CNAME. |
 | `HTTP_API_SHARED_PORT` | Open an inbound HTCondor port (a port or `host:port`, e.g. `9618`) so this server can be reached by execute nodes behind a Condor Connection Broker. Off by default. See [Reaching jobs behind CCB](networking.md). |
