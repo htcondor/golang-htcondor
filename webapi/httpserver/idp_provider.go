@@ -105,6 +105,22 @@ func NewIDPProvider(opts IDPProviderOptions) (*IDPProvider, error) {
 		AccessTokenIssuer:        opts.Issuer,
 		ScopeStrategy:            fosite.HierarchicScopeStrategy,
 		AudienceMatchingStrategy: fosite.DefaultAudienceMatchingStrategy,
+		// swagger-client is registered public and holds no secret, so
+		// PKCE is the only thing binding the authorization code to the
+		// requester: fosite authenticates a public client on client_id
+		// alone, and with no challenge stored and none presented its
+		// PKCE handler passes the request through. Without this the
+		// metadata advertises code_challenge_methods_supported while
+		// enforcing nothing, and a code that leaks -- a query string in
+		// a proxy log, a Referer, browser history -- is redeemable by
+		// whoever reads it. The IDP auto-approves, so there is no
+		// consent screen standing behind it either.
+		//
+		// Not EnforcePKCE, which would also refuse the confidential SSO
+		// client if it ever omitted a challenge. Swagger UI already
+		// sends PKCE (usePkceWithAuthorizationCodeGrant), so this
+		// touches no working client.
+		EnforcePKCEForPublicClients: true,
 	}
 
 	// Generate or load HMAC secret (32 bytes for HMAC-SHA512/256)
