@@ -15,7 +15,7 @@ import (
 func TestOpenIDIsGrantedOnlyWhenRequested(t *testing.T) {
 	h := &Handler{}
 
-	granted := h.getScopesForGroups(nil, []string{"condor:/WRITE", "offline_access"})
+	granted := h.getScopesForGroups("", nil, []string{"condor:/WRITE", "offline_access"})
 	for _, scope := range granted {
 		if scope == "openid" {
 			t.Fatalf("openid was granted without being requested; granted = %v", granted)
@@ -23,7 +23,7 @@ func TestOpenIDIsGrantedOnlyWhenRequested(t *testing.T) {
 	}
 
 	// And a client that does ask still gets it.
-	granted = h.getScopesForGroups(nil, []string{"openid", "condor:/WRITE"})
+	granted = h.getScopesForGroups("", nil, []string{"openid", "condor:/WRITE"})
 	found := false
 	for _, scope := range granted {
 		if scope == "openid" {
@@ -42,7 +42,7 @@ func TestRefusedGrantIsEmptyNotNil(t *testing.T) {
 	h := &Handler{mcpAccessGroups: newGroupSet("ap2001-login")}
 	requested := []string{"mcp:read", "mcp:write"}
 
-	granted := h.getScopesForGroups([]string{"someone-else"}, requested)
+	granted := h.getScopesForGroups("", []string{"someone-else"}, requested)
 	if granted == nil || len(granted) != 0 {
 		t.Fatalf("a refused grant = %#v, want an empty non-nil list", granted)
 	}
@@ -50,7 +50,7 @@ func TestRefusedGrantIsEmptyNotNil(t *testing.T) {
 		t.Errorf("a refused grant is stored as %s (err %v), want []", raw, err)
 	}
 
-	if got := h.getScopesForGroups([]string{"ap2001-login"}, requested); len(got) != 2 {
+	if got := h.getScopesForGroups("", []string{"ap2001-login"}, requested); len(got) != 2 {
 		t.Errorf("a member of the access group was granted %v, want %v", got, requested)
 	}
 }

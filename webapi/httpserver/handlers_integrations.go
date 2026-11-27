@@ -234,7 +234,7 @@ func (h *Handler) handleCreateIntegration(w http.ResponseWriter, r *http.Request
 	// group policy has no opinion on it, so it is carried through rather
 	// than filtered out; without it on the client no refresh token is ever
 	// issued and an unattended integration cannot work at all.
-	allowed := h.getScopesForGroups(session.Groups, requested)
+	allowed := h.getScopesForGroups(session.Username, session.Groups, requested)
 	scopes := make([]string, 0, len(requested))
 	for _, s := range requested {
 		if s == "offline_access" || containsString(allowed, s) {

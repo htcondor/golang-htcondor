@@ -157,7 +157,7 @@ func TestIntegrationScopesBoundedByCreator(t *testing.T) {
 	f := newReauthFixture(t, Config{})
 	// With an admin group configured and alice outside it, mcp:admin is a
 	// scope the policy will not grant her.
-	f.server.mcpAdminGroups = newGroupSet("condor-admins")
+	f.server.anyUserRead = newPrincipalSet("condor-admins", "")
 
 	status, body := createIntegration(t, f.server, "alice", []string{"condor-users"},
 		`{"name":"reach","redirect_uris":["https://example.org/cb"],"scopes":["mcp:read","mcp:admin"]}`)

@@ -216,25 +216,27 @@ type mcpConfig struct {
 	// The SSH gateway: an ssh port that authenticates with the OAuth2
 	// device flow and proxies into a job, so a user needs a terminal
 	// but not an account on the access point.
-	sshGatewayAddress string
-	sshGatewayIssuer  string
-	sshHostKeyFile    string
-	sshCAKeyFile      string
-	sshGatewayHost    string
-	sandboxCacheDir   string
-	sandboxCacheMB    int
-	sandboxMaxGB      int
-	sshLockout        httpserver.SSHGatewayLockoutConfig
-	sshSessionCpus    int
-	sshSessionMemMB   int
-	sshSessionDiskMB  int
-	mcpAccessGroup    string
-	mcpReadGroup      string
-	mcpWriteGroup     string
-	mcpAdminGroup     string
-	mcpSuperuserGroup string
-	instructions      string
-	adminUsers        []string
+	sshGatewayAddress  string
+	sshGatewayIssuer   string
+	sshHostKeyFile     string
+	sshCAKeyFile       string
+	sshGatewayHost     string
+	sandboxCacheDir    string
+	sandboxCacheMB     int
+	sandboxMaxGB       int
+	sshLockout         httpserver.SSHGatewayLockoutConfig
+	sshSessionCpus     int
+	sshSessionMemMB    int
+	sshSessionDiskMB   int
+	mcpAccessGroup     string
+	mcpReadGroup       string
+	mcpWriteGroup      string
+	anyUserReadGroups  string
+	anyUserReadUsers   string
+	anyUserWriteGroups string
+	anyUserWriteUsers  string
+	instructions       string
+	adminUsers         []string
 	// Which collector attributes an unprivileged caller may read, and
 	// the attributes this site has declared safe on top of the defaults.
 	poolQueryMode       poolpolicy.Mode
@@ -1372,20 +1374,60 @@ func loadAccessControlGroups(cfg *config.Config, config *mcpConfig, logger *logg
 	// The two cross-user privileges. Logged at the same level as the
 	// others, because "who can see and change everyone's jobs" is
 	// exactly what an operator wants to find in the startup log.
-	// Both settings are obsolete and deliberately absent from the
-	// documentation, so these are the only reads of them. staticcheck
-	// reports a read of a deprecated variable, which is the point: a
-	// new one has to be written deliberately and say why.
-	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
-	if adminGroup := knobs.MCPAdminGroup.Get(cfg); adminGroup != "" {
-		config.mcpAdminGroup = adminGroup
-		logger.Info(logging.DestinationHTTP, "MCP admin group: members may READ every user's jobs", "group", adminGroup)
+	config.anyUserReadGroups = supersededGroupSetting(cfg, logger,
+		knobs.AnyUserReadGroups,
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		knobs.MCPAdminGroup,
+		"members may READ every user's jobs")
+	config.anyUserReadUsers = knobs.AnyUserReadUsers.Get(cfg)
+	if config.anyUserReadUsers != "" {
+		logger.Info(logging.DestinationHTTP,
+			"Named users may request anyuser:read: they may READ every user's jobs",
+			"setting", knobs.AnyUserReadUsers.Name(), "users", config.anyUserReadUsers)
 	}
-	//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
-	if superGroup := knobs.MCPSuperuserGroup.Get(cfg); superGroup != "" {
-		config.mcpSuperuserGroup = superGroup
-		logger.Info(logging.DestinationHTTP, "MCP superuser group: members may CHANGE any user's jobs", "group", superGroup)
+	config.anyUserWriteGroups = supersededGroupSetting(cfg, logger,
+		knobs.AnyUserWriteGroups,
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		knobs.MCPSuperuserGroup,
+		"members may CHANGE any user's jobs")
+	config.anyUserWriteUsers = knobs.AnyUserWriteUsers.Get(cfg)
+	if config.anyUserWriteUsers != "" {
+		logger.Info(logging.DestinationHTTP,
+			"Named users may request anyuser:write: they may CHANGE any user's jobs",
+			"setting", knobs.AnyUserWriteUsers.Name(), "users", config.anyUserWriteUsers)
 	}
+}
+
+// supersededGroupSetting reads current, falling back to the obsolete
+// spelling old when current is unset.
+//
+// The current setting wins where both are set, so migrating is adding a
+// line rather than an atomic swap of two. Falling back only when the
+// new one is EMPTY is the part that matters: an operator who sets the
+// new one to a deliberately narrower group must not have the old one
+// widen it back.
+//
+// The old setting appears in no page, on purpose. This log line is
+// therefore the only place an operator still running it is told what
+// replaced it -- which is why it names the replacement rather than
+// merely reporting the value.
+func supersededGroupSetting(cfg *config.Config, logger *logging.Logger,
+	current, old config.StringKnob, grants string,
+) string {
+	if v := current.Get(cfg); v != "" {
+		logger.Info(logging.DestinationHTTP, "Cross-user entitlement group: "+grants,
+			"setting", current.Name(), "group", v)
+		return v
+	}
+	v := old.Get(cfg)
+	if v == "" {
+		return ""
+	}
+	logger.Warn(logging.DestinationHTTP,
+		"Cross-user entitlement group read from a superseded setting: "+grants+
+			". It still works; set the replacement instead.",
+		"setting", old.Name(), "superseded_by", current.Name(), "group", v)
+	return v
 }
 
 // loadIdentityMapping reads the two independent local-identity settings.
@@ -2752,8 +2794,10 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		MCPAccessGroup:             mcpCfg.mcpAccessGroup,
 		MCPReadGroup:               mcpCfg.mcpReadGroup,
 		MCPWriteGroup:              mcpCfg.mcpWriteGroup,
-		MCPAdminGroup:              mcpCfg.mcpAdminGroup,
-		MCPSuperuserGroup:          mcpCfg.mcpSuperuserGroup,
+		AnyUserReadGroups:          mcpCfg.anyUserReadGroups,
+		AnyUserReadUsers:           mcpCfg.anyUserReadUsers,
+		AnyUserWriteGroups:         mcpCfg.anyUserWriteGroups,
+		AnyUserWriteUsers:          mcpCfg.anyUserWriteUsers,
 		MCPInstructions:            mcpCfg.instructions,
 		MCPDisabledTools:           mcpCfg.disabledTools,
 		MCPReadOnly:                mcpCfg.readOnly,
@@ -3319,8 +3363,8 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 		// no group is configured -- so demo mode could not exercise the
 		// privilege separation at all, and a browser test of the consent
 		// page would find no checkbox and assert nothing.
-		MCPAdminGroup:     "admin",
-		MCPSuperuserGroup: "admin",
+		AnyUserReadGroups:  "admin",
+		AnyUserWriteGroups: "admin",
 		// Pick up the LLM/chat knobs in demo mode too so an
 		// operator can hand-test the chat surface against the
 		// embedded mini-condor without spinning up a real pool.

@@ -99,12 +99,19 @@ func (s *Handler) validateGroupAccess(userGroups []string) error {
 }
 
 // getScopesForGroups determines OAuth2 scopes based on group membership.
+//
+// actor is the identity being granted to, needed because the two
+// cross-user entitlements are configured by a group list AND a user
+// list: a deployment whose tokens carry no groups can still name people
+// individually, and the group half alone would deny them. Empty means
+// no identity is asserted, which matches no user entry.
+//
 // For mcp:read and mcp:write scopes:
 //   - If a specific read/write group is configured, the user must be in that group.
 //   - Otherwise, if the general access group is configured and the user is in it
 //     (already verified by validateGroupAccess), grant the scope.
 //   - If no groups are configured at all, grant the scope to any authenticated user.
-func (s *Handler) getScopesForGroups(userGroups []string, requestedScopes []string) []string {
+func (s *Handler) getScopesForGroups(actor string, userGroups []string, requestedScopes []string) []string {
 	// openid only when it was asked for.
 	//
 	// Granting it regardless produced a grant carrying a scope the
@@ -178,9 +185,11 @@ func (s *Handler) getScopesForGroups(userGroups []string, requestedScopes []stri
 			// is configured, because a server with no group policy is a
 			// single-tenant one where every authenticated caller is
 			// already entitled to the surface. That reasoning does not
-			// extend to a cross-user privilege -- "no admin group
-			// configured" has to mean nobody, not everybody.
-			if s.mcpAdminGroups.configured() && s.mcpAdminGroups.allows(userGroups) {
+			// extend to a cross-user privilege -- "nobody configured"
+			// has to mean nobody, not everybody. principalSet.allows
+			// denies an empty set, so the configured() guard the older
+			// groupSet needed is built in.
+			if s.anyUserRead.allows(actor, userGroups) {
 				grantedScopes = append(grantedScopes, scope)
 			}
 		case "mcp:superuser":
@@ -189,26 +198,26 @@ func (s *Handler) getScopesForGroups(userGroups []string, requestedScopes []stri
 			// and being able to remove every job are different powers,
 			// and the group that should hold the second is usually much
 			// smaller than the group that holds the first.
-			if s.mcpSuperuserGroups.configured() && s.mcpSuperuserGroups.allows(userGroups) {
+			if s.anyUserWrite.allows(actor, userGroups) {
 				grantedScopes = append(grantedScopes, scope)
 			}
 		case scopeAnyUserRead:
 			// The same power as mcp:admin under the name of what it
-			// grants, so it answers to the same group until the two
-			// settings are split apart.
+			// grants, and so the same policy: an older spelling of a
+			// scope must not be a second, laxer door to it.
 			//
 			// A case of its own rather than a fallthrough, because the
 			// default branch below grants an unrecognized scope
 			// unconditionally: advertising an entitlement without
 			// landing here would hand cross-user reads to any client
 			// that asked.
-			if s.mcpAdminGroups.configured() && s.mcpAdminGroups.allows(userGroups) {
+			if s.anyUserRead.allows(actor, userGroups) {
 				grantedScopes = append(grantedScopes, scope)
 			}
 		case scopeAnyUserWrite:
 			// Likewise mcp:superuser, and likewise not implied by
 			// anyuser:read.
-			if s.mcpSuperuserGroups.configured() && s.mcpSuperuserGroups.allows(userGroups) {
+			if s.anyUserWrite.allows(actor, userGroups) {
 				grantedScopes = append(grantedScopes, scope)
 			}
 		default:

@@ -389,15 +389,20 @@ type Handler struct {
 	mcpWriteWindow time.Duration
 	mcpReadGroups  *groupSet // Required for read access
 	mcpWriteGroups *groupSet // Required for write access
-	// mcpAdminGroups grants the mcp:admin scope: reading every user's
-	// jobs through MCP. mcpSuperuserGroups grants mcp:superuser:
-	// changing another user's jobs.
+	// anyUserRead names who may request the anyuser:read entitlement
+	// (and its older spelling mcp:admin): reading every user's jobs on
+	// this access point. anyUserWrite names who may request
+	// anyuser:write (mcp:superuser): removing, holding, releasing and
+	// editing another user's jobs.
 	//
-	// Both default to DENY when unconfigured, unlike the two above --
-	// see getScopesForGroups. A cross-user privilege with no group
-	// configured has to mean nobody.
-	mcpAdminGroups     *groupSet
-	mcpSuperuserGroups *groupSet
+	// principalSet rather than groupSet because each is configured by a
+	// _GROUPS and a _USERS list, and an identity is not a group.
+	//
+	// Both default to DENY when unconfigured, unlike mcpReadGroups and
+	// mcpWriteGroups above -- see getScopesForGroups. A cross-user
+	// privilege with nobody configured has to mean nobody.
+	anyUserRead  *principalSet
+	anyUserWrite *principalSet
 
 	// superuserGroup gates superuser mode: acting on another user's jobs
 	// as that user. Deliberately NOT the same knob as webuiAdminGroup,
@@ -1318,21 +1323,35 @@ type HandlerConfig struct {
 	MCPAccessGroup  string // Group required for any MCP access (empty = all authenticated)
 	MCPReadGroup    string // Group required for read operations (empty = all have read)
 	MCPWriteGroup   string // Group required for write operations (empty = all have write)
-	// MCPAdminGroup grants the mcp:admin scope -- reading every user's
-	// jobs through MCP. Empty disables it: unlike MCPReadGroup and
-	// MCPWriteGroup, an empty value here grants the privilege to NOBODY
-	// rather than to everybody. HTTP_API_MCP_ADMIN_GROUP.
-	MCPAdminGroup string
-	// MCPSuperuserGroup grants the mcp:superuser scope -- changing
-	// another user's jobs (remove, hold, release, edit). Empty disables.
+	// AnyUserReadGroups and AnyUserReadUsers name who may REQUEST the
+	// anyuser:read entitlement -- reading every user's jobs on this
+	// access point -- by group membership and by identity respectively.
+	// HTTP_API_ANYUSER_READ_GROUPS and HTTP_API_ANYUSER_READ_USERS.
 	//
-	// Separate from MCPAdminGroup for the same reason SuperuserGroup is
+	// Both empty disables it: unlike MCPReadGroup and MCPWriteGroup, an
+	// empty value here grants the privilege to NOBODY rather than to
+	// everybody.
+	//
+	// Naming somebody here lets them ask for the scope. It does not
+	// give it to them: a credential carries the entitlement only by
+	// requesting it and being granted it. MCPAdminUsers is the one
+	// setting in this area that does not work that way, which is why it
+	// is deprecated rather than reused.
+	AnyUserReadGroups string
+	AnyUserReadUsers  string
+	// AnyUserWriteGroups and AnyUserWriteUsers name who may request
+	// anyuser:write -- changing another user's jobs (remove, hold,
+	// release, edit). HTTP_API_ANYUSER_WRITE_GROUPS and
+	// HTTP_API_ANYUSER_WRITE_USERS. Both empty disables.
+	//
+	// Separate from the read pair for the same reason SuperuserGroup is
 	// separate from WebUIAdminGroup: seeing every job and being able to
 	// remove every job are different privileges, and the second deserves
-	// its own decision and its own off switch.
-	// HTTP_API_MCP_SUPERUSER_GROUP.
-	MCPSuperuserGroup string
-	MCPInstructions   string // Server-level instructions provided to all MCP agents (e.g., AP-specific guidance)
+	// its own decision and its own off switch. Neither implies the
+	// other.
+	AnyUserWriteGroups string
+	AnyUserWriteUsers  string
+	MCPInstructions    string // Server-level instructions provided to all MCP agents (e.g., AP-specific guidance)
 	// MCPDisabledTools (HTTP_API_MCP_DISABLED_TOOLS) names tools this site cannot
 	// offer, as path.Match patterns separated by commas or whitespace.
 	MCPDisabledTools string
@@ -2363,27 +2382,29 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h.mcpAccessGroups = newGroupSet(cfg.MCPAccessGroup)
 	h.mcpReadGroups = newGroupSet(cfg.MCPReadGroup)
 	h.mcpWriteGroups = newGroupSet(cfg.MCPWriteGroup)
-	h.mcpAdminGroups = newGroupSet(cfg.MCPAdminGroup)
-	h.mcpSuperuserGroups = newGroupSet(cfg.MCPSuperuserGroup)
+	h.anyUserRead = newPrincipalSet(cfg.AnyUserReadGroups, cfg.AnyUserReadUsers)
+	h.anyUserWrite = newPrincipalSet(cfg.AnyUserWriteGroups, cfg.AnyUserWriteUsers)
 
 	// MCP_ADMIN_USERS grants the read tier only. It used to grant the
 	// mutate tier too, so a deployment that relied on that loses the
 	// ability to act across users at upgrade. Say so, rather than let a
 	// removal start being refused with no explanation.
-	if len(cfg.MCPAdminUsers) > 0 && !h.mcpSuperuserGroups.configured() {
+	if len(cfg.MCPAdminUsers) > 0 && !h.anyUserWrite.configured() {
 		logger.Warn(logging.DestinationHTTP,
-			"MCP_ADMIN_USERS grants cross-user READS only; acting on another user's jobs now needs HTTP_API_MCP_SUPERUSER_GROUP, which is unset",
+			"MCP_ADMIN_USERS grants cross-user READS only; acting on another user's jobs now needs "+
+				"HTTP_API_ANYUSER_WRITE_GROUPS or HTTP_API_ANYUSER_WRITE_USERS, and neither is set",
 			"admin_users", len(cfg.MCPAdminUsers))
 	}
 	// And it no longer applies to a caller whose token stated its scopes.
 	// Over HTTP the scope is the grant; the list is the stdio fallback.
 	// A deployment that had been relying on it for browser/OAuth callers
 	// sees their cross-user reads stop, so name the replacement.
-	if len(cfg.MCPAdminUsers) > 0 && !h.mcpAdminGroups.configured() {
+	if len(cfg.MCPAdminUsers) > 0 && !h.anyUserRead.configured() {
 		logger.Warn(logging.DestinationHTTP,
 			"MCP_ADMIN_USERS applies only to callers whose transport supplies no scopes (stdio). "+
 				"OAuth callers need the anyuser:read scope, whose entitlement comes from "+
-				"HTTP_API_MCP_ADMIN_GROUP -- which is unset, so no OAuth caller can be granted it",
+				"HTTP_API_ANYUSER_READ_GROUPS or HTTP_API_ANYUSER_READ_USERS -- neither is set, "+
+				"so no OAuth caller can be granted it",
 			"admin_users", len(cfg.MCPAdminUsers))
 	}
 	h.webuiAdminGroups = newGroupSet(cfg.WebUIAdminGroup)

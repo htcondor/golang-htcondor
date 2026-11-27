@@ -36,6 +36,15 @@ type reconfigParam struct {
 	// apply installs a new value on the running server. Nil means the
 	// parameter is read only at startup and a change requires a restart.
 	apply func(reconfigTarget, string)
+	// supersedes names an obsolete spelling of this setting, read when
+	// this one is unset -- the same precedence the startup read applies
+	// (supersededGroupSetting in main.go), so a reconfigure cannot
+	// resolve a value differently from the daemon that started.
+	//
+	// The resolved value is what diff remembers and compares, so a
+	// change to the OLD setting is seen and applied too, without the
+	// old name needing a table entry that would bypass the precedence.
+	supersedes string
 }
 
 // fromKnob makes a restart-required entry for a declared setting: the
@@ -60,8 +69,10 @@ type reconfigTarget interface {
 	SetMCPAccessGroups(string)
 	SetMCPReadGroups(string)
 	SetMCPWriteGroups(string)
-	SetMCPAdminGroups(string)
-	SetMCPSuperuserGroups(string)
+	SetAnyUserReadGroups(string)
+	SetAnyUserReadUsers(string)
+	SetAnyUserWriteGroups(string)
+	SetAnyUserWriteUsers(string)
 	SetWebUIAccessGroups(string)
 	SetWebUIAppOnlyGroups(string)
 	SetWebUIAdminGroups(string)
@@ -227,18 +238,33 @@ var reconfigParams = []reconfigParam{
 		name:  "HTTP_API_MCP_WRITE_GROUP",
 		apply: func(s reconfigTarget, v string) { s.SetMCPWriteGroups(v) },
 	},
-	// Declared, and obsolete: the name comes from the table so the two
-	// cannot drift, and staticcheck reports the read for the reason it
-	// does at the startup read in main.go.
+	// Who may REQUEST the two cross-user entitlements. Each group
+	// setting carries the obsolete spelling it replaced, so an operator
+	// who has not migrated still gets their value applied on
+	// reconfigure -- and gets the new setting's value instead the
+	// moment they write one.
+	//
+	// staticcheck reports the read of the obsolete name for the reason
+	// it does at the startup read in main.go.
 	{
+		name: knobs.AnyUserReadGroups.Name(),
 		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
-		name:  knobs.MCPAdminGroup.Name(),
-		apply: func(s reconfigTarget, v string) { s.SetMCPAdminGroups(v) },
+		supersedes: knobs.MCPAdminGroup.Name(),
+		apply:      func(s reconfigTarget, v string) { s.SetAnyUserReadGroups(v) },
 	},
 	{
+		name:  knobs.AnyUserReadUsers.Name(),
+		apply: func(s reconfigTarget, v string) { s.SetAnyUserReadUsers(v) },
+	},
+	{
+		name: knobs.AnyUserWriteGroups.Name(),
 		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
-		name:  knobs.MCPSuperuserGroup.Name(),
-		apply: func(s reconfigTarget, v string) { s.SetMCPSuperuserGroups(v) },
+		supersedes: knobs.MCPSuperuserGroup.Name(),
+		apply:      func(s reconfigTarget, v string) { s.SetAnyUserWriteGroups(v) },
+	},
+	{
+		name:  knobs.AnyUserWriteUsers.Name(),
+		apply: func(s reconfigTarget, v string) { s.SetAnyUserWriteUsers(v) },
 	},
 	// Reloaded unconditionally in reconfigure() as well; this entry is what
 	// handles the path being changed or cleared.
@@ -705,6 +731,9 @@ func (w *reconfigWatcher) reconfigure(cfg *config.Config) {
 func (w *reconfigWatcher) diff(cfg *config.Config) (applied, needRestart []string) {
 	for _, p := range w.params {
 		newVal := configValue(cfg, p.name)
+		if newVal == "" && p.supersedes != "" {
+			newVal = configValue(cfg, p.supersedes)
+		}
 		if newVal == w.prev[p.name] {
 			continue
 		}
