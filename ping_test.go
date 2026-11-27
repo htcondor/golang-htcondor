@@ -371,3 +371,49 @@ func TestPingCheckPermissionAnswersRefusal(t *testing.T) {
 		t.Errorf("query of an unreachable daemon = %+v, want an error", res)
 	}
 }
+
+// Ping has to reach the collector the rest of the type reaches.
+//
+// Every other Collector operation dials the parsed address list, which is
+// where a hostname with no port is given 9618 and a comma-separated
+// COLLECTOR_HOST is split into its members. PingWithOptions dialed
+// c.address, the raw configured string, so on a multi-collector pool the
+// whole list went to the dialer and the ping reported an unreachable
+// collector while a query against the same Collector succeeded -- the
+// shape that makes a health check lie about a healthy pool.
+func TestPingDialsTheParsedAddress(t *testing.T) {
+	// A multi-collector COLLECTOR_HOST naming one daemon twice: the parsed
+	// list has two reachable members, the raw string is not an address at
+	// all. Written without the sinful brackets because a bracketed list
+	// happens to survive the dialer's own parsing, and the host:port form
+	// is what a COLLECTOR_HOST usually holds.
+	t.Run("comma-separated list", func(t *testing.T) {
+		addr, _ := newRecordingDaemon(t)
+		bare := strings.Trim(addr, "<>")
+		c := NewCollector(bare + "," + bare).WithConfig(mustConfig(t, fsOnlyConfig))
+		res, err := c.Ping(daemonContext(t))
+		if err != nil {
+			t.Fatalf("Ping against a two-member list: %v", err)
+		}
+		if res.User == "" {
+			t.Error("the ping reported no identity")
+		}
+	})
+
+	// A hostname with no port. NewCollector documents that it supplies the
+	// default collector port; the ping has to get the same treatment. The
+	// name is in .invalid (RFC 2606) so it resolves nowhere -- what is
+	// checked is which failure comes back, not that one does.
+	t.Run("hostname with no port", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c := NewCollector("ping-test.invalid").WithConfig(mustConfig(t, fsOnlyConfig))
+		_, err := c.Ping(ctx)
+		if err == nil {
+			t.Fatal("a ping to a name that resolves nowhere succeeded")
+		}
+		if strings.Contains(err.Error(), "missing port") {
+			t.Errorf("the ping dialed the configured string rather than the parsed address: %v", err)
+		}
+	})
+}

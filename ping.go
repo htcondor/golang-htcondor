@@ -138,8 +138,24 @@ func (c *Collector) PingWithOptions(ctx context.Context, opts *PingOptions) (*Pi
 		return nil, err
 	}
 
+	// The address to ping, taken from the parsed list every other
+	// Collector operation dials rather than from the raw configured
+	// string: that is where a hostname with no port is given 9618 and a
+	// comma-separated COLLECTOR_HOST is split into its members. Handing
+	// the dialer the raw string fails outright on both shapes, so a ping
+	// reported an unreachable collector for a pool a query reached.
+	//
+	// One member, not a race across the list: a ping answers for the
+	// collector it names, and the caller chooses which by ordering
+	// COLLECTOR_HOST.
+	addrs := c.Addresses()
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("ping: no collector address configured")
+	}
+	addr := addrs[0]
+
 	// Get SecurityConfig
-	secConfig, err := GetSecurityConfigOrDefault(ctx, c.cfg, command, "CLIENT", c.address)
+	secConfig, err := GetSecurityConfigOrDefault(ctx, c.cfg, command, "CLIENT", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create security config: %w", err)
 	}
@@ -153,7 +169,7 @@ func (c *Collector) PingWithOptions(ctx context.Context, opts *PingOptions) (*Pi
 	}
 
 	// Establish connection and authenticate
-	htcondorClient, err := client.ConnectAndAuthenticate(ctx, c.address, secConfig)
+	htcondorClient, err := client.ConnectAndAuthenticate(ctx, addr, secConfig)
 	if err != nil {
 		if result := secQueryRefusal(opts, err); result != nil {
 			return result, nil
