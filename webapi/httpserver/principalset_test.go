@@ -250,3 +250,100 @@ func TestObsoleteScopeSpellingsAnswerToTheNewSettings(t *testing.T) {
 		})
 	}
 }
+
+// The opposite empty answer, and the reason the polarity is a property
+// of the set rather than a method a call site picks: an opt-in
+// restriction that nobody configured restricts nobody.
+//
+// TestUnconfiguredGatePolarity checks that each gate is built with the
+// constructor that matches it. This checks the constructors themselves.
+func TestUnconfiguredOptInSetAllowsEverybody(t *testing.T) {
+	p := newOptInPrincipalSet("", "")
+	if p.configured() {
+		t.Error("an empty set reports itself configured")
+	}
+	for _, groups := range [][]string{nil, {"some-group"}} {
+		if !p.allows("alice@example.org", groups) {
+			t.Errorf("an empty opt-in set refused a caller carrying %v; "+
+				"unset must mean no requirement, not nobody", groups)
+		}
+	}
+	// A caller who asserted no identity either. Nothing is required of
+	// them, so nothing refuses them.
+	if !p.allows("", nil) {
+		t.Error("an empty opt-in set refused a caller with no asserted identity")
+	}
+}
+
+// Naming anybody turns the restriction on for everybody else -- by
+// group or by user, each half alone.
+func TestConfiguredOptInSetRestricts(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		groups, users string
+		actor         string
+		holds         []string
+		want          bool
+	}{
+		{"group half admits a member", "login", "", "alice@example.org", []string{"login"}, true},
+		{"group half refuses everybody else", "login", "", "alice@example.org", []string{"other"}, false},
+		{"user half admits the named user", "", "alice@example.org", "alice@example.org", nil, true},
+		{"user half refuses everybody else", "", "alice@example.org", "mallory@example.org", nil, false},
+		{"either half suffices", "login", "alice@example.org", "mallory@example.org", []string{"login"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newOptInPrincipalSet(tc.groups, tc.users)
+			if !p.configured() {
+				t.Fatal("a set naming somebody reports itself unconfigured, so it would restrict nothing")
+			}
+			if got := p.allows(tc.actor, tc.holds); got != tc.want {
+				t.Errorf("allows(%q, %v) = %v, want %v", tc.actor, tc.holds, got, tc.want)
+			}
+		})
+	}
+}
+
+// A set's polarity is fixed when it is built. A reconfigure changes who
+// is named, never what naming nobody means -- otherwise emptying a gate
+// would turn an opt-in restriction into a lockout, or an entitlement
+// into a free-for-all.
+func TestPolaritySurvivesAReconfigure(t *testing.T) {
+	optIn := newOptInPrincipalSet("login", "alice@example.org")
+	optIn.setGroups("")
+	optIn.setUsers("")
+	if !optIn.allows("mallory@example.org", nil) {
+		t.Error("emptying an opt-in set turned it into a lockout")
+	}
+
+	closed := newPrincipalSet("admins", "alice@example.org")
+	closed.setGroups("")
+	closed.setUsers("")
+	if closed.allows("mallory@example.org", []string{"admins"}) {
+		t.Error("emptying an entitlement set granted it to everybody")
+	}
+}
+
+// withOpenGates gives a Handler literal the four opt-in gates NewHandler
+// would build for a deployment that configured none of them:
+// unrestricted.
+//
+// A test that leaves them nil is testing a Handler that cannot exist --
+// NewHandler always builds all four -- and every gate on it refuses,
+// because a nil set names nobody and has no polarity to consult. That
+// is the right answer for a value nothing built and the wrong premise
+// for a test, so the tests say which they mean.
+func withOpenGates(h *Handler) *Handler {
+	if h.mcpAccessGroups == nil {
+		h.mcpAccessGroups = newOptInPrincipalSet("", "")
+	}
+	if h.mcpReadGroups == nil {
+		h.mcpReadGroups = newOptInPrincipalSet("", "")
+	}
+	if h.mcpWriteGroups == nil {
+		h.mcpWriteGroups = newOptInPrincipalSet("", "")
+	}
+	if h.webuiAccessGroups == nil {
+		h.webuiAccessGroups = newOptInPrincipalSet("", "")
+	}
+	return h
+}

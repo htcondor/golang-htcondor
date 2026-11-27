@@ -72,21 +72,18 @@ func (g *groupSet) list() []string {
 // configured reports whether any group is required at all.
 func (g *groupSet) configured() bool { return len(g.list()) > 0 }
 
-// allows reports whether the user holds ANY of the required groups.
-//
-// An unconfigured set allows everyone: these knobs are opt-in, and an
-// empty one has always meant "no group requirement" rather than "nobody".
+// groupListMatches reports whether held names any group in required.
 //
 // Membership is compared case-insensitively, as it was when each of these
-// was a single group -- Unix group names and directory-sourced ones do not
-// reliably agree on case.
-func (g *groupSet) allows(userGroups []string) bool {
-	required := g.list()
-	if len(required) == 0 {
-		return true
-	}
+// settings was a single group -- Unix group names and directory-sourced
+// ones do not reliably agree on case.
+//
+// A free function because principalSet asks the same question of a list it
+// has already read, and two copies of this loop are two places for the
+// case rule to drift apart.
+func groupListMatches(required, held []string) bool {
 	for _, r := range required {
-		for _, u := range userGroups {
+		for _, u := range held {
 			if strings.EqualFold(u, r) {
 				return true
 			}
@@ -95,19 +92,24 @@ func (g *groupSet) allows(userGroups []string) bool {
 	return false
 }
 
+// allows reports whether the user holds ANY of the required groups.
+//
+// An unconfigured set allows everyone: these knobs are opt-in, and an
+// empty one has always meant "no group requirement" rather than "nobody".
+func (g *groupSet) allows(userGroups []string) bool {
+	required := g.list()
+	if len(required) == 0 {
+		return true
+	}
+	return groupListMatches(required, userGroups)
+}
+
 // grants reports whether the user holds one of the configured groups, with
 // an EMPTY list granting nothing -- the opposite of allows. For privileges
 // where "unset" must mean "nobody". The list is read once, so a reconfigure
 // in between cannot make the two halves of the decision disagree.
 func (g *groupSet) grants(userGroups []string) bool {
-	for _, r := range g.list() {
-		for _, u := range userGroups {
-			if strings.EqualFold(u, r) {
-				return true
-			}
-		}
-	}
-	return false
+	return groupListMatches(g.list(), userGroups)
 }
 
 // String renders the list for logs and operator-facing messages.

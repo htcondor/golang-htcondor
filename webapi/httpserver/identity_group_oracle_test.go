@@ -54,7 +54,7 @@ func oracleFor(t *testing.T, src droppriv.GroupLookup, required string) *systemG
 	t.Helper()
 	return &systemGroupOracle{
 		identity: &localIdentity{groups: src},
-		validate: func(groups []string) error {
+		validate: func(_ string, groups []string) error {
 			if required == "" {
 				return nil
 			}

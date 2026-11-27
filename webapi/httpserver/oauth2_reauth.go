@@ -334,8 +334,8 @@ func (h *Handler) reevaluateSubjectWith(ctx context.Context, username string, gr
 	// --- group policy re-evaluation -------------------------------------
 	// IMPORTANT: for a stored grant, groups is the session's membership
 	// list as of consent, not a live reading. Re-running the policy against it therefore catches
-	// POLICY drift — an operator changing MCP_WRITE_GROUP, or adding an
-	// MCP_ACCESS_GROUP where there was none — but NOT MEMBERSHIP drift.
+	// POLICY drift — an operator changing HTTP_API_MCP_WRITE_GROUPS, or
+	// adding an access gate where there was none — but NOT MEMBERSHIP drift.
 	// A user removed from condor-writers upstream still carries
 	// "condor-writers" here and still passes.
 	//
@@ -363,7 +363,7 @@ func (h *Handler) reevaluateSubjectWith(ctx context.Context, username string, gr
 	// groups (the trusted user header, say), so there is no policy to
 	// re-run at all.
 	if groups != nil {
-		if err := h.validateGroupAccess(groups); err != nil {
+		if err := h.validateGroupAccess(username, groups); err != nil {
 			h.logger.Info(logging.DestinationHTTP, "Refusing grant on lost group access",
 				"username", username, "request_id", requestID, "groups", groups)
 			return nil, fmt.Sprintf("user no longer has required group membership: %v", err)

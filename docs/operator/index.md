@@ -249,8 +249,8 @@ separately, each taking a comma-separated list and admitting a user who
 holds **any** of the named groups:
 
 ```
-HTTP_API_WEBUI_ACCESS_GROUP = ap2001-login, chtc_staff   # the web interface
-HTTP_API_MCP_ACCESS_GROUP   = ap2001-login               # driving the AP through MCP
+HTTP_API_WEBUI_ACCESS_GROUPS = ap2001-login, chtc_staff  # the web interface
+HTTP_API_MCP_ACCESS_GROUPS   = ap2001-login              # driving the AP through MCP
 HTTP_API_WEBUI_ADMIN_GROUP  = chtc_staff                 # the admin pages
 HTTP_API_SUPERUSER_GROUP    = chtc_admin                 # acting as another user
 ```

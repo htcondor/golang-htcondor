@@ -234,6 +234,179 @@ knobs:
       HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is
       used. HTTP_API_LISTEN_ADDR wins where both are set.
 
+  # Who may reach a surface at all, and who may read or write through
+  # it. Each is a pair: a group list and a user list, either of which
+  # can name somebody. A caller passes by holding ANY named group or by
+  # BEING a named user.
+  #
+  # These are opt-in RESTRICTIONS, and the empty case is the opposite of
+  # the HTTP_API_ANYUSER_* settings below. Naming nobody requires
+  # nothing, so an unconfigured gate admits every authenticated caller;
+  # naming anybody turns the restriction on for everybody else. Most
+  # deployments set none of these.
+  - name: HTTP_API_MCP_ACCESS_GROUPS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Groups whose members may reach /mcp at all. Comma-separated, or a
+      JSON array to spell a group name containing a comma. Unset, with
+      HTTP_API_MCP_ACCESS_USERS unset too, places no requirement on the
+      surface and every authenticated caller reaches it; naming anybody
+      in either half restricts it to the people named.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_MCP_ACCESS_USERS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Users who may reach /mcp, named individually rather than through
+      a group -- which is the only half that decides anything where
+      HTTP_API_GROUP_SOURCE is token and the token carries no groups.
+      Identities are compared the way HTCondor compares two users: the
+      domain case-insensitively, the part before the @ exactly, and a
+      bare name matches only a bare name. Write alice@example.org, not
+      alice, where the access point reports fully-qualified users.
+      Naming somebody here restricts the surface to the people named,
+      here or in HTTP_API_MCP_ACCESS_GROUPS.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_MCP_READ_GROUPS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Groups whose members are granted the mcp:read scope, which reads
+      the caller's own jobs through /mcp. Unset, with
+      HTTP_API_MCP_READ_USERS unset too, the scope follows the access
+      gate instead: whoever may reach /mcp may read through it.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_MCP_READ_USERS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Users granted the mcp:read scope, named individually rather than
+      through a group. Identities are compared as for
+      HTTP_API_MCP_ACCESS_USERS.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_MCP_WRITE_GROUPS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Groups whose members are granted the mcp:write scope -- and
+      condor:/WRITE, which mints an IDTOKEN carrying the same
+      authorization, so the two follow one policy rather than offering
+      the same power under two names. Unset, with
+      HTTP_API_MCP_WRITE_USERS unset too, the scope follows the access
+      gate.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_MCP_WRITE_USERS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Users granted the mcp:write scope, named individually rather than
+      through a group. Identities are compared as for
+      HTTP_API_MCP_ACCESS_USERS.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_WEBUI_ACCESS_GROUPS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Groups whose members may log in to the web interface. Separate
+      from the MCP gate because the two answer different questions:
+      somebody may be entitled to open this access point's pages
+      without being entitled to drive it through an agent, and the
+      reverse. Unset, with HTTP_API_WEBUI_ACCESS_USERS unset too, the
+      MCP access gate applies instead -- which is what gated the
+      browser before these were separate settings.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  - name: HTTP_API_WEBUI_ACCESS_USERS
+    type: string
+    default: ""
+    scope: reconfig
+    doc: >
+      Users who may log in to the web interface, named individually
+      rather than through a group. Identities are compared as for
+      HTTP_API_MCP_ACCESS_USERS. Naming somebody here is enough to make
+      the web interface answer to its own gate rather than the MCP one.
+    see:
+      - text: Authorization groups
+        url: auth.md#authorization-groups
+
+  # The older singular spellings of the four above. Obsolete, so they
+  # are declared here -- the table is the only place a setting may be
+  # spelled -- and left out of the reference on purpose.
+  #
+  # Each still works: where the plural setting is unset, the old value
+  # is read in its place and the startup log names the replacement. The
+  # plural wins where both are set, so an operator migrating does not
+  # have to delete the old line in the same edit.
+  - name: HTTP_API_MCP_ACCESS_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete:
+      superseded_by: HTTP_API_MCP_ACCESS_GROUPS
+    doc: >
+      An older spelling of HTTP_API_MCP_ACCESS_GROUPS, honored where
+      that is unset and named as superseded in the startup log when it
+      is read. It already accepted a list, which is why the replacement
+      is plural.
+
+  - name: HTTP_API_MCP_READ_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete:
+      superseded_by: HTTP_API_MCP_READ_GROUPS
+    doc: >
+      An older spelling of HTTP_API_MCP_READ_GROUPS, honored where that
+      is unset and named as superseded in the startup log.
+
+  - name: HTTP_API_MCP_WRITE_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete:
+      superseded_by: HTTP_API_MCP_WRITE_GROUPS
+    doc: >
+      An older spelling of HTTP_API_MCP_WRITE_GROUPS, honored where
+      that is unset and named as superseded in the startup log.
+
+  - name: HTTP_API_WEBUI_ACCESS_GROUP
+    type: string
+    default: ""
+    scope: reconfig
+    obsolete:
+      superseded_by: HTTP_API_WEBUI_ACCESS_GROUPS
+    doc: >
+      An older spelling of HTTP_API_WEBUI_ACCESS_GROUPS, honored where
+      that is unset and named as superseded in the startup log.
+
   # Who may REQUEST the two cross-user entitlements. Each is a pair:
   # a group list and a user list, either of which can name somebody.
   # Membership is permission to ask for the scope, never the scope

@@ -427,21 +427,60 @@ This is separate from `HTTP_API_USER_HEADER_TRUSTED_PROXIES`, which decides who 
 
 ## Authorization groups
 
-Four knobs decide who may do what. Each takes a **comma-separated list**
-and admits a user holding **any** of the named groups; surrounding
-whitespace is trimmed, and an empty value means "no group required".
-Matching is case-insensitive.
+Four settings decide who may do what. Each takes a **comma-separated
+list** and admits a user holding **any** of the named groups;
+surrounding whitespace is trimmed, and an empty value means "no group
+required". Matching is case-insensitive.
 
-| Knob | Gates |
+| Setting | Gates |
 | --- | --- |
-| `HTTP_API_WEBUI_ACCESS_GROUP` | Logging in to the web interface. Unset falls back to `HTTP_API_MCP_ACCESS_GROUP`. |
-| `HTTP_API_MCP_ACCESS_GROUP` | Driving this access point through MCP. |
+| `HTTP_API_WEBUI_ACCESS_GROUPS` | Logging in to the web interface. Naming nobody falls back to `HTTP_API_MCP_ACCESS_GROUPS`. |
+| `HTTP_API_MCP_ACCESS_GROUPS` | Driving this access point through MCP. |
 | `HTTP_API_WEBUI_ADMIN_GROUP` | The admin pages. Unset disables the admin UI. |
 | `HTTP_API_SUPERUSER_GROUP` | Superuser mode (see below). Unset disables the feature. |
 
-`HTTP_API_MCP_READ_GROUP` and `HTTP_API_MCP_WRITE_GROUP` narrow MCP
+`HTTP_API_MCP_READ_GROUPS` and `HTTP_API_MCP_WRITE_GROUPS` narrow MCP
 further, and take lists on the same terms. The write group also decides
 `condor:/WRITE`: a user it denies `mcp:write` is denied that too.
+
+### Naming a person rather than a group
+
+Every `*_GROUPS` setting above has a matching `*_USERS` one --
+`HTTP_API_MCP_ACCESS_USERS`, `HTTP_API_MCP_READ_USERS`,
+`HTTP_API_MCP_WRITE_USERS`, `HTTP_API_WEBUI_ACCESS_USERS` -- which names
+people individually. A caller passes the gate by holding any named group
+**or** by being any named user.
+
+The user half is the only half that decides anything where
+`HTTP_API_GROUP_SOURCE` is `token` and the token carries no groups, which
+is the default and the usual case in a container. It also means naming
+one person does not require inventing a directory group for them.
+
+Identities are compared the way HTCondor compares two users: the domain
+case-insensitively, the part before the `@` exactly, and **a bare name
+matches only a bare name**. Write `alice@example.org`, not `alice`, where
+the access point reports fully-qualified users.
+
+Setting either half turns the restriction on. A gate with nobody named in
+either half requires nothing, so every authenticated caller passes it;
+name one person in `HTTP_API_MCP_ACCESS_USERS` and everybody else is
+refused. (The `HTTP_API_ANYUSER_*` settings answer the empty case the
+other way round, because a cross-user privilege nobody configured must
+belong to nobody.)
+
+### Migrating from the singular names
+
+Each `*_GROUPS` setting above replaced an older singular spelling, which
+already accepted a list and so read as a single group while not being
+one. The old name still works: where the plural setting is unset the old
+value is read in its place, at startup and on reconfigure alike, and the
+startup log reports it as superseded and names its replacement -- which
+is where to look if you are not sure which one this access point is
+reading.
+
+The plural wins where both are set, so migrating is adding a line rather
+than swapping two at once, and narrowing a gate with the new setting is
+not undone by the old one on the next reconfigure.
 
 ### Names the comma rule cannot spell
 
@@ -450,7 +489,7 @@ Write it as it is, with no quoting -- HTCondor keeps quotation marks as
 part of a value, so quoting it creates a group nobody is in:
 
 ```
-HTTP_API_MCP_ACCESS_GROUP = CO:COU:CMS Connect COU:members:active
+HTTP_API_MCP_ACCESS_GROUPS = CO:COU:CMS Connect COU:members:active
 ```
 
 A value that begins with `[` is read as a **JSON array of strings**
@@ -458,7 +497,7 @@ instead, which is how to name a group whose own name contains a comma,
 or one that begins or ends with a space:
 
 ```
-HTTP_API_MCP_ACCESS_GROUP = ["CO:COU:CMS Connect COU:members:active", "Lab, Smith"]
+HTTP_API_MCP_ACCESS_GROUPS = ["CO:COU:CMS Connect COU:members:active", "Lab, Smith"]
 ```
 
 Names inside the array are taken verbatim -- nothing is trimmed -- and
@@ -474,15 +513,16 @@ now let its staff open the pages without also letting them drive the AP
 through an agent:
 
 ```
-HTTP_API_MCP_ACCESS_GROUP   = ap2001-login
-HTTP_API_WEBUI_ACCESS_GROUP = ap2001-login, chtc_staff
-HTTP_API_WEBUI_ADMIN_GROUP  = chtc_staff
-HTTP_API_SUPERUSER_GROUP    = chtc_admin
+HTTP_API_MCP_ACCESS_GROUPS   = ap2001-login
+HTTP_API_WEBUI_ACCESS_GROUPS = ap2001-login, chtc_staff
+HTTP_API_WEBUI_ADMIN_GROUP   = chtc_staff
+HTTP_API_SUPERUSER_GROUP     = chtc_admin
 ```
 
-`HTTP_API_WEBUI_ACCESS_GROUP` falls back to `HTTP_API_MCP_ACCESS_GROUP`
-when unset, so a deployment that was using the MCP group to gate the
-browser keeps that behaviour rather than being silently opened.
+`HTTP_API_WEBUI_ACCESS_GROUPS` falls back to `HTTP_API_MCP_ACCESS_GROUPS`
+when nobody is named in it or in `HTTP_API_WEBUI_ACCESS_USERS`, so a
+deployment that was using the MCP group to gate the browser keeps that
+behaviour rather than being silently opened.
 
 All of these are re-read on **`condor_reconfig` / SIGHUP** -- each is only
 a membership test on a request, with nothing built from it. A login
@@ -493,7 +533,7 @@ on the next refresh rather than mid-request. One exception:
 switch the feature **on**, because superuser mode builds its signing
 identity at startup; the log says so if you try.
 
-A browser refused by these gets an HTML page naming the groups to ask for,
+A browser refused by these gets an HTML page naming what to ask for,
 rather than the API's JSON error body.
 
 ## Superuser mode
@@ -718,7 +758,7 @@ outage does not log everyone out.
 
 Note the group list an oracle-free deployment relies on is captured at
 consent, so re-running group policy catches an operator changing
-`MCP_WRITE_GROUP` but not a user being removed from that group
+`HTTP_API_MCP_WRITE_GROUPS` but not a user being removed from that group
 upstream. Removals are caught by the oracles, by
 `POST /api/v1/admin/oauth2/revoke`, and ultimately by the lifetime cap.
 

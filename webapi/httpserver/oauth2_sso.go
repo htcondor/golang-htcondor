@@ -61,12 +61,16 @@ func extractGroups(groupsClaim interface{}) []string {
 	}
 }
 
-// validateAccess reports whether a user's groups satisfy a required set.
-func (s *Handler) validateAccess(required *groupSet, userGroups []string) error {
-	if required.allows(userGroups) {
+// validateAccess reports whether this caller satisfies a required set.
+//
+// actor is the identity being admitted, because a set may name people
+// individually as well as by group -- which is the only half that
+// decides anything where groups come from a token that carries none.
+func (s *Handler) validateAccess(required *principalSet, actor string, userGroups []string) error {
+	if required.allows(actor, userGroups) {
 		return nil
 	}
-	return fmt.Errorf("user is not in any of the required access groups: %s", required)
+	return fmt.Errorf("user is not named by any of the required access settings: %s", required)
 }
 
 // validateWebUIAccess gates logging in to the web interface.
@@ -75,8 +79,8 @@ func (s *Handler) validateAccess(required *groupSet, userGroups []string) error 
 // questions: who may drive this AP through an agent, and who may open its
 // web interface. They were one knob, so granting somebody the browser
 // necessarily granted them MCP.
-func (s *Handler) validateWebUIAccess(userGroups []string) error {
-	return s.validateAccess(s.webUIRequiredGroups(), userGroups)
+func (s *Handler) validateWebUIAccess(actor string, userGroups []string) error {
+	return s.validateAccess(s.webUIRequiredGroups(), actor, userGroups)
 }
 
 // webUIRequiredGroups is the set gating web interface login.
@@ -86,16 +90,16 @@ func (s *Handler) validateWebUIAccess(userGroups []string) error {
 // is what that knob did before these were separated -- is not silently
 // opened by the separation. Resolved per call rather than aliased at
 // startup so that a reconfigure of either knob takes effect immediately.
-func (s *Handler) webUIRequiredGroups() *groupSet {
+func (s *Handler) webUIRequiredGroups() *principalSet {
 	if s.webuiAccessGroups.configured() {
 		return s.webuiAccessGroups
 	}
 	return s.mcpAccessGroups
 }
 
-func (s *Handler) validateGroupAccess(userGroups []string) error {
-	// If access group is configured, user must be in it
-	return s.validateAccess(s.mcpAccessGroups, userGroups)
+func (s *Handler) validateGroupAccess(actor string, userGroups []string) error {
+	// If an access gate is configured, the caller must pass it.
+	return s.validateAccess(s.mcpAccessGroups, actor, userGroups)
 }
 
 // getScopesForGroups determines OAuth2 scopes based on group membership.
@@ -151,19 +155,7 @@ func (s *Handler) getScopesForGroups(actor string, userGroups []string, requeste
 			// made through any other path would act for nobody.
 			continue
 		case "mcp:read":
-			switch {
-			case s.mcpReadGroups.configured():
-				// Specific read group configured — user must be in it
-				if s.mcpReadGroups.allows(userGroups) {
-					grantedScopes = append(grantedScopes, scope)
-				}
-			case s.mcpAccessGroups.configured():
-				// No specific read group; fall back to access group (already validated)
-				if s.mcpAccessGroups.allows(userGroups) {
-					grantedScopes = append(grantedScopes, scope)
-				}
-			default:
-				// No groups configured — grant to any authenticated user
+			if s.readScopeAllowed(actor, userGroups) {
 				grantedScopes = append(grantedScopes, scope)
 			}
 		case "mcp:write":
@@ -174,7 +166,7 @@ func (s *Handler) getScopesForGroups(actor string, userGroups []string, requeste
 			// buys nothing is how a user comes to believe they were
 			// given something, and how an agent comes to keep retrying a
 			// call that will never work.
-			if !s.mcpReadOnly.Load() && s.writeScopeAllowed(userGroups) {
+			if !s.mcpReadOnly.Load() && s.writeScopeAllowed(actor, userGroups) {
 				grantedScopes = append(grantedScopes, scope)
 			}
 		case "mcp:admin":
@@ -228,7 +220,7 @@ func (s *Handler) getScopesForGroups(actor string, userGroups []string, requeste
 			// under the other name. Case-insensitive because the
 			// mapping to an authorization level is.
 			if strings.EqualFold(scope, condorScopeWrite) {
-				if s.writeScopeAllowed(userGroups) {
+				if s.writeScopeAllowed(actor, userGroups) {
 					grantedScopes = append(grantedScopes, scope)
 				}
 				continue
@@ -258,21 +250,31 @@ func (s *Handler) getScopesForGroups(actor string, userGroups []string, requeste
 	return grantedScopes
 }
 
-// writeScopeAllowed is the group policy for a scope that grants WRITE:
-// the write group when one is configured, otherwise the access group,
-// otherwise any authenticated user.
-func (s *Handler) writeScopeAllowed(userGroups []string) bool {
-	switch {
-	case s.mcpWriteGroups.configured():
-		// Specific write group configured — user must be in it
-		return s.mcpWriteGroups.allows(userGroups)
-	case s.mcpAccessGroups.configured():
-		// No specific write group; fall back to access group (already validated)
-		return s.mcpAccessGroups.allows(userGroups)
-	default:
-		// No groups configured — grant to any authenticated user
-		return true
+// readScopeAllowed is the policy for mcp:read: the read gate when one is
+// configured, otherwise the access gate, otherwise any authenticated
+// user.
+//
+// That last fallback is not spelled out here. The access gate is an
+// opt-in restriction, so an unconfigured one already allows everybody;
+// a third branch returning true would be a second place for the
+// empty-set answer to be decided, and the two could come to disagree.
+func (s *Handler) readScopeAllowed(actor string, userGroups []string) bool {
+	if s.mcpReadGroups.configured() {
+		return s.mcpReadGroups.allows(actor, userGroups)
 	}
+	// No specific read gate; fall back to the access gate (already validated).
+	return s.mcpAccessGroups.allows(actor, userGroups)
+}
+
+// writeScopeAllowed is the policy for a scope that grants WRITE: the
+// write gate when one is configured, otherwise the access gate,
+// otherwise any authenticated user -- the same shape as
+// readScopeAllowed, and for the same reason it needs no third branch.
+func (s *Handler) writeScopeAllowed(actor string, userGroups []string) bool {
+	if s.mcpWriteGroups.configured() {
+		return s.mcpWriteGroups.allows(actor, userGroups)
+	}
+	return s.mcpAccessGroups.allows(actor, userGroups)
 }
 
 // fetchUserInfo fetches user information from the IDP user info endpoint
@@ -520,7 +522,7 @@ func (s *Handler) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	// interface and MCP are separate grants: somebody may be entitled to
 	// open this AP's pages without being entitled to drive it through an
 	// agent, and the reverse.
-	accessErr, required, placementOnly := s.validateGroupAccess(userGroups), s.mcpAccessGroups, false
+	accessErr, required, placementOnly := s.validateGroupAccess(subject, userGroups), s.mcpAccessGroups, false
 	if isBrowserFlow {
 		placementOnly, accessErr = s.webUILoginAccess(li, mapped)
 		required = s.webUIRequiredGroups()
@@ -741,11 +743,11 @@ func (s *Handler) renderIdentityDeniedPage(w http.ResponseWriter, err error) {
 // deployment's own group policy. That distinction is what the page has to
 // convey, along with the group to ask for, or they will report it as a
 // broken login.
-func (s *Handler) renderAccessDeniedPage(w http.ResponseWriter, required *groupSet) {
+func (s *Handler) renderAccessDeniedPage(w http.ResponseWriter, required *principalSet) {
 	message := "You signed in successfully, but this access point's policy does not grant you access."
 	sub := ""
 	if required.configured() {
-		sub = "Access requires membership in one of: " + required.String() +
+		sub = "Access is restricted to " + required.String() +
 			". Ask an administrator of this access point to add you."
 	} else {
 		sub = "Ask an administrator of this access point for access."
@@ -987,7 +989,7 @@ func (s *Handler) commitLoginMapping(ctx context.Context, w http.ResponseWriter,
 // placementd is not entitled to the web interface by the placementd alone,
 // but it may still get its token.
 func (s *Handler) webUILoginAccess(li loginIdentity, m loginMapping) (placementOnly bool, accessErr error) {
-	if err := s.validateWebUIAccess(m.groups); err != nil {
+	if err := s.validateWebUIAccess(m.subject, m.groups); err != nil {
 		return m.placement != nil && li.placementID != "", err
 	}
 	return false, nil
