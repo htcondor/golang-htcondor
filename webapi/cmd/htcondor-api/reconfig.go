@@ -126,7 +126,7 @@ var reconfigParams = []reconfigParam{
 	// point: a tool withdrawn because policy changed should stop working
 	// without waiting for agents to reconnect.
 	{
-		name: "HTTP_API_MCP_DISABLED_TOOLS",
+		name: knobs.MCPDisabledTools.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPDisabledTools(v)
 		},
@@ -138,7 +138,7 @@ var reconfigParams = []reconfigParam{
 	// expect, which is the worst possible moment to be told to restart
 	// the daemon.
 	{
-		name: "HTTP_API_MCP_READ_ONLY",
+		name: knobs.MCPReadOnly.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPReadOnly(v)
 		},
@@ -150,13 +150,13 @@ var reconfigParams = []reconfigParam{
 	// an agent act at an unexpected scale wants the gate up for the
 	// sessions already connected, not at the next restart.
 	{
-		name: "HTTP_API_MCP_CONFIRM_SUBMIT_OVER",
+		name: knobs.MCPConfirmSubmitOver.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPConfirmSubmitOver(v)
 		},
 	},
 	{
-		name: "HTTP_API_MCP_CONFIRM_REMOVE_OVER",
+		name: knobs.MCPConfirmRemoveOver.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPConfirmRemoveOver(v)
 		},
@@ -175,15 +175,15 @@ var reconfigParams = []reconfigParam{
 	// notebooks being made would drop every notebook already running,
 	// which is precisely what these settings take care not to do.
 	{
-		name:  "HTTP_API_INTERACTIVE_JUPYTER",
+		name:  knobs.InteractiveJupyter.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetInteractiveJupyter(v) },
 	},
 	{
-		name:  "HTTP_API_INTERACTIVE_VSCODE",
+		name:  knobs.InteractiveVSCode.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetInteractiveVSCode(v) },
 	},
 	{
-		name:  "HTTP_API_INTERACTIVE_TERMINAL",
+		name:  knobs.InteractiveTerminal.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetInteractiveTerminal(v) },
 	},
 
@@ -195,13 +195,13 @@ var reconfigParams = []reconfigParam{
 	// a credential, or that a rule is eating something it needs, should
 	// not have to restart the daemon to say so.
 	{
-		name: "HTTP_API_MCP_REDACT_SECRETS",
+		name: knobs.MCPRedactSecrets.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPRedactSecrets(v)
 		},
 	},
 	{
-		name: "HTTP_API_MCP_REDACT_DISABLED_RULES",
+		name: knobs.MCPRedactDisabledRules.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPRedactDisabledRules(v)
 		},
@@ -249,7 +249,7 @@ var reconfigParams = []reconfigParam{
 	// immediacy and an unconditional re-read: the poll skips files whose
 	// size and modification time are unchanged, and this does not.
 	{
-		name:  "HTTP_API_MCP_SKILLS_DIR",
+		name:  knobs.MCPSkillsDir.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetMCPSkillsDir(v) },
 	},
 	// The web chat assistant's half of MCP_INSTRUCTIONS: the operator's
@@ -258,7 +258,7 @@ var reconfigParams = []reconfigParam{
 	// usual reason to reload is that the file's contents were edited --
 	// the same reasoning as HTTP_API_MCP_SKILLS_DIR above.
 	{
-		name:  "HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE",
+		name:  knobs.LLMOperatorInstructionsFile.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetChatInstructions(v) },
 	},
 	{
@@ -407,6 +407,60 @@ var reconfigParams = []reconfigParam{
 	// configuration and reconfiguring does not look like it worked.
 	fromKnob(knobs.UserHeaderTrustAny.Knob),
 
+	// The SSH gateway. The listener is bound, and the host and CA keys
+	// are loaded or generated, once at startup; the lockout is built
+	// with the gateway and its banlist keeps its own counters, so a
+	// reconfigure would have to restart the listener to change any of
+	// it. None of these was listed before, so a change to any of them
+	// did nothing and nothing said so.
+	fromKnob(knobs.SSHGatewayAddress.Knob),
+	fromKnob(knobs.SSHGatewayIssuer.Knob),
+	fromKnob(knobs.SSHGatewayHost.Knob),
+	fromKnob(knobs.SSHHostKeyFile.Knob),
+	fromKnob(knobs.SSHCAKeyFile.Knob),
+	fromKnob(knobs.SSHGatewayLockoutThreshold.Knob),
+	fromKnob(knobs.SSHGatewayLockoutNetThreshold.Knob),
+	fromKnob(knobs.SSHGatewayLockoutWindow.Knob),
+	fromKnob(knobs.SSHGatewayLockoutTime.Knob),
+	fromKnob(knobs.SSHGatewayLockoutMaxTime.Knob),
+	fromKnob(knobs.SSHGatewayLockoutTrusted.Knob),
+	fromKnob(knobs.SSHGatewayLockoutDisable.Knob),
+	fromKnob(knobs.SSHGatewaySessionCPUs.Knob),
+	fromKnob(knobs.SSHGatewaySessionMemoryMB.Knob),
+	fromKnob(knobs.SSHGatewaySessionDiskMB.Knob),
+
+	// The chat assistant's upstream. All four are read when the chat
+	// engine is built and none was listed, so a site that pointed the
+	// server at a different gateway and reconfigured kept talking to
+	// the old one with nothing said. The site-policy file is the
+	// exception and is applied dynamically, above.
+	fromKnob(knobs.LLMAPIKeyFile.Knob),
+	fromKnob(knobs.LLMAPIURL.Knob),
+	fromKnob(knobs.LLMModel.Knob),
+	fromKnob(knobs.LLMAuthScheme.Knob),
+
+	// The two MCP request deadlines. Both are captured when the
+	// handler is built and advertised to agents in a tool schema, so a
+	// change reaches neither a running request nor a client that has
+	// already read the schema. Neither was listed before.
+	fromKnob(knobs.MCPMaxRequestDuration.Knob),
+	fromKnob(knobs.MCPWatchMaxWait.Knob),
+
+	// The JupyterLab limits and grace periods. Each is stamped into a
+	// session's submit description when the session is created, so a
+	// change reaches sessions created after a restart and no others --
+	// and none of the four was listed before, so a change reached
+	// nothing at all and nothing said so.
+	fromKnob(knobs.JupyterMaxLifetimeSec.Knob),
+	fromKnob(knobs.JupyterKernelIdleSec.Knob),
+	fromKnob(knobs.JupyterStartGraceSec.Knob),
+	fromKnob(knobs.JupyterReconnectGraceSec.Knob),
+
+	// The +jobs sandbox cache, sized when the file service is built.
+	fromKnob(knobs.SandboxCacheDir.Knob),
+	fromKnob(knobs.SandboxCacheMB.Knob),
+	fromKnob(knobs.SandboxMaxGB.Knob),
+
 	// The HTTP server's timeouts, captured when it was built.
 	fromKnob(knobs.ReadTimeout.Knob),
 	fromKnob(knobs.WriteTimeout.Knob),
@@ -440,7 +494,7 @@ var reconfigParams = []reconfigParam{
 	// The skills poll's ticker is started once, when the MCP server is
 	// built. Changing how often it fires needs a restart; changing what it
 	// reads does not (see HTTP_API_MCP_SKILLS_DIR above).
-	{name: "HTTP_API_MCP_SKILLS_RELOAD_INTERVAL"},
+	{name: knobs.MCPSkillsReloadInterval.Name()},
 
 	// The connector output sweep's ticker is likewise started once. Which
 	// connectors exist, and their policy, do reload; how often finished
@@ -474,14 +528,14 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.IdempotencyKeyRetention.Knob),
 	fromKnob(knobs.IdempotencyKeyTimeout.Knob),
 	fromKnob(knobs.IdempotencyKeyHistoryWindow.Knob),
-	{name: "HTTP_API_INTERACTIVE_REQUIREMENTS"},
+	fromKnob(knobs.InteractiveRequirements.Knob),
 	{name: "HTTP_API_DAGMAN_PATH"},
 	{name: "HTTP_API_DAGMAN_ENVIRONMENT"},
 	fromKnob(knobs.InteractiveExtraSubmit.Knob),
 	fromKnob(knobs.BuildExtraSubmit.Knob),
 	fromKnob(knobs.BuildRequirements.Knob),
 	fromKnob(knobs.BuildStagingBase.Knob),
-	{name: "HTTP_API_VSCODE_IMAGE"},
+	fromKnob(knobs.VSCodeImage.Knob),
 	fromKnob(knobs.BuildDefaultCPUs.Knob),
 	fromKnob(knobs.BuildDefaultMemoryMB.Knob),
 	fromKnob(knobs.BuildDefaultDiskMB.Knob),
@@ -503,7 +557,7 @@ var reconfigParams = []reconfigParam{
 
 	// The ceiling on one upload command, copied into the handler and
 	// into the MCP server it builds, both at startup.
-	{name: "HTTP_API_SPOOL_MAX_UPLOAD_BYTES"},
+	fromKnob(knobs.SpoolMaxUploadBytes.Knob),
 
 	// Placement onboarding, read when the handler is built.
 	{name: "HTTP_API_PLACEMENT_IDENTITY_CLAIMS"},
@@ -590,10 +644,10 @@ func (w *reconfigWatcher) reconfigure(cfg *config.Config) {
 	// pull, a new deployment of the site's documentation -- which a diff
 	// of the setting itself cannot see. This is the only parameter here
 	// whose meaning lives outside the configuration file.
-	if dir := configValue(cfg, "HTTP_API_MCP_SKILLS_DIR"); dir != "" {
+	if dir := configValue(cfg, knobs.MCPSkillsDir.Name()); dir != "" {
 		w.srv.SetMCPSkillsDir(dir)
-		if !slices.Contains(applied, "HTTP_API_MCP_SKILLS_DIR") {
-			applied = append(applied, "HTTP_API_MCP_SKILLS_DIR")
+		if !slices.Contains(applied, knobs.MCPSkillsDir.Name()) {
+			applied = append(applied, knobs.MCPSkillsDir.Name())
 		}
 	}
 

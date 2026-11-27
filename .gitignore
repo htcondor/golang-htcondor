@@ -46,6 +46,9 @@ cmd/htcondor-api/tmp/
 
 # Command binaries
 /htcondor-api
+# Same binary built from inside the webapi module, which is where
+# `go build ./...` in that directory leaves it.
+/webapi/htcondor-api
 /htcondor-mcp
 /htcondor-jupyter-helper
 

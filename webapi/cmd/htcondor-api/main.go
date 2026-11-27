@@ -543,21 +543,11 @@ func discoverOIDCEndpoints(issuerURL string) (authURL, tokenURL, userInfoURL str
 // empty apiKeyFile as "feature disabled" and the others have safe
 // defaults.
 func loadLLMConfig(cfg *config.Config) (apiKeyFile, url, model, authScheme, operatorInstructionsFile string) {
-	if v, ok := cfg.Get("HTTP_API_LLM_API_KEY_FILE"); ok {
-		apiKeyFile = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_API_URL"); ok {
-		url = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_MODEL"); ok {
-		model = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_AUTH_SCHEME"); ok {
-		authScheme = strings.TrimSpace(v)
-	}
-	if v, ok := cfg.Get("HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE"); ok {
-		operatorInstructionsFile = strings.TrimSpace(v)
-	}
+	apiKeyFile = strings.TrimSpace(knobs.LLMAPIKeyFile.Get(cfg))
+	url = strings.TrimSpace(knobs.LLMAPIURL.Get(cfg))
+	model = strings.TrimSpace(knobs.LLMModel.Get(cfg))
+	authScheme = strings.TrimSpace(knobs.LLMAuthScheme.Get(cfg))
+	operatorInstructionsFile = strings.TrimSpace(knobs.LLMOperatorInstructionsFile.Get(cfg))
 	return
 }
 
@@ -657,16 +647,17 @@ func loadJupyterWorkDir(cfg *config.Config) string {
 // The lifetime ceiling matches the interactive terminal's DefaultMaxLease:
 // both are "how long may one interactive slot be held", and a site that
 // wants them to differ can say so.
-const (
-	defaultJupyterMaxLifetimeSec = 8 * 60 * 60
-	defaultJupyterKernelIdleSec  = 60 * 60
-)
+const ()
 
 // loadJupyterLimitSec reads one of the JupyterLab session limits, in
 // seconds. An explicit 0 turns the limit off, which is why this
 // distinguishes "unset" from "set to zero" rather than treating both as
 // "use the default".
-func loadJupyterLimitSec(cfg *config.Config, logger *logging.Logger, name string, def int) int {
+// The default comes from the knob rather than a constant beside it, so
+// the number an operator reads in the configuration reference is the
+// number that applies.
+func loadJupyterLimitSec(cfg *config.Config, logger *logging.Logger, k config.IntKnob) int {
+	name, def := k.Name(), int(k.Default())
 	v, ok := cfg.Get(name)
 	if !ok || strings.TrimSpace(v) == "" {
 		return def
@@ -690,7 +681,8 @@ func loadJupyterLimitSec(cfg *config.Config, logger *logging.Logger, name string
 // unbounded reconnect grace a session nobody can reach that never leaves
 // the list. Zero, negative or unreadable falls back to the default and a
 // value past the ceiling is clamped, each with a warning.
-func loadJupyterGraceSec(cfg *config.Config, logger *logging.Logger, name string, def, ceiling int) int {
+func loadJupyterGraceSec(cfg *config.Config, logger *logging.Logger, k config.IntKnob, ceiling int) int {
+	name, def := k.Name(), int(k.Default())
 	v, ok := cfg.Get(name)
 	if !ok || strings.TrimSpace(v) == "" {
 		return def
@@ -729,16 +721,18 @@ func loadJupyterGraceSec(cfg *config.Config, logger *logging.Logger, name string
 // limit exists to prevent. Raising the cap means naming a bigger
 // number; there is deliberately no way to clear it.
 func loadSpoolMaxUploadBytes(cfg *config.Config, logger *logging.Logger) int64 {
-	v, ok := cfg.Get("HTTP_API_SPOOL_MAX_UPLOAD_BYTES")
-	if !ok || strings.TrimSpace(v) == "" {
-		return 0
-	}
-	n, err := spool.ParseSize(v)
-	if err != nil || n <= 0 {
-		if logger != nil {
+	// BytesKnob already refuses a value that does not parse or is not
+	// positive, reporting it through the knob error handler and
+	// returning the declared default, which is the zero this function
+	// has always returned for "use the package default". What is left
+	// to say here is the number that zero turns into, which the
+	// generic report has no way to know.
+	n := knobs.SpoolMaxUploadBytes.Get(cfg)
+	if n <= 0 {
+		if logger != nil && strings.TrimSpace(firstConfigValue(cfg, knobs.SpoolMaxUploadBytes.Name())) != "" {
 			logger.Warn(logging.DestinationHTTP,
-				"Ignoring HTTP_API_SPOOL_MAX_UPLOAD_BYTES; using the default",
-				"value", v, "error", err,
+				"Using the default upload ceiling",
+				"parameter", knobs.SpoolMaxUploadBytes.Name(),
 				"default_bytes", spool.DefaultLimits().MaxVolume)
 		}
 		return 0
@@ -927,7 +921,7 @@ func privilegedPortOf(addr string) (int, error) {
 }
 
 func loadInteractiveRequirements(cfg *config.Config, logger *logging.Logger) string {
-	raw, ok := cfg.Get("HTTP_API_INTERACTIVE_REQUIREMENTS")
+	raw, ok := cfg.Get(knobs.InteractiveRequirements.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return ""
 	}
@@ -1285,7 +1279,7 @@ const defaultSkillsReloadInterval = 5 * time.Minute
 // fatal. This governs how promptly documentation refreshes; refusing to
 // start an access point's API over it would be wildly out of proportion.
 func loadSkillsReloadInterval(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_MCP_SKILLS_RELOAD_INTERVAL")
+	raw, ok := cfg.Get(knobs.MCPSkillsReloadInterval.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return defaultSkillsReloadInterval
 	}
@@ -1433,18 +1427,18 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 	// machine can dump them with condor_config_val -- so a private key
 	// must come from a file the operator has permission-locked, not
 	// from a setting and not from the environment.
-	mcpCfg.sshGatewayAddress, _ = cfg.Get("HTTP_API_SSH_GATEWAY_ADDRESS")
-	mcpCfg.sshGatewayIssuer, _ = cfg.Get("HTTP_API_SSH_GATEWAY_ISSUER")
-	mcpCfg.sshHostKeyFile, _ = cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
-	mcpCfg.sshCAKeyFile, _ = cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
-	mcpCfg.sshGatewayHost, _ = cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
-	mcpCfg.sandboxCacheDir, _ = cfg.Get("HTTP_API_SANDBOX_CACHE_DIR")
-	mcpCfg.sandboxCacheMB = intParam(cfg, "HTTP_API_SANDBOX_CACHE_MB")
-	mcpCfg.sandboxMaxGB = intParam(cfg, "HTTP_API_SANDBOX_MAX_GB")
+	mcpCfg.sshGatewayAddress = knobs.SSHGatewayAddress.Get(cfg)
+	mcpCfg.sshGatewayIssuer = knobs.SSHGatewayIssuer.Get(cfg)
+	mcpCfg.sshHostKeyFile = knobs.SSHHostKeyFile.Get(cfg)
+	mcpCfg.sshCAKeyFile = knobs.SSHCAKeyFile.Get(cfg)
+	mcpCfg.sshGatewayHost = knobs.SSHGatewayHost.Get(cfg)
+	mcpCfg.sandboxCacheDir = knobs.SandboxCacheDir.Get(cfg)
+	mcpCfg.sandboxCacheMB = intParam(cfg, knobs.SandboxCacheMB.Name())
+	mcpCfg.sandboxMaxGB = intParam(cfg, knobs.SandboxMaxGB.Name())
 	mcpCfg.sshLockout = loadSSHGatewayLockout(cfg, logger)
-	mcpCfg.sshSessionCpus = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_CPUS", logger)
-	mcpCfg.sshSessionMemMB = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB", logger)
-	mcpCfg.sshSessionDiskMB = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_DISK_MB", logger)
+	mcpCfg.sshSessionCpus = positiveConfigInt(cfg, knobs.SSHGatewaySessionCPUs.Name(), logger)
+	mcpCfg.sshSessionMemMB = positiveConfigInt(cfg, knobs.SSHGatewaySessionMemoryMB.Name(), logger)
+	mcpCfg.sshSessionDiskMB = positiveConfigInt(cfg, knobs.SSHGatewaySessionDiskMB.Name(), logger)
 
 	if len(mcpCfg.identityMapStrategies) > 0 || len(mcpCfg.identityGroupSources) > 0 {
 		mcpCfg.identityMapPasswdFile, _ = cfg.Get("HTTP_API_IDENTITY_MAP_PASSWD_FILE")
@@ -1828,7 +1822,7 @@ func loadMCPConfig(cfg *config.Config, listenAddrFromConfig string, webUIEnabled
 	// Load server-level instructions for MCP agents
 	// A directory of site-authored Markdown skills to publish to agents.
 	// Typically a checkout of the site's documentation repository.
-	if dir, ok := cfg.Get("HTTP_API_MCP_SKILLS_DIR"); ok && strings.TrimSpace(dir) != "" {
+	if dir, ok := cfg.Get(knobs.MCPSkillsDir.Name()); ok && strings.TrimSpace(dir) != "" {
 		config.skillsDir = strings.TrimSpace(dir)
 		logger.Info(logging.DestinationHTTP, "MCP site skills directory configured",
 			"dir", config.skillsDir)
@@ -1841,7 +1835,7 @@ func loadMCPConfig(cfg *config.Config, listenAddrFromConfig string, webUIEnabled
 	// changes, which is what makes the default affordable.
 	config.skillsReloadInterval = loadSkillsReloadInterval(cfg, logger)
 
-	if disabled, ok := cfg.Get("HTTP_API_MCP_DISABLED_TOOLS"); ok && strings.TrimSpace(disabled) != "" {
+	if disabled, ok := cfg.Get(knobs.MCPDisabledTools.Name()); ok && strings.TrimSpace(disabled) != "" {
 		config.disabledTools = disabled
 		logger.Info(logging.DestinationMCP, "MCP tools disabled by configuration", "patterns", disabled)
 	}
@@ -1852,8 +1846,8 @@ func loadMCPConfig(cfg *config.Config, listenAddrFromConfig string, webUIEnabled
 			"MCP is read-only by configuration (HTTP_API_MCP_READ_ONLY); no tool that changes anything will be offered or accepted")
 	}
 
-	config.confirmSubmitOver = mcpConfirmOver(cfg, "HTTP_API_MCP_CONFIRM_SUBMIT_OVER")
-	config.confirmRemoveOver = mcpConfirmOver(cfg, "HTTP_API_MCP_CONFIRM_REMOVE_OVER")
+	config.confirmSubmitOver = mcpConfirmOver(cfg, knobs.MCPConfirmSubmitOver.Name())
+	config.confirmRemoveOver = mcpConfirmOver(cfg, knobs.MCPConfirmRemoveOver.Name())
 	if config.confirmSubmitOver > 0 || config.confirmRemoveOver > 0 {
 		logger.Info(logging.DestinationMCP,
 			"MCP will ask the person running the client to confirm bulk job operations",
@@ -2323,7 +2317,13 @@ func splitCommaList(v string) []string {
 // HTCondor's config parser treats as boolean-true: "true", "1",
 // "yes", "on").
 func loadUserHeaderTrustAnyUnsafe(cfg *config.Config) bool {
-	return knobs.UserHeaderTrustAny.Get(cfg)
+	// isTruthyConfigValue, not BoolKnob.Get. This setting has always
+	// taken "yes" and "on", which HTCondor's param_boolean does not
+	// and BoolKnob therefore does not either; declaring the knob
+	// narrowed it by accident, and an operator who wrote "yes" would
+	// find the flag off. It fails closed, so nothing was exposed --
+	// but it is not what they asked for.
+	return isTruthyConfigValue(firstConfigValue(cfg, knobs.UserHeaderTrustAny.Name()))
 }
 
 // setupCollector creates collector from CLI flag or config
@@ -2793,12 +2793,12 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		IDPAccessTokenLifespan:     idpAccessLifespan,
 		IDPRefreshTokenLifespan:    idpRefreshLifespan,
 		JupyterWorkDir:             loadJupyterWorkDir(cfg),
-		JupyterMaxLifetimeSec:      loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_MAX_LIFETIME_SEC", defaultJupyterMaxLifetimeSec),
-		JupyterKernelIdleSec:       loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_KERNEL_IDLE_SEC", defaultJupyterKernelIdleSec),
-		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_START_GRACE_SEC",
-			httpserver.DefaultJupyterStartGraceSec, httpserver.MaxJupyterStartGraceSec),
-		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_RECONNECT_GRACE_SEC",
-			httpserver.DefaultJupyterReconnectGraceSec, httpserver.MaxJupyterReconnectGraceSec),
+		JupyterMaxLifetimeSec:      loadJupyterLimitSec(cfg, logger, knobs.JupyterMaxLifetimeSec),
+		JupyterKernelIdleSec:       loadJupyterLimitSec(cfg, logger, knobs.JupyterKernelIdleSec),
+		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterStartGraceSec,
+			httpserver.MaxJupyterStartGraceSec),
+		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterReconnectGraceSec,
+			httpserver.MaxJupyterReconnectGraceSec),
 		InteractiveExtraSubmit:  loadInteractiveExtraSubmit(cfg),
 		DagmanPath:              firstConfigValue(cfg, "HTTP_API_DAGMAN_PATH"),
 		JobQueueLogPath:         jobQueueLogPath,
@@ -2811,10 +2811,10 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		// Which of the three built-in interactive applications this
 		// access point offers. All three unless the operator says
 		// otherwise.
-		InteractiveJupyterDisabled:  !featureOffered(cfg, "HTTP_API_INTERACTIVE_JUPYTER"),
-		InteractiveVSCodeDisabled:   !featureOffered(cfg, "HTTP_API_INTERACTIVE_VSCODE"),
-		InteractiveTerminalDisabled: !featureOffered(cfg, "HTTP_API_INTERACTIVE_TERMINAL"),
-		VSCodeImage:                 firstConfigValue(cfg, "HTTP_API_VSCODE_IMAGE"),
+		InteractiveJupyterDisabled:  !featureOffered(cfg, knobs.InteractiveJupyter.Name()),
+		InteractiveVSCodeDisabled:   !featureOffered(cfg, knobs.InteractiveVSCode.Name()),
+		InteractiveTerminalDisabled: !featureOffered(cfg, knobs.InteractiveTerminal.Name()),
+		VSCodeImage:                 knobs.VSCodeImage.Get(cfg),
 		Build:                       loadBuildConfig(cfg, logger),
 		DBMirrorTokenSubject:        firstConfigValue(cfg, "HTTP_API_DBMIRROR_TOKEN_SUBJECT"),
 		SubmitFileDefaults:          loadSubmitFileLines(cfg, knobs.SubmitFileDefaults),
@@ -3097,10 +3097,10 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 	//
 	// Still off unless HTTP_API_SSH_GATEWAY_ADDRESS is set, so a plain
 	// `-demo` binds no second port and mints no CA.
-	demoGatewayAddr, _ := cfg.Get("HTTP_API_SSH_GATEWAY_ADDRESS")
-	demoGatewayHost, _ := cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
-	demoSSHHostKey, _ := cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
-	demoSSHCAKey, _ := cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
+	demoGatewayAddr := knobs.SSHGatewayAddress.Get(cfg)
+	demoGatewayHost := knobs.SSHGatewayHost.Get(cfg)
+	demoSSHHostKey := knobs.SSHHostKeyFile.Get(cfg)
+	demoSSHCAKey := knobs.SSHCAKeyFile.Get(cfg)
 	// And the KEK, without which there is no key store to generate the
 	// gateway's host key and CA into: the gateway refuses to start
 	// rather than mint keys it cannot keep. Read here too so that
@@ -3280,12 +3280,12 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 		IdentityMapPasswdFile: demoPasswdFile,
 		IDPIssuer:             httpBaseURL,
 		JupyterWorkDir:        loadJupyterWorkDir(cfg),
-		JupyterMaxLifetimeSec: loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_MAX_LIFETIME_SEC", defaultJupyterMaxLifetimeSec),
-		JupyterKernelIdleSec:  loadJupyterLimitSec(cfg, logger, "HTTP_API_JUPYTER_KERNEL_IDLE_SEC", defaultJupyterKernelIdleSec),
-		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_START_GRACE_SEC",
-			httpserver.DefaultJupyterStartGraceSec, httpserver.MaxJupyterStartGraceSec),
-		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, "HTTP_API_JUPYTER_RECONNECT_GRACE_SEC",
-			httpserver.DefaultJupyterReconnectGraceSec, httpserver.MaxJupyterReconnectGraceSec),
+		JupyterMaxLifetimeSec: loadJupyterLimitSec(cfg, logger, knobs.JupyterMaxLifetimeSec),
+		JupyterKernelIdleSec:  loadJupyterLimitSec(cfg, logger, knobs.JupyterKernelIdleSec),
+		JupyterStartGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterStartGraceSec,
+			httpserver.MaxJupyterStartGraceSec),
+		JupyterReconnectGraceSec: loadJupyterGraceSec(cfg, logger, knobs.JupyterReconnectGraceSec,
+			httpserver.MaxJupyterReconnectGraceSec),
 		InteractiveExtraSubmit: loadInteractiveExtraSubmit(cfg),
 		TemplateGlobalPath:     loadTemplateGlobalPath(cfg),
 		SpoolMaxUploadBytes:    loadSpoolMaxUploadBytes(cfg, logger),
@@ -3977,7 +3977,7 @@ func mcpCIMDEnabled(cfg *config.Config) bool {
 // by having them all in one body.
 func loadMCPRedaction(cfg *config.Config, into *mcpConfig) {
 	into.disableSecretRedaction = !mcpRedactSecretsEnabled(cfg)
-	if rules, ok := cfg.Get("HTTP_API_MCP_REDACT_DISABLED_RULES"); ok {
+	if rules, ok := cfg.Get(knobs.MCPRedactDisabledRules.Name()); ok {
 		into.redactDisabledRules = rules
 	}
 }
@@ -3992,7 +3992,7 @@ func loadMCPRedaction(cfg *config.Config, into *mcpConfig) {
 // yes please" are "read-only" and "full write access", and a daemon that
 // guesses wrong on that one should not come up at all.
 func mcpReadOnly(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_READ_ONLY")
+	raw, ok := cfg.Get(knobs.MCPReadOnly.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
 	}
@@ -4034,7 +4034,7 @@ func mcpConfirmOver(cfg *config.Config, name string) int {
 // and defaults on for the same reason a build log's masking does: the
 // common case is not an attacker.
 func mcpRedactSecretsEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_REDACT_SECRETS")
+	raw, ok := cfg.Get(knobs.MCPRedactSecrets.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return true
 	}
@@ -4440,7 +4440,7 @@ func loadTokenRetention(cfg *config.Config, logger *logging.Logger) string {
 }
 
 func loadMCPMaxRequestDuration(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_MCP_MAX_REQUEST_DURATION")
+	raw, ok := cfg.Get(knobs.MCPMaxRequestDuration.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
 	}
@@ -4467,7 +4467,10 @@ func loadMCPMaxRequestDuration(cfg *config.Config, logger *logging.Logger) time.
 // loadMCPWatchMaxWait reads HTTP_API_MCP_WATCH_MAX_WAIT, the cap on how
 // long the MCP watch_jobs tool may block in-call before returning.
 //
-//	unset      the mcpserver built-in default (currently 20s)
+//	unset      45s, or less where HTTP_API_MCP_MAX_REQUEST_DURATION is
+//	           tight enough for watchMaxWait to derive something
+//	           smaller; the mcpserver built-in 20s only applies when
+//	           nothing sensible can be derived
 //	a duration that cap, e.g. 15s
 //
 // It must stay under the gateway/proxy timeout in front of this daemon:
@@ -4476,7 +4479,7 @@ func loadMCPMaxRequestDuration(cfg *config.Config, logger *logging.Logger) time.
 // though the watch was registered. Returning zero here leaves the
 // mcpserver default in place.
 func loadMCPWatchMaxWait(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_MCP_WATCH_MAX_WAIT")
+	raw, ok := cfg.Get(knobs.MCPWatchMaxWait.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
 	}
@@ -4588,18 +4591,23 @@ func publicBaseURL(cfg *config.Config) string {
 // gets the protection unless they went looking for it.
 func loadSSHGatewayLockout(cfg *config.Config, logger *logging.Logger) httpserver.SSHGatewayLockoutConfig {
 	out := httpserver.SSHGatewayLockoutConfig{
-		Threshold:    positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD", logger),
-		NetThreshold: positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD", logger),
-		Window:       configDurationSetting(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW", logger),
-		BanTime:      configDurationSetting(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_TIME", logger),
-		MaxBanTime:   configDurationSetting(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME", logger),
+		Threshold:    positiveConfigInt(cfg, knobs.SSHGatewayLockoutThreshold.Name(), logger),
+		NetThreshold: positiveConfigInt(cfg, knobs.SSHGatewayLockoutNetThreshold.Name(), logger),
+		Window:       configDurationSetting(cfg, knobs.SSHGatewayLockoutWindow.Name(), logger),
+		BanTime:      configDurationSetting(cfg, knobs.SSHGatewayLockoutTime.Name(), logger),
+		MaxBanTime:   configDurationSetting(cfg, knobs.SSHGatewayLockoutMaxTime.Name(), logger),
 	}
-	if raw, ok := cfg.Get("HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED"); ok {
-		out.TrustedNetworks = splitConfigList(raw)
-	}
-	if raw, ok := cfg.Get("HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE"); ok {
-		out.Disabled = isTruthyConfigValue(raw)
-	}
+	// A comma-or-space list, which no knob type reads: ListKnob splits
+	// on commas alone and WordsKnob on whitespace alone, and this one
+	// is documented as either. The name comes from the table; the
+	// split stays here.
+	out.TrustedNetworks = splitConfigList(knobs.SSHGatewayLockoutTrusted.Get(cfg))
+	// isTruthyConfigValue, not BoolKnob.Get: this setting has always
+	// taken "yes" and "on", which HTCondor's own param_boolean does
+	// not and BoolKnob therefore does not either. Narrowing it would
+	// quietly turn the lockout back on for a deployment that wrote
+	// "yes" -- the safe direction, but not the one they asked for.
+	out.Disabled = isTruthyConfigValue(firstConfigValue(cfg, knobs.SSHGatewayLockoutDisable.Name()))
 	return out
 }
 

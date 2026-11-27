@@ -303,6 +303,43 @@ Extra submit-file lines added to every interactive session job --
 terminal, VS Code and JupyterLab. Operator-only configuration, spliced
 in as written, as with the submit-file settings above.
 
+### `HTTP_API_INTERACTIVE_JUPYTER`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Offer JupyterLab sessions. On by default. Turning it off refuses new
+ones while sessions already running keep working, so they drain rather
+than being dropped -- which is why it is applied by a reconfigure and
+not by a restart. A value that is not a boolean refuses to start.
+
+See [Which applications this access point
+offers](interactive.md#which-applications-this-access-point-offers).
+
+### `HTTP_API_INTERACTIVE_REQUIREMENTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+ClassAd expression ANDed into the Requirements of every interactive
+session job. A terminal is only worth starting on a machine it can be
+attached to, and whether that works is a property of the machine. An
+expression that does not parse refuses to start rather than being
+dropped, since a dropped requirement sends sessions to machines they
+cannot be used on.
+
+### `HTTP_API_INTERACTIVE_TERMINAL`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Offer terminal sessions. On by default, and otherwise as above.
+Turning it off also withdraws the MCP interactive_session_start tool,
+which starts the same thing.
+
+### `HTTP_API_INTERACTIVE_VSCODE`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Offer VS Code sessions. On by default, and otherwise exactly as above.
+
 ### `HTTP_API_JOB_QUEUE_LOG`
 
 **String.** Unset uses JOB_QUEUE_LOG when that file is actually present. Changing it needs a restart.
@@ -315,6 +352,51 @@ server in its own container, the usual deployment -- there is nothing
 to tail and that is not a misconfiguration. Named explicitly and
 absent is an operator error, and is reported as one.
 
+### `HTTP_API_JUPYTER_KERNEL_IDLE_SEC`
+
+**Whole number.** Default `3600`. Changing it needs a restart.
+
+How long in whole seconds a JupyterLab kernel may sit without
+executing before it is culled and the server shuts down. Measured from
+kernel execution rather than HTTP traffic, so a tab polling in the
+background does not look busy. Zero disables it, and an unreadable
+value is reported as above.
+
+### `HTTP_API_JUPYTER_MAX_LIFETIME_SEC`
+
+**Whole number.** Default `28800`. Changing it needs a restart.
+
+Wall-clock ceiling on a JupyterLab session in whole seconds, counted
+from when it starts running. Enforced by the schedd through
+periodic_remove, so it holds whatever the sandbox or the browser are
+doing. Zero disables it. A value that is not a non-negative whole
+number is reported and the default applies.
+
+### `HTTP_API_JUPYTER_RECONNECT_GRACE_SEC`
+
+**Whole number.** Default `300`. Changing it needs a restart.
+
+How long in whole seconds a session whose tunnel dropped is kept for
+its helper to dial back. Meanwhile the session stays listed and its
+proxy answers 503 with Retry-After; past it the session is closed and
+a late redial is refused, which ends the job. Not turnable off either:
+zero, negative and unreadable values fall back to the default and
+anything above 3600 is clamped, each with a report.
+
+### `HTTP_API_JUPYTER_START_GRACE_SEC`
+
+**Whole number.** Default `14400`. Changing it needs a restart.
+
+How long in whole seconds a JupyterLab job may wait to start
+executing, counted from submission. Past it the schedd removes the job
+and the token it would have connected with expires ten minutes later,
+so a job never starts holding a token that is already dead. A job that
+ran and went back to the queue -- evicted, or held and released -- is
+removed too, because it would rerun with a token its first run spent.
+This cannot be turned off: zero, negative and unreadable values fall
+back to the default and anything above 604800 (seven days) is clamped,
+each with a report.
+
 ### `HTTP_API_JUPYTER_WORK_DIR`
 
 **String.** Unset uses a directory under the system temporary directory. Changing it needs a restart.
@@ -323,6 +405,50 @@ Where the helper binary and token files for JupyterLab submissions are
 staged. The helper itself is built into this binary, so nothing has to
 be found on disk; this is only where it is written out to be
 transferred.
+
+### `HTTP_API_LLM_API_KEY_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+File holding the API key for the model this server talks to. Setting
+it is what enables the chat assistant. The file must not be
+world-accessible: 0600, 0400 or 0440, the last being what a Kubernetes
+secret volume is under fsGroup. Holds or names a credential: keep it
+readable only by the account the server runs as.
+
+### `HTTP_API_LLM_API_URL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The full URL of the upstream messages endpoint, for a proxy or gateway
+in place of the vendor's own. Unset talks to the vendor directly.
+
+### `HTTP_API_LLM_AUTH_SCHEME`
+
+**String.** Unset sends the key as x-api-key. Changing it needs a restart.
+
+How the key is presented upstream: x-api-key, which is what the
+vendor's own API reads, or bearer, which is what an OpenAI-style
+gateway fronting it authenticates.
+
+### `HTTP_API_LLM_MODEL`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The model to use, as the upstream knows it -- which behind a gateway
+is the gateway's name for it rather than the vendor's. Unset uses the
+built-in default.
+
+### `HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+File of site-policy text appended to every chat system prompt, last,
+so that it outranks the standard prompts. Re-read on reconfigure
+whether or not the path changed, and a read that fails keeps the
+previous text rather than dropping the policy. Like the key file it
+must not be world-accessible. Holds or names a credential: keep it
+readable only by the account the server runs as.
 
 ### `HTTP_API_LOG`
 
@@ -342,6 +468,36 @@ The externally-visible base URL of the MCP listener, for a deployment
 that serves MCP on an address of its own. Unset, MCP is reached at
 `HTTP_API_BASE_URL` like everything else.
 
+### `HTTP_API_MCP_CONFIRM_REMOVE_OVER`
+
+**Whole number.** Default `0`. A change is installed by `condor_reconfig`.
+
+The same, for the number of jobs remove_jobs would remove. Zero is
+off. Counting the matches costs one extra queue query per gated call,
+which is why it is not on by default.
+
+### `HTTP_API_MCP_CONFIRM_SUBMIT_OVER`
+
+**Whole number.** Default `0`. A change is installed by `condor_reconfig`.
+
+Ask the person running the client to confirm before submit_job submits
+more than this many jobs. Zero, the default, is off. This is a prompt
+and not a limit: a client that cannot present the question --
+including any client older than MCP protocol 2026-07-28 -- proceeds
+unasked, logged at WARN.
+
+See [Asking a person before a bulk
+operation](agents.md#asking-a-person-before-a-bulk-operation).
+
+### `HTTP_API_MCP_DISABLED_TOOLS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+MCP tools this access point does not offer, as glob patterns separated
+by commas or whitespace.
+
+See [Disabling tools](agents.md#disabling-tools).
+
 ### `HTTP_API_MCP_LISTEN_ADDR`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -350,6 +506,83 @@ A second address to serve MCP on, separate from
 `HTTP_API_LISTEN_ADDR`. Unset serves MCP on the one listener, which is
 what almost every deployment wants; this is for separating the agent
 surface onto its own port or interface.
+
+### `HTTP_API_MCP_MAX_REQUEST_DURATION`
+
+**Duration.** Unset stops an MCP request at 15 minutes. Changing it needs a restart.
+
+Hard stop on an MCP request that is still making progress. While one
+runs its write deadline is moved forward, so `HTTP_API_WRITE_TIMEOUT`
+-- an absolute deadline meant for ordinary replies -- does not decide
+how long a deliberately waiting tool may wait. A request that stops
+making progress is still cut off on its last window; this is the
+backstop for one that never finishes at all. It needs a unit, and a
+value without one refuses to start.
+
+### `HTTP_API_MCP_READ_ONLY`
+
+**Boolean.** Default `false`. A change is installed by `condor_reconfig`.
+
+Serve MCP with no tool that changes anything, for every caller
+whatever their scopes. Off by default. While it is on, mcp:write is
+neither advertised nor granted.
+
+See [A read-only access point](agents.md#a-read-only-access-point).
+
+### `HTTP_API_MCP_REDACT_DISABLED_RULES`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Masking rules to turn off, as glob patterns over rule ids separated by
+commas or whitespace.
+
+### `HTTP_API_MCP_REDACT_SECRETS`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Mask credential-shaped text in MCP tool results. On by default, and
+worth leaving on: a tool result is read by a model and then often by a
+log.
+
+See [Masking credentials in tool
+results](agents.md#masking-credentials-in-tool-results).
+
+### `HTTP_API_MCP_SKILLS_DIR`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Directory of site-authored Markdown skills published to agents.
+Re-read periodically and on reconfigure, so a checkout updated in
+place is noticed without either.
+
+See [Site skills](agents.md#site-skills).
+
+### `HTTP_API_MCP_SKILLS_RELOAD_INTERVAL`
+
+**Duration.** Default `5m`. Changing it needs a restart.
+
+How often that directory is re-read, so a checkout updated underneath
+the daemon is noticed without a reconfigure. Zero disables the poll
+and leaves reloads to condor_reconfig. The check is stat-only until
+something actually changes. A value under one second is raised to one
+second rather than honoured: it would stat the tree hundreds of times
+a minute to learn nothing.
+
+### `HTTP_API_MCP_WATCH_MAX_WAIT`
+
+**Duration.** Unset blocks for at most 45 seconds, or less where HTTP_API_MCP_MAX_REQUEST_DURATION is tight enough to derive something smaller. Changing it needs a restart.
+
+Cap on how long the MCP check_watches and watch_jobs tools may block
+in-call before returning. This number is advertised to the agent in
+the tool schema, so it has to be one the whole path can deliver and
+not just this server. 45 seconds is not a server limit -- the server
+will hold a request far longer -- it is what an MCP client is observed
+to wait for before abandoning the call, which returns nothing at all
+to the agent rather than a timeout it could act on. Set it lower where
+a gateway or proxy with a tighter timeout sits in front of this
+server, and higher only where the clients reaching this deployment are
+known to be configured for a longer tool timeout. It needs a unit, as
+above.
 
 ### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
 
@@ -575,6 +808,32 @@ that does not parse, refuses to start rather than being guessed at --
 How long a request may take to arrive in full, as a Go duration. A
 value that cannot be parsed is logged and the default applies.
 
+### `HTTP_API_SANDBOX_CACHE_DIR`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where the +jobs file service keeps sandbox output it has already
+fetched. Unset means no cache and every read fetches the sandbox
+again. It has to be real local storage with room for the budget below:
+on tmpfs the cache is memory the kernel cannot reclaim. Its contents
+are discarded at every start and may be deleted by hand while the
+server runs.
+
+### `HTTP_API_SANDBOX_CACHE_MB`
+
+**Whole number.** Unset budgets the cache at 4096 MiB. Changing it needs a restart.
+
+That cache's budget in MiB. A negative number disables the cache. A
+value that is not a whole number refuses to start.
+
+### `HTTP_API_SANDBOX_MAX_GB`
+
+**Whole number.** Unset serves a sandbox up to 8 GiB. Changing it needs a restart.
+
+The largest job sandbox the +jobs file service will serve, in GiB. A
+negative number means no limit. Refused the same way as above when it
+is not a whole number.
+
 ### `HTTP_API_SITE_APP_<instance>_*`
 
 A lab's own web interface, published to the people it belongs to. Each
@@ -632,6 +891,163 @@ What the app is called in the navigation, instead of its bundle id.
 Where an archive dropped in the SSH gateway's /submit/, or posted to
 the REST upload endpoints, is buffered while it is unpacked. Unset
 holds it in memory instead, under a much smaller ceiling.
+
+### `HTTP_API_SPOOL_MAX_UPLOAD_BYTES`
+
+**Size.** Unset caps one upload at 1000 MiB. Changing it needs a restart.
+
+The most bytes one upload command may transfer: a PUT or POST to a
+job's input, a redeemed upload URL, or an upload_job_input tool call.
+A cluster-wide upload counts the archive once per proc it serves, so a
+10 MiB archive spooled to 50 procs is 500 MiB against this and not 10.
+Written as a byte count or a size -- 1000M, 2G, 1000MiB all work, and
+units are powers of 1024. A cluster-wide call that cannot fit spools
+what it can and reports the remainder, so the limit costs an extra
+call rather than failing; a single-proc upload over it is refused. A
+value that is zero, negative or unreadable is reported and the default
+applies: the cap can be raised but not turned off, because reading a
+typo as "no ceiling" would turn one bad line into an unbounded
+fan-out, which is the thing the limit is for.
+
+### `HTTP_API_SSH_CA_KEY_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The CA key user certificates are signed with. Unset, one is generated
+and sealed as above. Without a CA key certificates are simply
+unavailable and the device flow still works. Holds or names a
+credential: keep it readable only by the account the server runs as.
+
+### `HTTP_API_SSH_GATEWAY_ADDRESS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where the SSH gateway listens, e.g. :2222. Unset disables the gateway
+entirely.
+
+See [The SSH gateway](ssh-gateway.md).
+
+### `HTTP_API_SSH_GATEWAY_HOST`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The name or names users actually ssh to, e.g. ap.example.edu,
+separated by commas. It is what the web interface prints as the ssh
+command, and also what the host certificate and the published
+known_hosts line are narrowed to, so list every name and alias in use.
+It cannot be derived: the listen address is usually not what anybody
+types, since a container listening on :2222 sits behind a service
+publishing 22 somewhere else. Unset prints no command and falls host
+verification back to a wildcard pattern.
+
+### `HTTP_API_SSH_GATEWAY_ISSUER`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The OAuth2 issuer the gateway's device flow runs against. Unset uses
+this server's own issuer; set it where this process cannot reach its
+own public URL. A login that fails with "could not start the login
+flow" is usually this, left pointing at the default
+http://localhost:8080.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Turn the lockout off. Written true, t, 1, yes or on -- the last two
+are accepted here although HTCondor configuration does not take them
+generally, because this setting always has. It is on by default,
+because the gateway listens on a public SSH port where unauthenticated
+traffic from people who are not users is the background noise rather
+than an exception, and a default of counting nothing would mean nobody
+gets the protection unless they went looking for it.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME`
+
+**Duration.** Unset stops the doubling at 24 hours. Changing it needs a restart.
+
+Where the doubling stops. Needs a unit, as above.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD`
+
+**Whole number.** Unset allows four times the host threshold. Changing it needs a restart.
+
+The same budget for the network around a host, shared by every address
+in it, so a spray across a handful of addresses is caught where each
+one alone would not be.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD`
+
+**Whole number.** Unset allows 10 failed logins from one host. Changing it needs a restart.
+
+How many failed logins one host may accumulate inside the window
+before new connections from it are refused.
+
+See [Locking out what keeps
+knocking](ssh-gateway.md#locking-out-what-keeps-knocking).
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_TIME`
+
+**Duration.** Unset locks out for 15 minutes the first time. Changing it needs a restart.
+
+How long the first lockout of a source lasts. Each subsequent one
+doubles. Needs a unit, as above.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Addresses and CIDR blocks that are never counted and never locked out,
+separated by commas or spaces or both. Put the office and the
+monitoring host here so that testing the gateway cannot lock you out
+of it, and put a load balancer here if one fronts the port --
+otherwise every client behind it shares one source address and one
+budget. A value that does not parse refuses to start rather than being
+ignored: the setting exists so an operator cannot be shut out of their
+own gateway, and passing over a typo in it would leave them believing
+they are safe.
+
+See [Behind a load balancer](ssh-gateway.md#behind-a-load-balancer).
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW`
+
+**Duration.** Unset remembers a failure for 10 minutes. Changing it needs a restart.
+
+How long a failed login is remembered against its source. Needs a
+unit, and a value without one refuses to start rather than being
+guessed at.
+
+### `HTTP_API_SSH_GATEWAY_SESSION_CPUS`
+
+**Whole number.** Unset requests 1 CPU. Changing it needs a restart.
+
+CPUs requested by a session the gateway creates on demand, for a
+caller who connected by name rather than to a job they already have.
+
+### `HTTP_API_SSH_GATEWAY_SESSION_DISK_MB`
+
+**Whole number.** Unset requests 8192 MiB. Changing it needs a restart.
+
+Disk in MiB for the same session. The default is 8 GiB rather than
+something batch-sized because a VS Code Remote server installs itself
+into the sandbox and dies unpacking it in less -- as a kernel
+out-of-space error deep in a client log, not as anything HTCondor
+reports.
+
+### `HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB`
+
+**Whole number.** Unset requests 1024 MiB. Changing it needs a restart.
+
+Memory in MiB for the same session.
+
+### `HTTP_API_SSH_HOST_KEY_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The host key clients pin. Unset, one is generated and kept sealed in
+the application database, which is what most deployments want. Holds
+or names a credential: keep it readable only by the account the server
+runs as.
 
 ### `HTTP_API_SUBMIT_FILE_DEFAULTS`
 
@@ -692,11 +1108,26 @@ live grant is somebody's session whatever its age.
 
 **Boolean.** Default `false`. Changing it needs a restart.
 
-Accept the user header from any source address. For demonstration and
-testing only: with it on, anything that can reach this server can
-claim to be any user, so it undoes authentication rather than relaxing
-it. Off by default, and the server logs a warning for as long as it is
-on. Leave it off anywhere a real person has an account.
+Accept the user header from any source address. Written true, t, 1,
+yes or on -- the last two are accepted here although HTCondor
+configuration does not take them generally, because this setting
+always has. For demonstration and testing only: with it on, anything
+that can reach this server can claim to be any user, so it undoes
+authentication rather than relaxing it. Off by default, and the server
+logs a warning for as long as it is on. Leave it off anywhere a real
+person has an account.
+
+### `HTTP_API_VSCODE_IMAGE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The container image a VS Code session runs. Any transfer scheme works,
+so a .sif staged on OSDF can be named directly. Set, it wins outright
+and a caller cannot override it; unset, a caller may name an image,
+which grants them nothing new since they can already submit a job with
+any image. Unset otherwise runs a published code-server image.
+
+See [VS Code sessions](interactive.md#vs-code-sessions).
 
 ### `HTTP_API_WRITE_TIMEOUT`
 
@@ -741,7 +1172,6 @@ each one.
 | `HTTP_API_TOOL_STATS_FLUSH_INTERVAL` | How often the usage counters are written to the application database (e.g. `5m`). Default `5m`; they are also written at shutdown. Governs both kinds. See [Usage statistics](metrics.md#usage-statistics). |
 | `HTTP_API_TOOL_STATS_MAX_LABEL_VALUES` | Cap on distinct values per `/metrics` label for usage statistics. Default `1000`; past it the quietest values render as `other`, while the database keeps them all. |
 | `HTTP_API_UTILIZATION_MAX_JOBS` | Most finished jobs one Utilization analysis (`GET /api/v1/utilization`) may read; a larger `limit` is clamped to it. Default `1000000`. An analysis holds about 250 bytes per job while it runs, so the default is about a quarter of a gigabyte at peak; the cached result is the answer, not the jobs. Read at startup. |
-| `HTTP_API_SPOOL_MAX_UPLOAD_BYTES` | Most bytes one upload command may transfer: `PUT`/`POST` to a job's input, a redeemed upload URL, or an `upload_job_input` tool call. A cluster-wide upload counts the tar times the procs it serves, so a 10 MiB tar spooled to 50 procs is 500 MiB against this, not 10. Accepts a byte count or a size (`1000M`, `2G`); units are powers of 1024. Default `1000M`. A cluster-wide call that cannot fit spools what it can and reports the remainder, so the limit costs an extra call rather than failing; a single-proc upload over it is refused. A value that is zero, negative or unreadable is ignored with a warning and the default applies — the cap cannot be turned off, only raised. Read at startup. |
 | `HTTP_API_RUNTIME_ESTIMATE_INTERVAL` | How often [runtime estimates](estimates.md#runtime-estimates) read newly completed jobs from the htcondordb mirror (a duration, e.g. `5m`). Default `5m`; `0` turns runtime estimates off entirely. Without a mirror they are off whatever this says. Read at startup. |
 | `HTTP_API_RUNTIME_ESTIMATE_BACKFILL` | How much job history runtime estimates read at startup, and how long a group of similar jobs is remembered without a new completion. Default `168h`. At most 500,000 of the newest records are read; the log says when that cap is hit. Read at startup. |
 | `HTTP_API_TOOL_STATS_MAX_SERIES` | Cap on distinct call combinations held in memory and in the database, per kind. Default `10000`; past it new combinations fold into `other`. This is what bounds memory and disk. |
@@ -753,10 +1183,8 @@ each one.
 | `HTTP_API_MCP_CIMD` | Resolve an `https://` MCP `client_id` as a Client ID Metadata Document (a public client). Default `true`; set `false` to require DCR. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
 | `HTTP_API_MCP_CIMD_ALLOWED_HOSTS` | Comma/space list of host or `.domain` patterns a CIMD `client_id` may point at. Empty = any host (SSRF guards still apply). Recommended for production: without it, unauthenticated callers choose which public hosts this server fetches from. |
 | `HTTP_API_MCP_DCR` | Accept dynamic client registration (RFC 7591) at `/oauth2/register` (and `/mcp/oauth2/register` where MCP is on). Default `true`; set `false` when every client is seeded, operator-provisioned or CIMD. Registrations are then refused with 403 and the endpoint is not advertised. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
-| `HTTP_API_MCP_WATCH_MAX_WAIT` | Cap on how long the MCP `check_watches`/`watch_jobs` tools may block in-call before returning (a duration, e.g. `15s`). This number is advertised to the agent in the tool schema, so it has to be one the whole path can deliver, not just this server. Unset = `45s`, or the value derived from `HTTP_API_MCP_MAX_REQUEST_DURATION` where that is tighter. 45s is not a server limit — the server will hold a request for 14m30s by default — it is what an MCP client is observed to wait for before abandoning the call, which returns *nothing at all* to the agent rather than a timeout it could act on. **Set this lower when a gateway or proxy with a tighter timeout sits in front of this server**; set it higher only when you know the clients reaching this deployment are configured for a longer tool timeout. |
 | `HTTP_API_CREDD_ADDRESS` | Single-AP mode only (refused in multi-AP mode, where each access point's schedd names its own). Pins the credd this server talks to (a sinful, e.g. `<10.0.0.5:9618?sock=credd>`), overriding discovery. Normally unnecessary: the credd is read from the schedd itself, which publishes its own credd as `CredDIpAddr` in its ad and address file — the same binding `DCSchedd::getCreddAddress` uses. Set this when fronting a remote schedd that does not advertise it, since a credd that is not the submitting schedd's accepts credentials and leaves jobs held anyway. |
 | `HTTP_API_REQUIRED_CREDENTIALS` | OAuth service credentials that must exist before a job may be submitted (comma- or space-separated, e.g. `scitokens`). Some access points hold every job submitted without them, whatever the job actually uses. Each submit path checks the caller's credentials first and stores a placeholder for any that is missing, so a person using the web UI does not get a held job for a reason unrelated to what they asked for; a real credential obtained later through the OAuth flow replaces the placeholder. Presence is cached per user for 5 minutes. Best effort: if the credd is unavailable or refuses, the submit still proceeds and the reason is logged. Unset = nothing is required. |
-| `HTTP_API_MCP_MAX_REQUEST_DURATION` | Hard stop on an MCP request that is still making progress (a duration, e.g. `5m`). Unset = 15m. While an MCP request runs its write deadline is moved forward, so `HTTP_API_WRITE_TIMEOUT` — which is an absolute deadline meant for ordinary replies — does not decide how long a deliberately waiting tool may wait. A request that stops making progress is still cut off on its last window; this is the backstop for one that never finishes at all. |
 | `HTTP_API_ADVERTISE` | Advertise this API server to the collector (a `HTCondorAPI` ad: endpoint, schedd, mirror health, versions). Default `true`; `daemon.Advertise` is a no-op without `COLLECTOR_HOST`, so this only matters to opt out when a collector is configured. |
 | `HTTP_API_DBMIRROR_NAME` | Pin job-queue routing to the htcondordb mirror advertising this `Name`. Set it when more than one mirror advertises to the pool: nothing in the ad says which schedd each one mirrors, so without a pin the freshest is chosen, which is a guess. |
 | `HTTP_API_DBMIRROR_ADDRESS` | Dial this sinful string instead of the mirror's advertised `MyAddress`, for one reachable only over NAT, a tunnel, or a Kubernetes Service. Freshness still comes from the collector ad — this changes where to connect, not whether the mirror is current enough to trust — and it applies whether the mirror was found through the collector or not. |
@@ -787,29 +1215,8 @@ each one.
 | `HTTP_API_IDENTITY_MAP_STRIP_DOMAIN` | `true` to also match the local part of a scoped subject. Pair with `HTTP_API_OAUTH2_REQUIREMENTS`. |
 | `HTTP_API_DAGMAN_PATH` | Absolute path to `condor_dagman` on the **access point**, for the `submit_dag` tool. **Normally unnecessary — discovered from the schedd's `BIN`; set it only if that discovery is refused.** The server asks the schedd for `BIN` once (a READ-level `condor_config_val` query) and uses `$(BIN)/condor_dagman`; this knob overrides that, and `/usr/bin/condor_dagman` is the fallback when neither is available. `condor_submit_dag` normally finds the binary with `which` on the submitting machine, which is no help here: this server submits to a schedd it shares no filesystem with. |
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
-| `HTTP_API_MCP_SKILLS_DIR` | Directory of site-authored Markdown skills to publish to agents. Re-read periodically and on SIGHUP. See [Site skills](agents.md#site-skills). |
-| `HTTP_API_MCP_SKILLS_RELOAD_INTERVAL` | How often to re-read `HTTP_API_MCP_SKILLS_DIR` so a checkout updated underneath the daemon is noticed without a reconfigure (a duration, e.g. `1m`). Default `5m`; `0` disables the poll and leaves reloads to `condor_reconfig`. The check is stat-only until something actually changes. Read at startup. |
-| `HTTP_API_JUPYTER_MAX_LIFETIME_SEC` | Wall-clock ceiling on a JupyterLab session, from when it starts running. Enforced by the schedd (`periodic_remove`), so it holds whatever the sandbox or the browser are doing. Default 28800 (8h); `0` disables. |
-| `HTTP_API_JUPYTER_KERNEL_IDLE_SEC` | How long a JupyterLab kernel may sit without executing before it is culled and the server shuts down. Measured from kernel execution, not HTTP traffic, so a tab polling in the background does not look busy. Default 3600; `0` disables. |
-| `HTTP_API_JUPYTER_START_GRACE_SEC` | How long a JupyterLab job may wait to start executing, from when it is submitted. Past it the schedd removes the job (`periodic_remove`, with the remove reason "JupyterLab session did not start within …"), and the token it would have connected with expires 10 minutes later, so a job never starts with a token that is already dead. A job that ran and went back to the queue (evicted, or held and released) is removed too, as "JupyterLab session was interrupted and cannot restart": it would rerun with a token its first run spent. Default 14400 (4h). Cannot be turned off: `0`, negative or unreadable values fall back to the default, and values above 604800 (7 days) are clamped, each with a warning. |
-| `HTTP_API_JUPYTER_RECONNECT_GRACE_SEC` | How long a session whose tunnel dropped is kept for its helper to dial back. Meanwhile the session stays listed and its proxy answers 503 with `Retry-After`; past it the session is closed and a late redial is refused, which ends the job. Default 300. Cannot be turned off: `0`, negative or unreadable values fall back to the default, and values above 3600 are clamped, each with a warning. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |
-| `HTTP_API_INTERACTIVE_JUPYTER` | Offer JupyterLab sessions. Default `true`. `false` refuses new ones; sessions already running keep working so they drain. Applied on SIGHUP. See [Which applications this access point offers](interactive.md#which-applications-this-access-point-offers). |
-| `HTTP_API_INTERACTIVE_VSCODE` | Offer VS Code sessions. Default `true`, and otherwise as above. |
-| `HTTP_API_INTERACTIVE_TERMINAL` | Offer terminal sessions. Default `true`, and otherwise as above. Also withdraws the MCP `interactive_session_start` tool, which starts the same thing. |
-| `HTTP_API_VSCODE_IMAGE` | Container image a VS Code session runs. Any transfer scheme works, so a `.sif` staged on OSDF can be named directly. Set, it wins outright and a caller cannot override it; unset, a caller may name an image, which grants nothing new since they can already submit a job with any image. Defaults to a published code-server image. See [VS Code sessions](interactive.md#vs-code-sessions). |
-| `HTTP_API_MCP_READ_ONLY` | Serve MCP with no tool that changes anything, for every caller whatever their scopes. Default `false`. `mcp:write` is neither advertised nor granted while it is on. Applied on SIGHUP. See [A read-only access point](agents.md#a-read-only-access-point). |
-| `HTTP_API_MCP_CONFIRM_SUBMIT_OVER` | Ask the person running the client to confirm before `submit_job` submits more than this many jobs. Default `0`, which is off. Needs a client that can present the question: one that cannot — including any client older than MCP protocol 2026-07-28 — proceeds unasked, logged at `WARN`. This is a prompt, not a limit. Applied on SIGHUP. See [Asking a person before a bulk operation](agents.md#asking-a-person-before-a-bulk-operation). |
-| `HTTP_API_MCP_CONFIRM_REMOVE_OVER` | The same, for the number of jobs `remove_jobs` would remove. Default `0`, off. Counting the matches costs one extra queue query per gated call. |
-| `HTTP_API_MCP_DISABLED_TOOLS` | MCP tools this access point does not offer, as glob patterns separated by commas or whitespace. Applied on SIGHUP. See [Disabling tools](agents.md#disabling-tools). |
-| `HTTP_API_MCP_REDACT_SECRETS` | Mask credential-shaped text in MCP tool results. Default `true`. Applied on SIGHUP. See [Masking credentials in tool results](agents.md#masking-credentials-in-tool-results). |
-| `HTTP_API_MCP_REDACT_DISABLED_RULES` | Masking rules to turn off, as glob patterns over rule ids separated by commas or whitespace. Applied on SIGHUP. |
 | `HTTP_API_TRUSTED_PROXIES` | Comma-separated CIDRs (or bare addresses) whose `X-Forwarded-For` / `X-Real-IP` are honored when recording a client address. Unset means none are, and the peer address is logged. |
-| `HTTP_API_LLM_API_KEY_FILE` | Path to a file with the LLM API key. Enables the chat assistant. The file must not be world-accessible: 0600, 0400, or 0440 (what a Kubernetes secret volume is under `fsGroup`). |
-| `HTTP_API_LLM_API_URL` | Override the upstream Anthropic Messages endpoint (proxy / gateway). The full URL of the `/v1/messages` route. |
-| `HTTP_API_LLM_MODEL` | Override the default Claude model. With a gateway, the model name as the gateway knows it. |
-| `HTTP_API_LLM_AUTH_SCHEME` | How the key is sent: `x-api-key` (default; what api.anthropic.com reads) or `bearer` (`Authorization: Bearer`, what an OpenAI-style gateway fronting the Messages API, such as Envoy AI Gateway or LiteLLM, authenticates). |
-| `HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE` | Site-policy text appended to every chat system prompt, last, so it outranks the standard prompts. Re-read on `condor_reconfig`, whether or not the path changed; a read that fails keeps the previous text. Like the API key file, it must not be world-accessible. |
 | `PRIVATE_NETWORK_NAME` | This host's private network name. When it equals a daemon's advertised `PrivNet`, that daemon is dialed directly instead of through its CCB broker. Defaults to `$(FULL_HOSTNAME)`, as in C++. See [Reaching jobs behind CCB](networking.md). |
 | `HOST_ALIAS` | The host name a client verifies this server's SSL certificate against, published as `alias=` on the advertised address. Defaults to `$(FULL_HOSTNAME)`, as in C++. Behind a shared port the address itself carries only the shared-port server's IP, and HTCondor host certificates have no IP SANs, so without the alias SSL authentication from another host fails the certificate check. Set it only when the certificate names something else — a load balancer, a CNAME. |
 | `HTTP_API_SHARED_PORT` | Open an inbound HTCondor port (a port or `host:port`, e.g. `9618`) so this server can be reached by execute nodes behind a Condor Connection Broker. Off by default. See [Reaching jobs behind CCB](networking.md). |

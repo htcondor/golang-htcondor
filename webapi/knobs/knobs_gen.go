@@ -202,6 +202,43 @@ var IDPRefreshTokenLifespan = config.DefineDuration("HTTP_API_IDP_REFRESH_TOKEN_
 var InteractiveExtraSubmit = config.DefineString("HTTP_API_INTERACTIVE_EXTRA_SUBMIT", "", config.Startup,
 	"Extra submit-file lines added to every interactive session job -- terminal, VS Code and JupyterLab. Operator-only configuration, spliced in as written, as with the submit-file settings above.")
 
+// InteractiveJupyter is HTTP_API_INTERACTIVE_JUPYTER.
+//
+// Offer JupyterLab sessions. On by default. Turning it off refuses new
+// ones while sessions already running keep working, so they drain
+// rather than being dropped -- which is why it is applied by a
+// reconfigure and not by a restart. A value that is not a boolean
+// refuses to start. See "Which applications this access point offers"
+// in the operator guide.
+var InteractiveJupyter = config.DefineBool("HTTP_API_INTERACTIVE_JUPYTER", true, config.Reconfig,
+	"Offer JupyterLab sessions. On by default. Turning it off refuses new ones while sessions already running keep working, so they drain rather than being dropped -- which is why it is applied by a reconfigure and not by a restart. A value that is not a boolean refuses to start. See \"Which applications this access point offers\" in the operator guide.")
+
+// InteractiveRequirements is HTTP_API_INTERACTIVE_REQUIREMENTS.
+//
+// ClassAd expression ANDed into the Requirements of every interactive
+// session job. A terminal is only worth starting on a machine it can
+// be attached to, and whether that works is a property of the machine.
+// An expression that does not parse refuses to start rather than being
+// dropped, since a dropped requirement sends sessions to machines they
+// cannot be used on.
+var InteractiveRequirements = config.DefineString("HTTP_API_INTERACTIVE_REQUIREMENTS", "", config.Startup,
+	"ClassAd expression ANDed into the Requirements of every interactive session job. A terminal is only worth starting on a machine it can be attached to, and whether that works is a property of the machine. An expression that does not parse refuses to start rather than being dropped, since a dropped requirement sends sessions to machines they cannot be used on.")
+
+// InteractiveTerminal is HTTP_API_INTERACTIVE_TERMINAL.
+//
+// Offer terminal sessions. On by default, and otherwise as above.
+// Turning it off also withdraws the MCP interactive_session_start
+// tool, which starts the same thing.
+var InteractiveTerminal = config.DefineBool("HTTP_API_INTERACTIVE_TERMINAL", true, config.Reconfig,
+	"Offer terminal sessions. On by default, and otherwise as above. Turning it off also withdraws the MCP interactive_session_start tool, which starts the same thing.")
+
+// InteractiveVSCode is HTTP_API_INTERACTIVE_VSCODE.
+//
+// Offer VS Code sessions. On by default, and otherwise exactly as
+// above.
+var InteractiveVSCode = config.DefineBool("HTTP_API_INTERACTIVE_VSCODE", true, config.Reconfig,
+	"Offer VS Code sessions. On by default, and otherwise exactly as above.")
+
 // JobQueueLog is HTTP_API_JOB_QUEUE_LOG.
 //
 // The schedd's job queue log, tailed to serve the job change stream,
@@ -213,6 +250,51 @@ var InteractiveExtraSubmit = config.DefineString("HTTP_API_INTERACTIVE_EXTRA_SUB
 // and absent is an operator error, and is reported as one.
 var JobQueueLog = config.DefineString("HTTP_API_JOB_QUEUE_LOG", "", config.Startup,
 	"The schedd's job queue log, tailed to serve the job change stream, or the word none to switch the stream off. Unset falls back to JOB_QUEUE_LOG where the file is there, which is the case when this server shares a host with its schedd; where it does not -- an API server in its own container, the usual deployment -- there is nothing to tail and that is not a misconfiguration. Named explicitly and absent is an operator error, and is reported as one.")
+
+// JupyterKernelIdleSec is HTTP_API_JUPYTER_KERNEL_IDLE_SEC.
+//
+// How long in whole seconds a JupyterLab kernel may sit without
+// executing before it is culled and the server shuts down. Measured
+// from kernel execution rather than HTTP traffic, so a tab polling in
+// the background does not look busy. Zero disables it, and an
+// unreadable value is reported as above.
+var JupyterKernelIdleSec = config.DefineInt("HTTP_API_JUPYTER_KERNEL_IDLE_SEC", 3600, config.Startup,
+	"How long in whole seconds a JupyterLab kernel may sit without executing before it is culled and the server shuts down. Measured from kernel execution rather than HTTP traffic, so a tab polling in the background does not look busy. Zero disables it, and an unreadable value is reported as above.")
+
+// JupyterMaxLifetimeSec is HTTP_API_JUPYTER_MAX_LIFETIME_SEC.
+//
+// Wall-clock ceiling on a JupyterLab session in whole seconds, counted
+// from when it starts running. Enforced by the schedd through
+// periodic_remove, so it holds whatever the sandbox or the browser are
+// doing. Zero disables it. A value that is not a non-negative whole
+// number is reported and the default applies.
+var JupyterMaxLifetimeSec = config.DefineInt("HTTP_API_JUPYTER_MAX_LIFETIME_SEC", 28800, config.Startup,
+	"Wall-clock ceiling on a JupyterLab session in whole seconds, counted from when it starts running. Enforced by the schedd through periodic_remove, so it holds whatever the sandbox or the browser are doing. Zero disables it. A value that is not a non-negative whole number is reported and the default applies.")
+
+// JupyterReconnectGraceSec is HTTP_API_JUPYTER_RECONNECT_GRACE_SEC.
+//
+// How long in whole seconds a session whose tunnel dropped is kept for
+// its helper to dial back. Meanwhile the session stays listed and its
+// proxy answers 503 with Retry-After; past it the session is closed
+// and a late redial is refused, which ends the job. Not turnable off
+// either: zero, negative and unreadable values fall back to the
+// default and anything above 3600 is clamped, each with a report.
+var JupyterReconnectGraceSec = config.DefineInt("HTTP_API_JUPYTER_RECONNECT_GRACE_SEC", 300, config.Startup,
+	"How long in whole seconds a session whose tunnel dropped is kept for its helper to dial back. Meanwhile the session stays listed and its proxy answers 503 with Retry-After; past it the session is closed and a late redial is refused, which ends the job. Not turnable off either: zero, negative and unreadable values fall back to the default and anything above 3600 is clamped, each with a report.")
+
+// JupyterStartGraceSec is HTTP_API_JUPYTER_START_GRACE_SEC.
+//
+// How long in whole seconds a JupyterLab job may wait to start
+// executing, counted from submission. Past it the schedd removes the
+// job and the token it would have connected with expires ten minutes
+// later, so a job never starts holding a token that is already dead. A
+// job that ran and went back to the queue -- evicted, or held and
+// released -- is removed too, because it would rerun with a token its
+// first run spent. This cannot be turned off: zero, negative and
+// unreadable values fall back to the default and anything above 604800
+// (seven days) is clamped, each with a report.
+var JupyterStartGraceSec = config.DefineInt("HTTP_API_JUPYTER_START_GRACE_SEC", 14400, config.Startup,
+	"How long in whole seconds a JupyterLab job may wait to start executing, counted from submission. Past it the schedd removes the job and the token it would have connected with expires ten minutes later, so a job never starts holding a token that is already dead. A job that ran and went back to the queue -- evicted, or held and released -- is removed too, because it would rerun with a token its first run spent. This cannot be turned off: zero, negative and unreadable values fall back to the default and anything above 604800 (seven days) is clamped, each with a report.")
 
 // JupyterWorkDir is HTTP_API_JUPYTER_WORK_DIR.
 //
@@ -233,6 +315,51 @@ var JupyterWorkDir = config.DefineString("HTTP_API_JUPYTER_WORK_DIR", "", config
 // Deprecated: superseded by HTTP_API_LISTEN_ADDR.
 var Listen = config.DefineString("HTTP_API_LISTEN", "", config.Startup,
 	"Obsolete: superseded by HTTP_API_LISTEN_ADDR. An older spelling of the listen address, honored when HTTP_API_LISTEN_ADDR is unset and reported as an alias when it is used. HTTP_API_LISTEN_ADDR wins where both are set.")
+
+// LLMAPIKeyFile is HTTP_API_LLM_API_KEY_FILE.
+//
+// File holding the API key for the model this server talks to. Setting
+// it is what enables the chat assistant. The file must not be
+// world-accessible: 0600, 0400 or 0440, the last being what a
+// Kubernetes secret volume is under fsGroup. Holds or names a
+// credential: keep it readable only by the account the server runs as.
+var LLMAPIKeyFile = config.DefineString("HTTP_API_LLM_API_KEY_FILE", "", config.Startup,
+	"File holding the API key for the model this server talks to. Setting it is what enables the chat assistant. The file must not be world-accessible: 0600, 0400 or 0440, the last being what a Kubernetes secret volume is under fsGroup. Holds or names a credential: keep it readable only by the account the server runs as.")
+
+// LLMAPIURL is HTTP_API_LLM_API_URL.
+//
+// The full URL of the upstream messages endpoint, for a proxy or
+// gateway in place of the vendor's own. Unset talks to the vendor
+// directly.
+var LLMAPIURL = config.DefineString("HTTP_API_LLM_API_URL", "", config.Startup,
+	"The full URL of the upstream messages endpoint, for a proxy or gateway in place of the vendor's own. Unset talks to the vendor directly.")
+
+// LLMAuthScheme is HTTP_API_LLM_AUTH_SCHEME.
+//
+// How the key is presented upstream: x-api-key, which is what the
+// vendor's own API reads, or bearer, which is what an OpenAI-style
+// gateway fronting it authenticates.
+var LLMAuthScheme = config.DefineString("HTTP_API_LLM_AUTH_SCHEME", "", config.Startup,
+	"How the key is presented upstream: x-api-key, which is what the vendor's own API reads, or bearer, which is what an OpenAI-style gateway fronting it authenticates.")
+
+// LLMModel is HTTP_API_LLM_MODEL.
+//
+// The model to use, as the upstream knows it -- which behind a gateway
+// is the gateway's name for it rather than the vendor's. Unset uses
+// the built-in default.
+var LLMModel = config.DefineString("HTTP_API_LLM_MODEL", "", config.Startup,
+	"The model to use, as the upstream knows it -- which behind a gateway is the gateway's name for it rather than the vendor's. Unset uses the built-in default.")
+
+// LLMOperatorInstructionsFile is HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE.
+//
+// File of site-policy text appended to every chat system prompt, last,
+// so that it outranks the standard prompts. Re-read on reconfigure
+// whether or not the path changed, and a read that fails keeps the
+// previous text rather than dropping the policy. Like the key file it
+// must not be world-accessible. Holds or names a credential: keep it
+// readable only by the account the server runs as.
+var LLMOperatorInstructionsFile = config.DefineString("HTTP_API_LLM_OPERATOR_INSTRUCTIONS_FILE", "", config.Reconfig,
+	"File of site-policy text appended to every chat system prompt, last, so that it outranks the standard prompts. Re-read on reconfigure whether or not the path changed, and a read that fails keeps the previous text rather than dropping the policy. Like the key file it must not be world-accessible. Holds or names a credential: keep it readable only by the account the server runs as.")
 
 // Log is HTTP_API_LOG.
 //
@@ -264,6 +391,33 @@ var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.R
 var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup,
 	"The externally-visible base URL of the MCP listener, for a deployment that serves MCP on an address of its own. Unset, MCP is reached at HTTP_API_BASE_URL like everything else.")
 
+// MCPConfirmRemoveOver is HTTP_API_MCP_CONFIRM_REMOVE_OVER.
+//
+// The same, for the number of jobs remove_jobs would remove. Zero is
+// off. Counting the matches costs one extra queue query per gated
+// call, which is why it is not on by default.
+var MCPConfirmRemoveOver = config.DefineInt("HTTP_API_MCP_CONFIRM_REMOVE_OVER", 0, config.Reconfig,
+	"The same, for the number of jobs remove_jobs would remove. Zero is off. Counting the matches costs one extra queue query per gated call, which is why it is not on by default.")
+
+// MCPConfirmSubmitOver is HTTP_API_MCP_CONFIRM_SUBMIT_OVER.
+//
+// Ask the person running the client to confirm before submit_job
+// submits more than this many jobs. Zero, the default, is off. This is
+// a prompt and not a limit: a client that cannot present the question
+// -- including any client older than MCP protocol 2026-07-28 --
+// proceeds unasked, logged at WARN. See "Asking a person before a bulk
+// operation" in the operator guide.
+var MCPConfirmSubmitOver = config.DefineInt("HTTP_API_MCP_CONFIRM_SUBMIT_OVER", 0, config.Reconfig,
+	"Ask the person running the client to confirm before submit_job submits more than this many jobs. Zero, the default, is off. This is a prompt and not a limit: a client that cannot present the question -- including any client older than MCP protocol 2026-07-28 -- proceeds unasked, logged at WARN. See \"Asking a person before a bulk operation\" in the operator guide.")
+
+// MCPDisabledTools is HTTP_API_MCP_DISABLED_TOOLS.
+//
+// MCP tools this access point does not offer, as glob patterns
+// separated by commas or whitespace. See "Disabling tools" in the
+// operator guide.
+var MCPDisabledTools = config.DefineString("HTTP_API_MCP_DISABLED_TOOLS", "", config.Reconfig,
+	"MCP tools this access point does not offer, as glob patterns separated by commas or whitespace. See \"Disabling tools\" in the operator guide.")
+
 // MCPListenAddr is HTTP_API_MCP_LISTEN_ADDR.
 //
 // A second address to serve MCP on, separate from
@@ -272,6 +426,63 @@ var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup
 // surface onto its own port or interface.
 var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.Startup,
 	"A second address to serve MCP on, separate from HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which is what almost every deployment wants; this is for separating the agent surface onto its own port or interface.")
+
+// MCPMaxRequestDuration is HTTP_API_MCP_MAX_REQUEST_DURATION.
+//
+// Hard stop on an MCP request that is still making progress. While one
+// runs its write deadline is moved forward, so HTTP_API_WRITE_TIMEOUT
+// -- an absolute deadline meant for ordinary replies -- does not
+// decide how long a deliberately waiting tool may wait. A request that
+// stops making progress is still cut off on its last window; this is
+// the backstop for one that never finishes at all. It needs a unit,
+// and a value without one refuses to start.
+var MCPMaxRequestDuration = config.DefineDuration("HTTP_API_MCP_MAX_REQUEST_DURATION", time.Duration(0) /* 0s */, config.Startup,
+	"Hard stop on an MCP request that is still making progress. While one runs its write deadline is moved forward, so HTTP_API_WRITE_TIMEOUT -- an absolute deadline meant for ordinary replies -- does not decide how long a deliberately waiting tool may wait. A request that stops making progress is still cut off on its last window; this is the backstop for one that never finishes at all. It needs a unit, and a value without one refuses to start.")
+
+// MCPReadOnly is HTTP_API_MCP_READ_ONLY.
+//
+// Serve MCP with no tool that changes anything, for every caller
+// whatever their scopes. Off by default. While it is on, mcp:write is
+// neither advertised nor granted. See "A read-only access point" in
+// the operator guide.
+var MCPReadOnly = config.DefineBool("HTTP_API_MCP_READ_ONLY", false, config.Reconfig,
+	"Serve MCP with no tool that changes anything, for every caller whatever their scopes. Off by default. While it is on, mcp:write is neither advertised nor granted. See \"A read-only access point\" in the operator guide.")
+
+// MCPRedactDisabledRules is HTTP_API_MCP_REDACT_DISABLED_RULES.
+//
+// Masking rules to turn off, as glob patterns over rule ids separated
+// by commas or whitespace.
+var MCPRedactDisabledRules = config.DefineString("HTTP_API_MCP_REDACT_DISABLED_RULES", "", config.Reconfig,
+	"Masking rules to turn off, as glob patterns over rule ids separated by commas or whitespace.")
+
+// MCPRedactSecrets is HTTP_API_MCP_REDACT_SECRETS.
+//
+// Mask credential-shaped text in MCP tool results. On by default, and
+// worth leaving on: a tool result is read by a model and then often by
+// a log. See "Masking credentials in tool results" in the operator
+// guide.
+var MCPRedactSecrets = config.DefineBool("HTTP_API_MCP_REDACT_SECRETS", true, config.Reconfig,
+	"Mask credential-shaped text in MCP tool results. On by default, and worth leaving on: a tool result is read by a model and then often by a log. See \"Masking credentials in tool results\" in the operator guide.")
+
+// MCPSkillsDir is HTTP_API_MCP_SKILLS_DIR.
+//
+// Directory of site-authored Markdown skills published to agents.
+// Re-read periodically and on reconfigure, so a checkout updated in
+// place is noticed without either. See "Site skills" in the operator
+// guide.
+var MCPSkillsDir = config.DefineString("HTTP_API_MCP_SKILLS_DIR", "", config.Reconfig,
+	"Directory of site-authored Markdown skills published to agents. Re-read periodically and on reconfigure, so a checkout updated in place is noticed without either. See \"Site skills\" in the operator guide.")
+
+// MCPSkillsReloadInterval is HTTP_API_MCP_SKILLS_RELOAD_INTERVAL.
+//
+// How often that directory is re-read, so a checkout updated
+// underneath the daemon is noticed without a reconfigure. Zero
+// disables the poll and leaves reloads to condor_reconfig. The check
+// is stat-only until something actually changes. A value under one
+// second is raised to one second rather than honoured: it would stat
+// the tree hundreds of times a minute to learn nothing.
+var MCPSkillsReloadInterval = config.DefineDuration("HTTP_API_MCP_SKILLS_RELOAD_INTERVAL", time.Duration(300000000000) /* 5m */, config.Startup,
+	"How often that directory is re-read, so a checkout updated underneath the daemon is noticed without a reconfigure. Zero disables the poll and leaves reloads to condor_reconfig. The check is stat-only until something actually changes. A value under one second is raised to one second rather than honoured: it would stat the tree hundreds of times a minute to learn nothing.")
 
 // MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
 //
@@ -282,6 +493,22 @@ var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.S
 // Deprecated: do not use it in new configuration.
 var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
 	"Obsolete: do not use it in new configuration. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
+
+// MCPWatchMaxWait is HTTP_API_MCP_WATCH_MAX_WAIT.
+//
+// Cap on how long the MCP check_watches and watch_jobs tools may block
+// in-call before returning. This number is advertised to the agent in
+// the tool schema, so it has to be one the whole path can deliver and
+// not just this server. 45 seconds is not a server limit -- the server
+// will hold a request far longer -- it is what an MCP client is
+// observed to wait for before abandoning the call, which returns
+// nothing at all to the agent rather than a timeout it could act on.
+// Set it lower where a gateway or proxy with a tighter timeout sits in
+// front of this server, and higher only where the clients reaching
+// this deployment are known to be configured for a longer tool
+// timeout. It needs a unit, as above.
+var MCPWatchMaxWait = config.DefineDuration("HTTP_API_MCP_WATCH_MAX_WAIT", time.Duration(0) /* 0s */, config.Startup,
+	"Cap on how long the MCP check_watches and watch_jobs tools may block in-call before returning. This number is advertised to the agent in the tool schema, so it has to be one the whole path can deliver and not just this server. 45 seconds is not a server limit -- the server will hold a request far longer -- it is what an MCP client is observed to wait for before abandoning the call, which returns nothing at all to the agent rather than a timeout it could act on. Set it lower where a gateway or proxy with a tighter timeout sits in front of this server, and higher only where the clients reaching this deployment are known to be configured for a longer tool timeout. It needs a unit, as above.")
 
 // OAuth2AccessTokenLifespan is HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN.
 //
@@ -450,6 +677,32 @@ var PingInterval = config.DefineDuration("HTTP_API_PING_INTERVAL", time.Duration
 var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(30000000000) /* 30s */, config.Startup,
 	"How long a request may take to arrive in full, as a Go duration. A value that cannot be parsed is logged and the default applies.")
 
+// SandboxCacheDir is HTTP_API_SANDBOX_CACHE_DIR.
+//
+// Where the +jobs file service keeps sandbox output it has already
+// fetched. Unset means no cache and every read fetches the sandbox
+// again. It has to be real local storage with room for the budget
+// below: on tmpfs the cache is memory the kernel cannot reclaim. Its
+// contents are discarded at every start and may be deleted by hand
+// while the server runs.
+var SandboxCacheDir = config.DefineString("HTTP_API_SANDBOX_CACHE_DIR", "", config.Startup,
+	"Where the +jobs file service keeps sandbox output it has already fetched. Unset means no cache and every read fetches the sandbox again. It has to be real local storage with room for the budget below: on tmpfs the cache is memory the kernel cannot reclaim. Its contents are discarded at every start and may be deleted by hand while the server runs.")
+
+// SandboxCacheMB is HTTP_API_SANDBOX_CACHE_MB.
+//
+// That cache's budget in MiB. A negative number disables the cache. A
+// value that is not a whole number refuses to start.
+var SandboxCacheMB = config.DefineInt("HTTP_API_SANDBOX_CACHE_MB", 0, config.Startup,
+	"That cache's budget in MiB. A negative number disables the cache. A value that is not a whole number refuses to start.")
+
+// SandboxMaxGB is HTTP_API_SANDBOX_MAX_GB.
+//
+// The largest job sandbox the +jobs file service will serve, in GiB. A
+// negative number means no limit. Refused the same way as above when
+// it is not a whole number.
+var SandboxMaxGB = config.DefineInt("HTTP_API_SANDBOX_MAX_GB", 0, config.Startup,
+	"The largest job sandbox the +jobs file service will serve, in GiB. A negative number means no limit. Refused the same way as above when it is not a whole number.")
+
 // SpoolBufferDir is HTTP_API_SPOOL_BUFFER_DIR.
 //
 // Where an archive dropped in the SSH gateway's /submit/, or posted to
@@ -457,6 +710,160 @@ var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(3
 // holds it in memory instead, under a much smaller ceiling.
 var SpoolBufferDir = config.DefineString("HTTP_API_SPOOL_BUFFER_DIR", "", config.Startup,
 	"Where an archive dropped in the SSH gateway's /submit/, or posted to the REST upload endpoints, is buffered while it is unpacked. Unset holds it in memory instead, under a much smaller ceiling.")
+
+// SpoolMaxUploadBytes is HTTP_API_SPOOL_MAX_UPLOAD_BYTES.
+//
+// The most bytes one upload command may transfer: a PUT or POST to a
+// job's input, a redeemed upload URL, or an upload_job_input tool
+// call. A cluster-wide upload counts the archive once per proc it
+// serves, so a 10 MiB archive spooled to 50 procs is 500 MiB against
+// this and not 10. Written as a byte count or a size -- 1000M, 2G,
+// 1000MiB all work, and units are powers of 1024. A cluster-wide call
+// that cannot fit spools what it can and reports the remainder, so the
+// limit costs an extra call rather than failing; a single-proc upload
+// over it is refused. A value that is zero, negative or unreadable is
+// reported and the default applies: the cap can be raised but not
+// turned off, because reading a typo as "no ceiling" would turn one
+// bad line into an unbounded fan-out, which is the thing the limit is
+// for.
+var SpoolMaxUploadBytes = config.DefineBytes("HTTP_API_SPOOL_MAX_UPLOAD_BYTES", 0 /* 0 */, config.Startup,
+	"The most bytes one upload command may transfer: a PUT or POST to a job's input, a redeemed upload URL, or an upload_job_input tool call. A cluster-wide upload counts the archive once per proc it serves, so a 10 MiB archive spooled to 50 procs is 500 MiB against this and not 10. Written as a byte count or a size -- 1000M, 2G, 1000MiB all work, and units are powers of 1024. A cluster-wide call that cannot fit spools what it can and reports the remainder, so the limit costs an extra call rather than failing; a single-proc upload over it is refused. A value that is zero, negative or unreadable is reported and the default applies: the cap can be raised but not turned off, because reading a typo as \"no ceiling\" would turn one bad line into an unbounded fan-out, which is the thing the limit is for.")
+
+// SSHCAKeyFile is HTTP_API_SSH_CA_KEY_FILE.
+//
+// The CA key user certificates are signed with. Unset, one is
+// generated and sealed as above. Without a CA key certificates are
+// simply unavailable and the device flow still works. Holds or names a
+// credential: keep it readable only by the account the server runs as.
+var SSHCAKeyFile = config.DefineString("HTTP_API_SSH_CA_KEY_FILE", "", config.Startup,
+	"The CA key user certificates are signed with. Unset, one is generated and sealed as above. Without a CA key certificates are simply unavailable and the device flow still works. Holds or names a credential: keep it readable only by the account the server runs as.")
+
+// SSHGatewayAddress is HTTP_API_SSH_GATEWAY_ADDRESS.
+//
+// Where the SSH gateway listens, e.g. :2222. Unset disables the
+// gateway entirely. See "The SSH gateway" in the operator guide.
+var SSHGatewayAddress = config.DefineString("HTTP_API_SSH_GATEWAY_ADDRESS", "", config.Startup,
+	"Where the SSH gateway listens, e.g. :2222. Unset disables the gateway entirely. See \"The SSH gateway\" in the operator guide.")
+
+// SSHGatewayHost is HTTP_API_SSH_GATEWAY_HOST.
+//
+// The name or names users actually ssh to, e.g. ap.example.edu,
+// separated by commas. It is what the web interface prints as the ssh
+// command, and also what the host certificate and the published
+// known_hosts line are narrowed to, so list every name and alias in
+// use. It cannot be derived: the listen address is usually not what
+// anybody types, since a container listening on :2222 sits behind a
+// service publishing 22 somewhere else. Unset prints no command and
+// falls host verification back to a wildcard pattern.
+var SSHGatewayHost = config.DefineString("HTTP_API_SSH_GATEWAY_HOST", "", config.Startup,
+	"The name or names users actually ssh to, e.g. ap.example.edu, separated by commas. It is what the web interface prints as the ssh command, and also what the host certificate and the published known_hosts line are narrowed to, so list every name and alias in use. It cannot be derived: the listen address is usually not what anybody types, since a container listening on :2222 sits behind a service publishing 22 somewhere else. Unset prints no command and falls host verification back to a wildcard pattern.")
+
+// SSHGatewayIssuer is HTTP_API_SSH_GATEWAY_ISSUER.
+//
+// The OAuth2 issuer the gateway's device flow runs against. Unset uses
+// this server's own issuer; set it where this process cannot reach its
+// own public URL. A login that fails with "could not start the login
+// flow" is usually this, left pointing at the default
+// http://localhost:8080.
+var SSHGatewayIssuer = config.DefineString("HTTP_API_SSH_GATEWAY_ISSUER", "", config.Startup,
+	"The OAuth2 issuer the gateway's device flow runs against. Unset uses this server's own issuer; set it where this process cannot reach its own public URL. A login that fails with \"could not start the login flow\" is usually this, left pointing at the default http://localhost:8080.")
+
+// SSHGatewayLockoutDisable is HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE.
+//
+// Turn the lockout off. Written true, t, 1, yes or on -- the last two
+// are accepted here although HTCondor configuration does not take them
+// generally, because this setting always has. It is on by default,
+// because the gateway listens on a public SSH port where
+// unauthenticated traffic from people who are not users is the
+// background noise rather than an exception, and a default of counting
+// nothing would mean nobody gets the protection unless they went
+// looking for it.
+var SSHGatewayLockoutDisable = config.DefineBool("HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE", false, config.Startup,
+	"Turn the lockout off. Written true, t, 1, yes or on -- the last two are accepted here although HTCondor configuration does not take them generally, because this setting always has. It is on by default, because the gateway listens on a public SSH port where unauthenticated traffic from people who are not users is the background noise rather than an exception, and a default of counting nothing would mean nobody gets the protection unless they went looking for it.")
+
+// SSHGatewayLockoutMaxTime is HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME.
+//
+// Where the doubling stops. Needs a unit, as above.
+var SSHGatewayLockoutMaxTime = config.DefineDuration("HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME", time.Duration(0) /* 0s */, config.Startup,
+	"Where the doubling stops. Needs a unit, as above.")
+
+// SSHGatewayLockoutNetThreshold is HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD.
+//
+// The same budget for the network around a host, shared by every
+// address in it, so a spray across a handful of addresses is caught
+// where each one alone would not be.
+var SSHGatewayLockoutNetThreshold = config.DefineInt("HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD", 0, config.Startup,
+	"The same budget for the network around a host, shared by every address in it, so a spray across a handful of addresses is caught where each one alone would not be.")
+
+// SSHGatewayLockoutThreshold is HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD.
+//
+// How many failed logins one host may accumulate inside the window
+// before new connections from it are refused. See "Locking out what
+// keeps knocking" in the operator guide.
+var SSHGatewayLockoutThreshold = config.DefineInt("HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD", 0, config.Startup,
+	"How many failed logins one host may accumulate inside the window before new connections from it are refused. See \"Locking out what keeps knocking\" in the operator guide.")
+
+// SSHGatewayLockoutTime is HTTP_API_SSH_GATEWAY_LOCKOUT_TIME.
+//
+// How long the first lockout of a source lasts. Each subsequent one
+// doubles. Needs a unit, as above.
+var SSHGatewayLockoutTime = config.DefineDuration("HTTP_API_SSH_GATEWAY_LOCKOUT_TIME", time.Duration(0) /* 0s */, config.Startup,
+	"How long the first lockout of a source lasts. Each subsequent one doubles. Needs a unit, as above.")
+
+// SSHGatewayLockoutTrusted is HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED.
+//
+// Addresses and CIDR blocks that are never counted and never locked
+// out, separated by commas or spaces or both. Put the office and the
+// monitoring host here so that testing the gateway cannot lock you out
+// of it, and put a load balancer here if one fronts the port --
+// otherwise every client behind it shares one source address and one
+// budget. A value that does not parse refuses to start rather than
+// being ignored: the setting exists so an operator cannot be shut out
+// of their own gateway, and passing over a typo in it would leave them
+// believing they are safe. See "Behind a load balancer" in the
+// operator guide.
+var SSHGatewayLockoutTrusted = config.DefineString("HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED", "", config.Startup,
+	"Addresses and CIDR blocks that are never counted and never locked out, separated by commas or spaces or both. Put the office and the monitoring host here so that testing the gateway cannot lock you out of it, and put a load balancer here if one fronts the port -- otherwise every client behind it shares one source address and one budget. A value that does not parse refuses to start rather than being ignored: the setting exists so an operator cannot be shut out of their own gateway, and passing over a typo in it would leave them believing they are safe. See \"Behind a load balancer\" in the operator guide.")
+
+// SSHGatewayLockoutWindow is HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW.
+//
+// How long a failed login is remembered against its source. Needs a
+// unit, and a value without one refuses to start rather than being
+// guessed at.
+var SSHGatewayLockoutWindow = config.DefineDuration("HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW", time.Duration(0) /* 0s */, config.Startup,
+	"How long a failed login is remembered against its source. Needs a unit, and a value without one refuses to start rather than being guessed at.")
+
+// SSHGatewaySessionCPUs is HTTP_API_SSH_GATEWAY_SESSION_CPUS.
+//
+// CPUs requested by a session the gateway creates on demand, for a
+// caller who connected by name rather than to a job they already have.
+var SSHGatewaySessionCPUs = config.DefineInt("HTTP_API_SSH_GATEWAY_SESSION_CPUS", 0, config.Startup,
+	"CPUs requested by a session the gateway creates on demand, for a caller who connected by name rather than to a job they already have.")
+
+// SSHGatewaySessionDiskMB is HTTP_API_SSH_GATEWAY_SESSION_DISK_MB.
+//
+// Disk in MiB for the same session. The default is 8 GiB rather than
+// something batch-sized because a VS Code Remote server installs
+// itself into the sandbox and dies unpacking it in less -- as a kernel
+// out-of-space error deep in a client log, not as anything HTCondor
+// reports.
+var SSHGatewaySessionDiskMB = config.DefineInt("HTTP_API_SSH_GATEWAY_SESSION_DISK_MB", 0, config.Startup,
+	"Disk in MiB for the same session. The default is 8 GiB rather than something batch-sized because a VS Code Remote server installs itself into the sandbox and dies unpacking it in less -- as a kernel out-of-space error deep in a client log, not as anything HTCondor reports.")
+
+// SSHGatewaySessionMemoryMB is HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB.
+//
+// Memory in MiB for the same session.
+var SSHGatewaySessionMemoryMB = config.DefineInt("HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB", 0, config.Startup,
+	"Memory in MiB for the same session.")
+
+// SSHHostKeyFile is HTTP_API_SSH_HOST_KEY_FILE.
+//
+// The host key clients pin. Unset, one is generated and kept sealed in
+// the application database, which is what most deployments want. Holds
+// or names a credential: keep it readable only by the account the
+// server runs as.
+var SSHHostKeyFile = config.DefineString("HTTP_API_SSH_HOST_KEY_FILE", "", config.Startup,
+	"The host key clients pin. Unset, one is generated and kept sealed in the application database, which is what most deployments want. Holds or names a credential: keep it readable only by the account the server runs as.")
 
 // SubmitFileDefaults is HTTP_API_SUBMIT_FILE_DEFAULTS.
 //
@@ -516,14 +923,27 @@ var TokenRetention = config.DefineString("HTTP_API_TOKEN_RETENTION", "", config.
 
 // UserHeaderTrustAny is HTTP_API_USER_HEADER_TRUST_ANY.
 //
-// Accept the user header from any source address. For demonstration
-// and testing only: with it on, anything that can reach this server
-// can claim to be any user, so it undoes authentication rather than
-// relaxing it. Off by default, and the server logs a warning for as
-// long as it is on. Leave it off anywhere a real person has an
-// account.
+// Accept the user header from any source address. Written true, t, 1,
+// yes or on -- the last two are accepted here although HTCondor
+// configuration does not take them generally, because this setting
+// always has. For demonstration and testing only: with it on, anything
+// that can reach this server can claim to be any user, so it undoes
+// authentication rather than relaxing it. Off by default, and the
+// server logs a warning for as long as it is on. Leave it off anywhere
+// a real person has an account.
 var UserHeaderTrustAny = config.DefineBool("HTTP_API_USER_HEADER_TRUST_ANY", false, config.Startup,
-	"Accept the user header from any source address. For demonstration and testing only: with it on, anything that can reach this server can claim to be any user, so it undoes authentication rather than relaxing it. Off by default, and the server logs a warning for as long as it is on. Leave it off anywhere a real person has an account.")
+	"Accept the user header from any source address. Written true, t, 1, yes or on -- the last two are accepted here although HTCondor configuration does not take them generally, because this setting always has. For demonstration and testing only: with it on, anything that can reach this server can claim to be any user, so it undoes authentication rather than relaxing it. Off by default, and the server logs a warning for as long as it is on. Leave it off anywhere a real person has an account.")
+
+// VSCodeImage is HTTP_API_VSCODE_IMAGE.
+//
+// The container image a VS Code session runs. Any transfer scheme
+// works, so a .sif staged on OSDF can be named directly. Set, it wins
+// outright and a caller cannot override it; unset, a caller may name
+// an image, which grants them nothing new since they can already
+// submit a job with any image. Unset otherwise runs a published
+// code-server image. See "VS Code sessions" in the operator guide.
+var VSCodeImage = config.DefineString("HTTP_API_VSCODE_IMAGE", "", config.Startup,
+	"The container image a VS Code session runs. Any transfer scheme works, so a .sif staged on OSDF can be named directly. Set, it wins outright and a caller cannot override it; unset, a caller may name an image, which grants them nothing new since they can already submit a job with any image. Unset otherwise runs a published code-server image. See \"VS Code sessions\" in the operator guide.")
 
 // WriteTimeout is HTTP_API_WRITE_TIMEOUT.
 //
@@ -791,14 +1211,37 @@ var All = []config.Knob{
 	IDPIssuer.Knob,
 	IDPRefreshTokenLifespan.Knob,
 	InteractiveExtraSubmit.Knob,
+	InteractiveJupyter.Knob,
+	InteractiveRequirements.Knob,
+	InteractiveTerminal.Knob,
+	InteractiveVSCode.Knob,
 	JobQueueLog.Knob,
+	JupyterKernelIdleSec.Knob,
+	JupyterMaxLifetimeSec.Knob,
+	JupyterReconnectGraceSec.Knob,
+	JupyterStartGraceSec.Knob,
 	JupyterWorkDir.Knob,
 	Listen.Knob,
+	LLMAPIKeyFile.Knob,
+	LLMAPIURL.Knob,
+	LLMAuthScheme.Knob,
+	LLMModel.Knob,
+	LLMOperatorInstructionsFile.Knob,
 	Log.Knob,
 	MCPAdminGroup.Knob,
 	MCPBaseURL.Knob,
+	MCPConfirmRemoveOver.Knob,
+	MCPConfirmSubmitOver.Knob,
+	MCPDisabledTools.Knob,
 	MCPListenAddr.Knob,
+	MCPMaxRequestDuration.Knob,
+	MCPReadOnly.Knob,
+	MCPRedactDisabledRules.Knob,
+	MCPRedactSecrets.Knob,
+	MCPSkillsDir.Knob,
+	MCPSkillsReloadInterval.Knob,
 	MCPSuperuserGroup.Knob,
+	MCPWatchMaxWait.Knob,
 	OAuth2AccessTokenLifespan.Knob,
 	OAuth2AuthURL.Knob,
 	OAuth2ClientID.Knob,
@@ -817,7 +1260,26 @@ var All = []config.Knob{
 	OAuth2UsernameClaim.Knob,
 	PingInterval.Knob,
 	ReadTimeout.Knob,
+	SandboxCacheDir.Knob,
+	SandboxCacheMB.Knob,
+	SandboxMaxGB.Knob,
 	SpoolBufferDir.Knob,
+	SpoolMaxUploadBytes.Knob,
+	SSHCAKeyFile.Knob,
+	SSHGatewayAddress.Knob,
+	SSHGatewayHost.Knob,
+	SSHGatewayIssuer.Knob,
+	SSHGatewayLockoutDisable.Knob,
+	SSHGatewayLockoutMaxTime.Knob,
+	SSHGatewayLockoutNetThreshold.Knob,
+	SSHGatewayLockoutThreshold.Knob,
+	SSHGatewayLockoutTime.Knob,
+	SSHGatewayLockoutTrusted.Knob,
+	SSHGatewayLockoutWindow.Knob,
+	SSHGatewaySessionCPUs.Knob,
+	SSHGatewaySessionDiskMB.Knob,
+	SSHGatewaySessionMemoryMB.Knob,
+	SSHHostKeyFile.Knob,
 	SubmitFileDefaults.Knob,
 	SubmitFileOverrides.Knob,
 	TLSCACert.Knob,
@@ -825,6 +1287,7 @@ var All = []config.Knob{
 	TLSKey.Knob,
 	TokenRetention.Knob,
 	UserHeaderTrustAny.Knob,
+	VSCodeImage.Knob,
 	WriteTimeout.Knob,
 	ConnectorInstances.Knob,
 	PickerInstances.Knob,

@@ -429,7 +429,18 @@ func ParseBytes(s string) (int64, error) {
 	if t == "" {
 		return 0, fmt.Errorf("empty size")
 	}
-	t = strings.TrimSuffix(strings.ToUpper(t), "B")
+	// Both spellings of each unit mean the same power of 1024: a site
+	// that writes MB means what one that writes MiB means, and
+	// refusing one of them would be pedantry in a config file. The "I"
+	// comes off only when a "B" did, so a bare "1000I" stays the
+	// nonsense it is rather than becoming a byte count.
+	t = strings.ToUpper(t)
+	if cut, hadB := strings.CutSuffix(t, "B"); hadB {
+		t = cut
+		if cut, hadI := strings.CutSuffix(t, "I"); hadI {
+			t = cut
+		}
+	}
 	mult := int64(1)
 	if t != "" {
 		switch t[len(t)-1] {

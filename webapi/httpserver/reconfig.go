@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Dynamic parameters: the setters a reconfigure (SIGHUP, or condor_reconfig via
@@ -77,7 +78,7 @@ func (h *Handler) SetMCPReadOnly(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	readOnly := h.reconfigBool("HTTP_API_MCP_READ_ONLY", spec, false)
+	readOnly := h.reconfigBool(knobs.MCPReadOnly.Name(), spec, false)
 	h.mcpReadOnly.Store(readOnly)
 	h.mcpServer.SetReadOnly(readOnly)
 }
@@ -115,18 +116,18 @@ func (h *Handler) reconfigOffered(name, spec string) bool {
 // being made, which is the opposite of what these settings are careful
 // about.
 func (h *Handler) SetInteractiveJupyter(spec string) {
-	h.interactive.set(appJupyter, h.reconfigOffered("HTTP_API_INTERACTIVE_JUPYTER", spec))
+	h.interactive.set(appJupyter, h.reconfigOffered(knobs.InteractiveJupyter.Name(), spec))
 }
 
 // SetInteractiveVSCode turns the VS Code application on or off.
 func (h *Handler) SetInteractiveVSCode(spec string) {
-	h.interactive.set(appVSCode, h.reconfigOffered("HTTP_API_INTERACTIVE_VSCODE", spec))
+	h.interactive.set(appVSCode, h.reconfigOffered(knobs.InteractiveVSCode.Name(), spec))
 }
 
 // SetInteractiveTerminal turns the Terminal application on or off,
 // and with it the MCP tool that starts the same kind of session.
 func (h *Handler) SetInteractiveTerminal(spec string) {
-	on := h.reconfigOffered("HTTP_API_INTERACTIVE_TERMINAL", spec)
+	on := h.reconfigOffered(knobs.InteractiveTerminal.Name(), spec)
 	h.interactive.set(appTerminal, on)
 	// The MCP interactive-session tools are the other front door onto
 	// the same thing, so they follow it. See interactive_apps.go.
@@ -146,7 +147,7 @@ func (h *Handler) SetMCPRedactSecrets(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	h.mcpDisableSecretRedaction = !h.reconfigBool("HTTP_API_MCP_REDACT_SECRETS", spec, true)
+	h.mcpDisableSecretRedaction = !h.reconfigBool(knobs.MCPRedactSecrets.Name(), spec, true)
 	h.applyMCPRedaction()
 }
 
@@ -380,7 +381,7 @@ func (h *Handler) SetMCPConfirmSubmitOver(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	v := h.reconfigCount("HTTP_API_MCP_CONFIRM_SUBMIT_OVER", spec)
+	v := h.reconfigCount(knobs.MCPConfirmSubmitOver.Name(), spec)
 	h.mcpConfirmSubmitOver.Store(int64(v))
 	h.mcpServer.SetConfirmThresholds(v, int(h.mcpConfirmRemoveOver.Load()))
 }
@@ -391,7 +392,7 @@ func (h *Handler) SetMCPConfirmRemoveOver(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	v := h.reconfigCount("HTTP_API_MCP_CONFIRM_REMOVE_OVER", spec)
+	v := h.reconfigCount(knobs.MCPConfirmRemoveOver.Name(), spec)
 	h.mcpConfirmRemoveOver.Store(int64(v))
 	h.mcpServer.SetConfirmThresholds(int(h.mcpConfirmSubmitOver.Load()), v)
 }

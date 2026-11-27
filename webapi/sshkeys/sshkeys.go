@@ -63,6 +63,7 @@ import (
 	"github.com/htcondor/golang-htcondor/droppriv"
 	"github.com/htcondor/golang-htcondor/logging"
 	"github.com/htcondor/golang-htcondor/webapi/httpserver/appdb/seal"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Purpose names one of the gateway's two keys. The value is the
@@ -95,9 +96,9 @@ func (p Purpose) describe() string {
 func (p Purpose) configKnob() string {
 	switch p {
 	case HostKey:
-		return "HTTP_API_SSH_HOST_KEY_FILE"
+		return knobs.SSHHostKeyFile.Name()
 	case CAKey:
-		return "HTTP_API_SSH_CA_KEY_FILE"
+		return knobs.SSHCAKeyFile.Name()
 	default:
 		return "HTTP_API_SSH_*_KEY_FILE"
 	}
