@@ -200,6 +200,50 @@ an address without editing the configuration. Turning `USE_SHARED_PORT`
 off is not a way to get this port — it only costs the pool its shared-port
 routing to this daemon.
 
+#### Serving HTTPS
+
+A certificate for this server's hostname goes on that own address, as
+above. Two settings, and **neither alone enables TLS** — the server
+needs both or it serves plain HTTP:
+
+```condor
+HTTP_API_TLS_CERT = /etc/condor/certs/ap.example.edu.pem
+HTTP_API_TLS_KEY  = /etc/condor/certs/ap.example.edu.key
+```
+
+Keep the key readable only by the account the server runs as.
+
+This is for serving HTTPS **directly**. A deployment behind a
+terminating proxy — an ingress controller, a load balancer, an Apache
+in front — leaves both unset and lets the proxy hold the certificate,
+which is the more common shape and the one the container images
+assume.
+
+**A renewed certificate is picked up without a restart.** The keypair
+is served through a reloader that re-reads both files at most once
+every five minutes and swaps them together, so an ACME or
+`certbot`-style renewal in place needs nothing from you. What does need
+a restart is changing the *settings* — the paths themselves.
+
+A swap is all-or-nothing, and a read that fails or does not parse
+leaves the keypair already in hand serving. So catching the files
+mid-write costs nothing: the next interval tries again.
+
+**The key does not have to be readable by `condor`.** It is read
+through the same privileged path the KEK and the token signing key use,
+so the normal posture — a root-owned key under
+`/etc/pki/tls/private/` — works with the daemon dropped to the
+`condor` account. This is why the server does not hand the paths to
+Go's `ServeTLS`, which would open them under the dropped identity and
+fail at startup.
+
+`HTTP_API_TLS_CA_CERT` is a separate decision: it is the CA bundle used
+to **verify client certificates**, and setting it is what makes the
+server ask for one at all. Unset, no client certificate is requested.
+It is not needed to serve HTTPS, and it is not where the issuer of your
+own certificate goes — a chain belongs in `HTTP_API_TLS_CERT` beside
+the leaf.
+
 ### Standalone
 
 ```bash
