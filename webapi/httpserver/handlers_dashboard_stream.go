@@ -86,6 +86,9 @@ func (s *Handler) handleDashboardActivityStream(w http.ResponseWriter, r *http.R
 	}
 	owner, all := activityStreamScope(htcondor.GetAuthenticatedUserFromContext(ctx),
 		r.URL.Query().Get("owned_by_me"), s.seesAllJobs(ctx, r, jobScopeRead))
+	// As on the jobs watch: the feed filters on `all` at subscribe time,
+	// so a lapsed privilege has to end the stream rather than narrow it.
+	ctx = s.watchAllJobsScope(ctx, r, all)
 	events, cancel, err := s.jobWatchFeed.SubscribeActivity(owner, all, activityStreamBuffer)
 	if err != nil {
 		s.writeError(w, http.StatusUnauthorized, "Authentication failed: "+errUnidentifiedCaller.Error())
@@ -109,7 +112,9 @@ func (s *Handler) handleDashboardActivityStream(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	streamActivity(r.Context(), w, flusher, events, activityStreamHeartbeat)
+	// ctx, not r.Context(): the privilege re-check above cancels this
+	// one, and the loop below is the only thing that can act on it.
+	streamActivity(ctx, w, flusher, events, activityStreamHeartbeat)
 }
 
 // activityStreamScope decides which jobs this connection may see: the

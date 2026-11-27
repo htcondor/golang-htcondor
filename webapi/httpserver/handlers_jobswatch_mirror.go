@@ -48,6 +48,11 @@ func (h *Handler) streamJobsWatchFromMirror(ctx context.Context, w http.Response
 	}
 	owner, all := activityStreamScope(htcondor.GetAuthenticatedUserFromContext(ctx),
 		r.URL.Query().Get("owned_by_me"), h.seesAllJobs(ctx, r, jobScopeRead))
+	// The subscription is filtered by `all` once, inside the feed, so a
+	// privilege that lapses mid-stream cannot narrow it. Ending the
+	// stream is the narrowing; EventSource reconnects and is scoped
+	// afresh.
+	ctx = h.watchAllJobsScope(ctx, r, all)
 	events, cancel, err := h.jobWatchFeed.SubscribeActivity(owner, all, jobsWatchMirrorBuffer)
 	if err != nil {
 		h.writeError(w, http.StatusUnauthorized, "authentication failed: "+errUnidentifiedCaller.Error())
