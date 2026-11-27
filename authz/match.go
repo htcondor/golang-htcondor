@@ -98,6 +98,8 @@ func matchUserList(list []string, user string) bool {
 //   - "a.b.c.d/N"           -> CIDR (IPv4 or IPv6).
 //   - "a.b.c.d/m.m.m.m"     -> IPv4 dotted netmask.
 //   - "a.b.c.*", "a.b.*"    -> IPv4 octet wildcard on a byte boundary.
+//   - "2001:db8:1234:*"     -> IPv6 group wildcard on a 16-bit boundary.
+//   - "{:local_ips:}"       -> any address of this machine.
 //   - "a.b.c.d" / "::1"     -> a bare address (host route).
 //
 // It returns false (no match) for unparseable patterns; callers treat a
@@ -108,6 +110,16 @@ func matchNetwork(pattern string, ip net.IP) bool {
 	}
 	if ip == nil {
 		return false
+	}
+
+	// "{:local_ips:}" stands for any address this machine holds. It is an
+	// alias rather than a network, and matches_withnetwork resolves it
+	// before the pattern ever reaches the network parser
+	// (condor_sockaddr.cpp), so resolve it in the same place: the parser
+	// below would read the braces as an unparseable address and refuse
+	// every peer.
+	if strings.EqualFold(pattern, "{:local_ips:}") {
+		return addrIsLocal(ip)
 	}
 
 	// CIDR or dotted-netmask form.
@@ -142,8 +154,25 @@ func matchNetwork(pattern string, ip net.IP) bool {
 		return false
 	}
 
-	// Octet-wildcard "a.b.c.*" (IPv4 only, asterisk on a byte boundary).
+	// Wildcard on a boundary: "a.b.c.*" for IPv4, "2001:db8:1234:*" for
+	// IPv6. from_net_string splits these two by whether the pattern holds
+	// a colon, and so does this: an IPv6 pattern read as an IPv4 one
+	// matches nothing at all.
 	if strings.Contains(pattern, "*") {
+		if strings.IndexByte(pattern, ':') >= 0 {
+			base, bits, ok := ipv6GroupWildcard(pattern)
+			if !ok {
+				return false
+			}
+			// condor_netaddr::match refuses a target of the other
+			// family before it compares any bits.
+			ip16 := ip.To16()
+			if ip16 == nil || ip.To4() != nil {
+				return false
+			}
+			mask := net.CIDRMask(bits, 128)
+			return base.Mask(mask).Equal(ip16.Mask(mask))
+		}
 		mask, base, ok := ipv4OctetWildcard(pattern)
 		if !ok {
 			return false
@@ -195,6 +224,54 @@ func ipv4OctetWildcard(pattern string) (net.IPMask, net.IP, bool) {
 	copy(base, concrete)
 	copy(mask, []byte{0xff, 0xff, 0xff, 0xff}[:len(concrete)])
 	return mask, base, true
+}
+
+// ipv6GroupWildcard parses "2001:db8:1234:*" into a base address and the prefix
+// length implied by the concrete groups: each colon in the pattern contributes
+// 16 bits, so that example is 2001:db8:1234::/48.
+//
+// Mirrors the IPv6 leg of condor_netaddr::from_net_string. The asterisk has to
+// sit immediately after the last colon -- HTCondor wants the wildcard on a
+// group boundary so it never has to guess how many groups the administrator
+// meant to leave out -- and the address is parsed with the asterisk rewritten
+// as a colon, which is what turns a prefix into a valid literal.
+func ipv6GroupWildcard(pattern string) (net.IP, int, bool) {
+	star := strings.IndexByte(pattern, '*')
+	if star < 0 || strings.LastIndexByte(pattern, ':') != star-1 {
+		return nil, 0, false
+	}
+	base := net.ParseIP(pattern[:star] + ":" + pattern[star+1:])
+	if base == nil || base.To4() != nil {
+		return nil, 0, false
+	}
+	bits := strings.Count(pattern, ":") * 16
+	if bits > 128 {
+		return nil, 0, false
+	}
+	return base, bits, true
+}
+
+// addrIsLocal reports whether ip is an address of this machine, by asking the
+// kernel to bind a UDP socket to it -- the test C++ addr_is_local makes
+// (condor_sockfunc.cpp).
+//
+// Binding rather than enumerating interfaces, so the two implementations agree
+// wherever the kernel's answer and an interface list would not. A refused bind
+// reads as "not local", which is the direction that denies rather than admits.
+//
+// The socket is only ever created for a security list that actually names
+// {:local_ips:}, and only for the peer currently being authorized.
+func addrIsLocal(ip net.IP) bool {
+	network := "udp6"
+	if ip.To4() != nil {
+		network = "udp4"
+	}
+	conn, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // --- small case-aware string helpers (match the C++ str(case)cmp behavior) ---
