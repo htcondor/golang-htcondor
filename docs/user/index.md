@@ -10,6 +10,7 @@ For people who submit and watch jobs through this access point — its web
 interface, its chat assistant, or the REST API — and who administer
 nothing.
 
+- [Submitting and watching a job](jobs.md) — the REST API from the point of view of somebody running jobs on it.
 - [Working with an AI assistant](assistant.md) — connecting one, what it may do as you, and what to watch for.
 - [Shell access over SSH](ssh.md) — getting a terminal inside a running job, and certificates for scripts.
 - [Submitting over SFTP](sftp-job-submit.md) — starting a batch by dropping files, with no client to install.

@@ -12,6 +12,13 @@
           "order": 10
         },
         {
+          "path": "user/jobs.md",
+          "url": "/docs/user/jobs",
+          "title": "Submitting and watching a job",
+          "audience": "user",
+          "order": 12
+        },
+        {
           "path": "user/assistant.md",
           "url": "/docs/user/assistant",
           "title": "Working with an AI assistant",
