@@ -1082,14 +1082,19 @@ certificate.
 
 PEM certificate for serving HTTPS directly, rather than behind a
 terminating proxy. Needs `HTTP_API_TLS_KEY`; neither alone enables
-TLS.
+TLS. The restart above is for this SETTING, the path: the file at that
+path is re-read about every five minutes and swapped, so a certificate
+renewed in place takes effect on its own. Put the chain here beside
+the leaf.
 
 ### `HTTP_API_TLS_KEY`
 
 **String.** Unset by default. Changing it needs a restart.
 
-Private key for `HTTP_API_TLS_CERT`. Keep it readable only by the
-account the server runs as.
+Private key for `HTTP_API_TLS_CERT`, re-read with it. Keep it readable
+only by the account that OWNS it: it is read through the privileged
+path, like the KEK, so a root-owned key works with the daemon dropped
+to condor and does not need widening.
 
 ### `HTTP_API_TOKEN_RETENTION`
 

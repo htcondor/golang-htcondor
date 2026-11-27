@@ -896,16 +896,21 @@ var TLSCACert = config.DefineString("HTTP_API_TLS_CA_CERT", "", config.Startup,
 //
 // PEM certificate for serving HTTPS directly, rather than behind a
 // terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables
-// TLS.
+// TLS. The restart above is for this SETTING, the path: the file at
+// that path is re-read about every five minutes and swapped, so a
+// certificate renewed in place takes effect on its own. Put the chain
+// here beside the leaf.
 var TLSCert = config.DefineString("HTTP_API_TLS_CERT", "", config.Startup,
-	"PEM certificate for serving HTTPS directly, rather than behind a terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables TLS.")
+	"PEM certificate for serving HTTPS directly, rather than behind a terminating proxy. Needs HTTP_API_TLS_KEY; neither alone enables TLS. The restart above is for this SETTING, the path: the file at that path is re-read about every five minutes and swapped, so a certificate renewed in place takes effect on its own. Put the chain here beside the leaf.")
 
 // TLSKey is HTTP_API_TLS_KEY.
 //
-// Private key for HTTP_API_TLS_CERT. Keep it readable only by the
-// account the server runs as.
+// Private key for HTTP_API_TLS_CERT, re-read with it. Keep it readable
+// only by the account that OWNS it: it is read through the privileged
+// path, like the KEK, so a root-owned key works with the daemon
+// dropped to condor and does not need widening.
 var TLSKey = config.DefineString("HTTP_API_TLS_KEY", "", config.Startup,
-	"Private key for HTTP_API_TLS_CERT. Keep it readable only by the account the server runs as.")
+	"Private key for HTTP_API_TLS_CERT, re-read with it. Keep it readable only by the account that OWNS it: it is read through the privileged path, like the KEK, so a root-owned key works with the daemon dropped to condor and does not need widening.")
 
 // TokenRetention is HTTP_API_TOKEN_RETENTION.
 //
