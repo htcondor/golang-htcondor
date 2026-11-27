@@ -145,6 +145,19 @@ func (h *Handler) handleCollectorWatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// poolQueryRefusedError is what a caller is told when the site serves
+// pool queries to administrators only.
+//
+// A type rather than errors.New because this message is written to the
+// caller as the response body, and it is the wording the other pool
+// endpoints already answer with; a lowercase Go error string would
+// change what two endpoints say about one policy.
+type poolQueryRefusedError struct{}
+
+func (poolQueryRefusedError) Error() string {
+	return "Pool queries are restricted to administrators at this site"
+}
+
 // collectorWatchRefusal reports why a caller whose cross-user read
 // privilege is `privileged` may not be served this collector watch, or
 // nil if they may.
@@ -155,7 +168,7 @@ func (h *Handler) handleCollectorWatch(w http.ResponseWriter, r *http.Request) {
 // decision that admitted it.
 func (h *Handler) collectorWatchRefusal(privileged bool, adType, constraint string) error {
 	if h.poolQueryPolicy.Refuses(privileged) {
-		return errors.New("Pool queries are restricted to administrators at this site")
+		return poolQueryRefusedError{}
 	}
 	if err := h.poolQueryPolicy.CheckAdType(privileged, adType); err != nil {
 		return err

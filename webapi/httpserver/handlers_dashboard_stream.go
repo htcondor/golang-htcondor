@@ -112,7 +112,9 @@ func (s *Handler) handleDashboardActivityStream(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	streamActivity(r.Context(), w, flusher, events, activityStreamHeartbeat)
+	// ctx, not r.Context(): the privilege re-check above cancels this
+	// one, and the loop below is the only thing that can act on it.
+	streamActivity(ctx, w, flusher, events, activityStreamHeartbeat)
 }
 
 // activityStreamScope decides which jobs this connection may see: the

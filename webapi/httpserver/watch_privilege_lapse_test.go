@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
 	"github.com/htcondor/golang-htcondor/webapi/poolpolicy"
 )
 
@@ -135,5 +136,51 @@ func TestAnOwnScopedStreamIsNotRechecked(t *testing.T) {
 
 	if ctx != base {
 		t.Error("an own-scoped stream was given a derived context, so it pays for a re-check it cannot need")
+	}
+}
+
+// The activity stream has to end as well, and only running the handler
+// shows that it does.
+//
+// The scoping context reaches exactly one line of that handler, and a
+// stream that goes on reading the request's own context instead
+// compiles, passes every other test in this package, and keeps carrying
+// every owner's jobs for the life of the connection after the arm is
+// gone. So this drives the handler rather than the helper.
+func TestTheActivityStreamEndsWhenTheArmLapses(t *testing.T) {
+	server, armed, sid := armedWatchCaller(t, poolpolicy.New(poolpolicy.ModeOpen, nil))
+	h := server.Handler
+	h.jobWatchRecheck = 20 * time.Millisecond
+	h.jobWatchFeed = jobwatch.NewFeed(nil)
+
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+		"/api/v1/dashboard/activity/stream?owned_by_me=false", nil)
+	for _, c := range armed.Cookies() {
+		r.AddCookie(c)
+	}
+	w := newSyncRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.handleDashboardActivityStream(w, r)
+	}()
+
+	// The handler says this once it is past authentication, scoping and
+	// the subscription -- that is, once it is streaming.
+	w.waitFor(t, "waiting for the mirror")
+
+	select {
+	case <-done:
+		t.Fatal("the stream ended while the caller was still armed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	h.superuserArmed.Disarm(sid)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pool-wide activity stream outlived the privilege that admitted it")
 	}
 }
