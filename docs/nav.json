@@ -47,6 +47,13 @@
           "order": 30
         },
         {
+          "path": "user/connectors.md",
+          "url": "/docs/user/connectors",
+          "title": "Connecting an account",
+          "audience": "user",
+          "order": 35
+        },
+        {
           "path": "user/files.md",
           "url": "/docs/user/files",
           "title": "Files and jobs over SFTP",
@@ -107,6 +114,13 @@
           "title": "SSH gateway",
           "audience": "operator",
           "order": 70
+        },
+        {
+          "path": "operator/connectors.md",
+          "url": "/docs/operator/connectors",
+          "title": "Connected accounts",
+          "audience": "operator",
+          "order": 75
         },
         {
           "path": "operator/site-apps.md",

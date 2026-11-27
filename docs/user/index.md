@@ -16,6 +16,7 @@ nothing.
 - [Shell access over SSH](ssh.md) — getting a terminal inside a running job, and certificates for scripts.
 - [Submitting over SFTP](sftp-job-submit.md) — starting a batch by dropping files, with no client to install.
 - [Files and jobs over SFTP](files.md) — reading output, starting a batch from a CSV, submitting a job of your own.
+- [Connecting an account](connectors.md) — letting the access point read files from your Drive, or write results to your spreadsheet.
 
 More of this guide is still to be written. Until it is, the material
 closest to it sits in the other guides:
