@@ -40,6 +40,13 @@ import (
 // the worst possible moment.
 const upstreamCheckInterval = 15 * time.Minute
 
+// upstreamOracleTimeout bounds one Check's conversation with the
+// provider: a refresh and then a userinfo fetch, two sequential
+// round-trips to a third party. The other oracles use oracleTimeout (5s)
+// for a single local call; that is too tight for two network legs, and
+// too loose to be the only bound, which is why this one has its own.
+const upstreamOracleTimeout = 15 * time.Second
+
 // userInfoFetcher is the provider call, injected so a test can be the
 // provider. It returns the subject and groups the provider now reports.
 type userInfoFetcher func(ctx context.Context, accessToken string) (*UserInfo, error)
@@ -58,6 +65,11 @@ type upstreamUserInfoOracle struct {
 	// is judged by exactly the rules a group read at login was.
 	validate  func(groups []string) error
 	scopesFor func(groups, requested []string) []string
+
+	// timeout bounds one Check's conversation with the provider. Zero
+	// means upstreamOracleTimeout; a test sets it so it can watch the
+	// deadline engage without waiting for it.
+	timeout time.Duration
 
 	logger *logging.Logger
 	now    func() time.Time
@@ -92,6 +104,31 @@ func (o *upstreamUserInfoOracle) Check(ctx context.Context, username string, sco
 	if !grant.LastCheckedAt.IsZero() && o.now().Sub(grant.LastCheckedAt) < upstreamCheckInterval {
 		return ReauthDecision{}, nil
 	}
+
+	// Bound the provider round-trips, as every other oracle bounds its
+	// own call. This one is the only oracle doing third-party network
+	// I/O, so it is the one that most needs it: a provider that hangs
+	// rather than errors never becomes the "no opinion" this file's
+	// fail-open rationale promises. The per-user floor does not damp it
+	// either, because MarkChecked runs only after a successful refresh,
+	// so a hung provider never advances LastCheckedAt and every refresh
+	// by every affected user re-attempts for the length of the outage.
+	//
+	// Failing open is preserved by construction: a deadline surfaces as a
+	// *url.Error wrapping context.DeadlineExceeded, and isUpstreamGrantDead
+	// matches only *oauth2.RetrieveError, so a timeout falls through to
+	// the "could not be reached" branch rather than revoking anyone.
+	//
+	// Its own constant rather than oracleTimeout: this oracle makes two
+	// sequential provider round-trips where the others make one local
+	// call, and 5s across a refresh plus a userinfo fetch would refuse
+	// providers that are merely slow.
+	timeout := o.timeout
+	if timeout <= 0 {
+		timeout = upstreamOracleTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	token, err := o.refresh(ctx, grant.RefreshToken)
 	if err != nil {

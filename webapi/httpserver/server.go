@@ -1909,28 +1909,63 @@ func findCreddAddressFile(htcConfig *config.Config, logger *logging.Logger) stri
 	return ""
 }
 
-// getHTTPClient returns an HTTP client with the configured CA certificate
+// ssoHTTPTimeout bounds one call to the identity provider.
+//
+// This client carries the SSO authorization-code exchange, every
+// userinfo fetch and the upstream revocation refresh. All three sit on a
+// caller's critical path, and none of them has anywhere else to get a
+// bound: the server's ReadTimeout and WriteTimeout do not cancel the
+// handler's context, and a provider that accepts the connection and then
+// stops answering is indistinguishable from a slow one until a deadline
+// says otherwise. 30s matches the sibling in cmd/htcondor-api.
+const ssoHTTPTimeout = 30 * time.Second
+
+// ssoResponseHeaderTimeout bounds the wait for the provider's response
+// headers, inside the overall ssoHTTPTimeout.
+const ssoResponseHeaderTimeout = 20 * time.Second
+
+// defaultSSOClient is the bounded stand-in for http.DefaultClient. It
+// keeps DefaultTransport, so connections are still pooled and shared with
+// the rest of the process; only the overall deadline is added.
+var defaultSSOClient = &http.Client{Timeout: ssoHTTPTimeout}
+
+// getHTTPClient returns an HTTP client with the configured CA certificate.
+//
+// Every path sets a timeout. Without one, an identity provider that
+// accepts the connection and never answers holds the calling handler for
+// as long as the peer keeps its own connection open: sign-ins hang
+// instead of failing into the "Could not complete the sign-in" page the
+// error path already has, and the upstream revocation oracle -- whose
+// whole design is that an oracle which cannot answer must not take the
+// token endpoint down with it -- never produces the error that reaches
+// that decision. A hang is not an error, so fail-open never engages.
 func (s *Handler) getHTTPClient() *http.Client {
 	if s.tlsCACertFile == "" {
-		return http.DefaultClient
+		return defaultSSOClient
 	}
 
 	// Load CA cert
 	caCert, err := os.ReadFile(s.tlsCACertFile)
 	if err != nil {
 		s.logger.Error(logging.DestinationHTTP, "Failed to read CA certificate", "error", err)
-		return http.DefaultClient
+		return defaultSSOClient
 	}
 
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
 
+	// This branch builds a bare Transport, so unlike DefaultTransport it
+	// gets no dial or handshake bound either unless they are set here.
 	return &http.Client{
+		Timeout: ssoHTTPTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				RootCAs:    caCertPool,
 				MinVersion: tls.VersionTLS12,
 			},
+			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: ssoResponseHeaderTimeout,
 		},
 	}
 }
