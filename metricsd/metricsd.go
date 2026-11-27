@@ -45,6 +45,7 @@ type Registry struct {
 	cacheTTL        time.Duration
 	queryInterval   time.Duration
 	backgroundQuery bool
+	collectTimeout  time.Duration
 	stopCh          chan struct{}
 	collectOnce     sync.Once
 	collecting      bool
@@ -53,12 +54,28 @@ type Registry struct {
 // NewRegistry creates a new metric registry
 func NewRegistry() *Registry {
 	return &Registry{
-		collectors:    make([]Collector, 0),
-		cache:         make([]Metric, 0),
-		cacheTTL:      10 * time.Second, // Default 10 second cache
-		queryInterval: 60 * time.Second, // Default 60 second query interval
-		stopCh:        make(chan struct{}),
+		collectors:     make([]Collector, 0),
+		cache:          make([]Metric, 0),
+		cacheTTL:       10 * time.Second, // Default 10 second cache
+		queryInterval:  60 * time.Second, // Default 60 second query interval
+		collectTimeout: DefaultCollectTimeout,
+		stopCh:         make(chan struct{}),
 	}
+}
+
+// DefaultCollectTimeout bounds one collector's work within a collection.
+//
+// Comfortably longer than a healthy pool query and comfortably shorter
+// than a Prometheus scrape interval, so a stalled collector host costs a
+// scrape rather than the exporter.
+const DefaultCollectTimeout = 15 * time.Second
+
+// SetCollectTimeout overrides how long a single collector may take. A
+// value of zero or less restores DefaultCollectTimeout.
+func (r *Registry) SetCollectTimeout(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.collectTimeout = d
 }
 
 // Register adds a collector to the registry
@@ -130,12 +147,42 @@ func (r *Registry) collectMetrics(ctx context.Context) ([]Metric, error) {
 	r.mu.RLock()
 	collectors := make([]Collector, len(r.collectors))
 	copy(collectors, r.collectors)
+	collectTimeout := r.collectTimeout
 	r.mu.RUnlock()
 
-	// Collect metrics from all collectors
+	// Collect metrics from all collectors, each under its own deadline.
+	//
+	// The deadline is the whole reason a collection returns at all. A
+	// pool collector runs a streaming CEDAR query against
+	// condor_collector, and an unbounded context is not merely "no
+	// timeout": cedar keys its read fast path on Done() == nil, so with
+	// a background context the read cannot be cancelled either. A
+	// collector host that completes the TCP handshake and then goes
+	// quiet -- during security negotiation or part-way through the ads
+	// -- wedges the call for as long as the kernel keeps ACKing.
+	//
+	// That stranded the scrape goroutine, a Gather worker and the query
+	// producer, plus a socket and an authenticated session, on every
+	// scrape, since nothing here deduplicates overlapping collections.
+	// Worse, this function is also the body of the background refresher's
+	// tick loop, which is sequential: one wedged tick and the cache was
+	// never refreshed again for the life of the process.
+	//
+	// Bounded here rather than at each caller so both reach it -- the
+	// /metrics adapter and backgroundCollect -- and so the promise made
+	// in the adapter's comment, that the registry applies per-collector
+	// timeouts, is finally true.
+	timeout := collectTimeout
+	if timeout <= 0 {
+		timeout = DefaultCollectTimeout
+	}
 	allMetrics := make([]Metric, 0)
 	for _, collector := range collectors {
-		metrics, err := collector.Collect(ctx)
+		metrics, err := func() ([]Metric, error) {
+			cctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			return collector.Collect(cctx)
+		}()
 		if err != nil {
 			// Log error but continue with other collectors
 			// In production, you might want to use a proper logger
