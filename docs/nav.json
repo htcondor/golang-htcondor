@@ -123,6 +123,13 @@
           "order": 75
         },
         {
+          "path": "operator/submit-policy.md",
+          "url": "/docs/operator/submit-policy",
+          "title": "Site submit policy",
+          "audience": "operator",
+          "order": 76
+        },
+        {
           "path": "operator/site-apps.md",
           "url": "/docs/operator/site-apps",
           "title": "Site apps",
