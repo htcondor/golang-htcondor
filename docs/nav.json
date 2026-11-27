@@ -33,6 +33,13 @@
           "order": 20
         },
         {
+          "path": "user/interactive.md",
+          "url": "/docs/user/interactive",
+          "title": "Interactive sessions",
+          "audience": "user",
+          "order": 25
+        },
+        {
           "path": "user/sftp-job-submit.md",
           "url": "/docs/user/sftp-job-submit",
           "title": "Submitting jobs over SFTP",
