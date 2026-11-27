@@ -16,6 +16,7 @@ import (
 	"github.com/PelicanPlatform/classad/collections/vm"
 
 	htcondor "github.com/htcondor/golang-htcondor"
+	"github.com/htcondor/golang-htcondor/logging"
 )
 
 // handleCollectorWatch streams collector ad changes to the client as Server-Sent
@@ -56,16 +57,7 @@ func (h *Handler) handleCollectorWatch(w http.ResponseWriter, r *http.Request) {
 	// This stream sends whole ads -- there is no projection to clamp --
 	// so under a restricted policy each one is filtered on the way out.
 	privileged := h.seesAllJobs(ctx, r, jobScopeRead)
-	if h.poolQueryPolicy.Refuses(privileged) {
-		h.writeError(w, http.StatusForbidden,
-			"Pool queries are restricted to administrators at this site")
-		return
-	}
-	if err := h.poolQueryPolicy.CheckAdType(privileged, adType); err != nil {
-		h.writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
-	if err := h.poolQueryPolicy.CheckConstraint(privileged, adType, constraint); err != nil {
+	if err := h.collectorWatchRefusal(privileged, adType, constraint); err != nil {
 		h.writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -77,12 +69,43 @@ func (h *Handler) handleCollectorWatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.streamOpened()()
 
+	// The same ceiling the job watch takes. stream_limit.go's cap already
+	// reasons about every stream as one class -- "for up to half an hour"
+	// -- and that was true only of the job watch; this one had no maximum
+	// age at all. EventSource reconnects on its own and resumes from
+	// Last-Event-ID, so ending costs one re-subscribe.
+	ctx, cancel := context.WithTimeout(ctx, jobWatchMaxAge)
+	defer cancel()
+
 	events, err := col.WatchAds(ctx, adType, constraint, cursor)
 	if err != nil {
 		// Headers are already sent; report the failure as an SSE error event.
 		_ = writeWatchSSE(w, flusher, "error", "", nil, nil, err.Error())
 		return
 	}
+
+	// Re-read the privilege as the stream runs, rather than trusting the
+	// boolean the open produced.
+	//
+	// privileged decides both the gates above and FilterClassAd on every
+	// event, so a stream opened while the caller could read the pool keeps
+	// emitting unredacted ads after that stops being true. The sharpest
+	// case is a browser session whose read scope comes from armed
+	// superuser mode, which self-disarms after 30 minutes: the open
+	// stream carries RemoteOwner, RemoteUser, RemoteProject and
+	// GlobalJobId past the arm, past an explicit disarm, and past logout,
+	// where a fresh request would be filtered or refused. Group removal
+	// and an expired session do the same.
+	//
+	// Nothing is paid for under the default open mode, where the policy
+	// can neither restrict nor refuse anyone and the privilege decides
+	// nothing.
+	recheck := h.poolQueryPolicy.Restricts(false) || h.poolQueryPolicy.Refuses(false)
+	recheckEvery := h.jobWatchRecheck
+	if recheckEvery <= 0 {
+		recheckEvery = jobWatchRecheckInterval
+	}
+	lastCheck := time.Now()
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -93,6 +116,19 @@ func (h *Handler) handleCollectorWatch(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
+			if recheck && time.Since(lastCheck) >= recheckEvery {
+				lastCheck = time.Now()
+				var err error
+				privileged, err = h.collectorWatchRecheck(ctx, r, adType, constraint)
+				if err != nil {
+					h.logger.Info(logging.DestinationSecurity,
+						"Ending a collector watch: the caller may no longer read the pool",
+						"ad_type", adType, "remote_addr", r.RemoteAddr, "reason", err.Error())
+					_ = writeWatchSSE(w, flusher, "error", "", nil, nil,
+						"your privilege to read this stream has lapsed; reconnect")
+					return
+				}
+			}
 			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
 				return
 			}
@@ -107,6 +143,88 @@ func (h *Handler) handleCollectorWatch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// collectorWatchRefusal reports why a caller whose cross-user read
+// privilege is `privileged` may not be served this collector watch, or
+// nil if they may.
+//
+// One predicate for the open and for the re-check inside the stream, so
+// a running stream is held to exactly what a fresh request would get.
+// Keeping the two in step by hand is what let the stream outlive the
+// decision that admitted it.
+func (h *Handler) collectorWatchRefusal(privileged bool, adType, constraint string) error {
+	if h.poolQueryPolicy.Refuses(privileged) {
+		return errors.New("Pool queries are restricted to administrators at this site")
+	}
+	if err := h.poolQueryPolicy.CheckAdType(privileged, adType); err != nil {
+		return err
+	}
+	return h.poolQueryPolicy.CheckConstraint(privileged, adType, constraint)
+}
+
+// collectorWatchRecheck re-reads the caller's cross-user read privilege
+// and reports the value a running stream should carry on with, plus why
+// it must end if it must.
+//
+// The privilege is read again rather than carried from the open: that
+// boolean decides FilterClassAd on every event, so a stream opened while
+// the caller could read the pool goes on emitting unredacted ads after
+// that stops being true. A privilege that merely narrowed needs no
+// disconnect -- the new value makes FilterClassAd redact from the next
+// event on, which is what a fresh request would get. Only a caller who
+// may no longer read the stream at all is sent away.
+func (h *Handler) collectorWatchRecheck(ctx context.Context, r *http.Request, adType, constraint string) (bool, error) {
+	privileged := h.seesAllJobs(ctx, r, jobScopeRead)
+	return privileged, h.collectorWatchRefusal(privileged, adType, constraint)
+}
+
+// watchAllJobsScope returns a context that is cancelled when a caller
+// admitted to everyone's jobs may no longer read them.
+//
+// A stream's owner scope is decided once, at open, and then baked into
+// the constraint or the feed subscription it runs on -- so unlike the
+// collector watch, which re-filters each ad, there is nothing to narrow
+// after the fact. Ending the stream is the narrowing. The browser's
+// EventSource reconnects on its own, and the new request is scoped
+// afresh, so a caller who still has the privilege loses nothing but a
+// re-subscribe and one who has lost it gets their own jobs from then on.
+//
+// Only a stream opened for everyone's jobs can lapse this way: a caller
+// confined to their own has nothing to lose, so they get ctx back
+// unchanged and pay nothing. The privilege lapses in several ordinary
+// ways -- armed superuser mode self-disarms after 30 minutes or is
+// disarmed explicitly, a browser session expires or logs out, a group
+// membership is withdrawn, an API key's entitlement is revoked -- and
+// none of them reaches a stream that asked once.
+func (h *Handler) watchAllJobsScope(ctx context.Context, r *http.Request, all bool) context.Context {
+	if !all {
+		return ctx
+	}
+	interval := h.jobWatchRecheck
+	if interval <= 0 {
+		interval = jobWatchRecheckInterval
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		defer cancel()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if !h.seesAllJobs(ctx, r, jobScopeRead) {
+					h.logger.Info(logging.DestinationSecurity,
+						"Ending a stream opened for every owner's jobs: the caller may no longer read them",
+						"remote_addr", r.RemoteAddr)
+					return
+				}
+			}
+		}
+	}()
+	return ctx
 }
 
 // sseSetup writes the SSE response headers and returns the flusher. It reports
@@ -262,8 +380,11 @@ func (h *Handler) handleJobsWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	// Ceiling first, then the privilege re-check, so the stream ends on
+	// whichever comes first.
+	ctx, cancel := context.WithTimeout(ctx, jobWatchMaxAge)
 	defer cancel() // stop the watch iterator when the handler returns
+	ctx = h.watchAllJobsScope(ctx, r, all)
 
 	cursor := cursorFromRequest(r)
 
