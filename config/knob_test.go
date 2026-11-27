@@ -352,3 +352,39 @@ func TestIntKnobLookupReportsPresence(t *testing.T) {
 		t.Errorf("Lookup of an absent value = (%d, %v), want (7, false)", v, ok)
 	}
 }
+
+// The IEC spellings mean the same as the plain ones. An operator who
+// wrote MiB in a file that used to be read by a different parser must
+// not have their setting silently ignored when it moves into the table.
+func TestParseBytesTakesBothSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int64
+	}{
+		{"1000M", 1000 << 20},
+		{"1000MB", 1000 << 20},
+		{"1000MiB", 1000 << 20},
+		{"1000mib", 1000 << 20},
+		{"2G", 2 << 30},
+		{"2GiB", 2 << 30},
+		{"4KiB", 4 << 10},
+		{"1TiB", 1 << 40},
+		{"512", 512},
+		{"512B", 512},
+	} {
+		got, err := ParseBytes(tc.raw)
+		if err != nil {
+			t.Errorf("ParseBytes(%q): %v", tc.raw, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("ParseBytes(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
+	}
+	// The "I" is only a unit spelling, never a unit of its own.
+	for _, raw := range []string{"1000I", "1000Mi", "1000X", "M", "MiB"} {
+		if got, err := ParseBytes(raw); err == nil {
+			t.Errorf("ParseBytes(%q) = %d, want an error", raw, got)
+		}
+	}
+}

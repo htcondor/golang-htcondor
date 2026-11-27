@@ -503,7 +503,7 @@ var reconfigParams = []reconfigParam{
 
 	// The ceiling on one upload command, copied into the handler and
 	// into the MCP server it builds, both at startup.
-	{name: "HTTP_API_SPOOL_MAX_UPLOAD_BYTES"},
+	fromKnob(knobs.SpoolMaxUploadBytes.Knob),
 
 	// Placement onboarding, read when the handler is built.
 	{name: "HTTP_API_PLACEMENT_IDENTITY_CLAIMS"},

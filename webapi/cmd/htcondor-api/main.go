@@ -729,16 +729,18 @@ func loadJupyterGraceSec(cfg *config.Config, logger *logging.Logger, name string
 // limit exists to prevent. Raising the cap means naming a bigger
 // number; there is deliberately no way to clear it.
 func loadSpoolMaxUploadBytes(cfg *config.Config, logger *logging.Logger) int64 {
-	v, ok := cfg.Get("HTTP_API_SPOOL_MAX_UPLOAD_BYTES")
-	if !ok || strings.TrimSpace(v) == "" {
-		return 0
-	}
-	n, err := spool.ParseSize(v)
-	if err != nil || n <= 0 {
-		if logger != nil {
+	// BytesKnob already refuses a value that does not parse or is not
+	// positive, reporting it through the knob error handler and
+	// returning the declared default, which is the zero this function
+	// has always returned for "use the package default". What is left
+	// to say here is the number that zero turns into, which the
+	// generic report has no way to know.
+	n := knobs.SpoolMaxUploadBytes.Get(cfg)
+	if n <= 0 {
+		if logger != nil && strings.TrimSpace(firstConfigValue(cfg, knobs.SpoolMaxUploadBytes.Name())) != "" {
 			logger.Warn(logging.DestinationHTTP,
-				"Ignoring HTTP_API_SPOOL_MAX_UPLOAD_BYTES; using the default",
-				"value", v, "error", err,
+				"Using the default upload ceiling",
+				"parameter", knobs.SpoolMaxUploadBytes.Name(),
 				"default_bytes", spool.DefaultLimits().MaxVolume)
 		}
 		return 0

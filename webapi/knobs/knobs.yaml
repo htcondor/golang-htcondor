@@ -662,6 +662,27 @@ knobs:
       spliced in as written, as with the submit-file settings above.
 
 
+  - name: HTTP_API_SPOOL_MAX_UPLOAD_BYTES
+    type: bytes
+    default: "0"
+    scope: startup
+    default_doc: Unset caps one upload at 1000 MiB.
+    doc: >
+      The most bytes one upload command may transfer: a PUT or POST to
+      a job's input, a redeemed upload URL, or an upload_job_input tool
+      call. A cluster-wide upload counts the archive once per proc it
+      serves, so a 10 MiB archive spooled to 50 procs is 500 MiB
+      against this and not 10. Written as a byte count or a size --
+      1000M, 2G, 1000MiB all work, and units are powers of 1024. A
+      cluster-wide call that cannot fit spools what it can and reports
+      the remainder, so the limit costs an extra call rather than
+      failing; a single-proc upload over it is refused. A value that is
+      zero, negative or unreadable is reported and the default applies:
+      the cap can be raised but not turned off, because reading a typo
+      as "no ceiling" would turn one bad line into an unbounded
+      fan-out, which is the thing the limit is for.
+
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

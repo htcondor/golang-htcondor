@@ -458,6 +458,24 @@ var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(3
 var SpoolBufferDir = config.DefineString("HTTP_API_SPOOL_BUFFER_DIR", "", config.Startup,
 	"Where an archive dropped in the SSH gateway's /submit/, or posted to the REST upload endpoints, is buffered while it is unpacked. Unset holds it in memory instead, under a much smaller ceiling.")
 
+// SpoolMaxUploadBytes is HTTP_API_SPOOL_MAX_UPLOAD_BYTES.
+//
+// The most bytes one upload command may transfer: a PUT or POST to a
+// job's input, a redeemed upload URL, or an upload_job_input tool
+// call. A cluster-wide upload counts the archive once per proc it
+// serves, so a 10 MiB archive spooled to 50 procs is 500 MiB against
+// this and not 10. Written as a byte count or a size -- 1000M, 2G,
+// 1000MiB all work, and units are powers of 1024. A cluster-wide call
+// that cannot fit spools what it can and reports the remainder, so the
+// limit costs an extra call rather than failing; a single-proc upload
+// over it is refused. A value that is zero, negative or unreadable is
+// reported and the default applies: the cap can be raised but not
+// turned off, because reading a typo as "no ceiling" would turn one
+// bad line into an unbounded fan-out, which is the thing the limit is
+// for.
+var SpoolMaxUploadBytes = config.DefineBytes("HTTP_API_SPOOL_MAX_UPLOAD_BYTES", 0 /* 0 */, config.Startup,
+	"The most bytes one upload command may transfer: a PUT or POST to a job's input, a redeemed upload URL, or an upload_job_input tool call. A cluster-wide upload counts the archive once per proc it serves, so a 10 MiB archive spooled to 50 procs is 500 MiB against this and not 10. Written as a byte count or a size -- 1000M, 2G, 1000MiB all work, and units are powers of 1024. A cluster-wide call that cannot fit spools what it can and reports the remainder, so the limit costs an extra call rather than failing; a single-proc upload over it is refused. A value that is zero, negative or unreadable is reported and the default applies: the cap can be raised but not turned off, because reading a typo as \"no ceiling\" would turn one bad line into an unbounded fan-out, which is the thing the limit is for.")
+
 // SubmitFileDefaults is HTTP_API_SUBMIT_FILE_DEFAULTS.
 //
 // Submit-file lines added to every submission, but only where the
@@ -818,6 +836,7 @@ var All = []config.Knob{
 	PingInterval.Knob,
 	ReadTimeout.Knob,
 	SpoolBufferDir.Knob,
+	SpoolMaxUploadBytes.Knob,
 	SubmitFileDefaults.Knob,
 	SubmitFileOverrides.Knob,
 	TLSCACert.Knob,

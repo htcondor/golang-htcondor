@@ -633,6 +633,23 @@ Where an archive dropped in the SSH gateway's /submit/, or posted to
 the REST upload endpoints, is buffered while it is unpacked. Unset
 holds it in memory instead, under a much smaller ceiling.
 
+### `HTTP_API_SPOOL_MAX_UPLOAD_BYTES`
+
+**Size.** Unset caps one upload at 1000 MiB. Changing it needs a restart.
+
+The most bytes one upload command may transfer: a PUT or POST to a
+job's input, a redeemed upload URL, or an upload_job_input tool call.
+A cluster-wide upload counts the archive once per proc it serves, so a
+10 MiB archive spooled to 50 procs is 500 MiB against this and not 10.
+Written as a byte count or a size -- 1000M, 2G, 1000MiB all work, and
+units are powers of 1024. A cluster-wide call that cannot fit spools
+what it can and reports the remainder, so the limit costs an extra
+call rather than failing; a single-proc upload over it is refused. A
+value that is zero, negative or unreadable is reported and the default
+applies: the cap can be raised but not turned off, because reading a
+typo as "no ceiling" would turn one bad line into an unbounded
+fan-out, which is the thing the limit is for.
+
 ### `HTTP_API_SUBMIT_FILE_DEFAULTS`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -741,7 +758,6 @@ each one.
 | `HTTP_API_TOOL_STATS_FLUSH_INTERVAL` | How often the usage counters are written to the application database (e.g. `5m`). Default `5m`; they are also written at shutdown. Governs both kinds. See [Usage statistics](metrics.md#usage-statistics). |
 | `HTTP_API_TOOL_STATS_MAX_LABEL_VALUES` | Cap on distinct values per `/metrics` label for usage statistics. Default `1000`; past it the quietest values render as `other`, while the database keeps them all. |
 | `HTTP_API_UTILIZATION_MAX_JOBS` | Most finished jobs one Utilization analysis (`GET /api/v1/utilization`) may read; a larger `limit` is clamped to it. Default `1000000`. An analysis holds about 250 bytes per job while it runs, so the default is about a quarter of a gigabyte at peak; the cached result is the answer, not the jobs. Read at startup. |
-| `HTTP_API_SPOOL_MAX_UPLOAD_BYTES` | Most bytes one upload command may transfer: `PUT`/`POST` to a job's input, a redeemed upload URL, or an `upload_job_input` tool call. A cluster-wide upload counts the tar times the procs it serves, so a 10 MiB tar spooled to 50 procs is 500 MiB against this, not 10. Accepts a byte count or a size (`1000M`, `2G`); units are powers of 1024. Default `1000M`. A cluster-wide call that cannot fit spools what it can and reports the remainder, so the limit costs an extra call rather than failing; a single-proc upload over it is refused. A value that is zero, negative or unreadable is ignored with a warning and the default applies — the cap cannot be turned off, only raised. Read at startup. |
 | `HTTP_API_RUNTIME_ESTIMATE_INTERVAL` | How often [runtime estimates](estimates.md#runtime-estimates) read newly completed jobs from the htcondordb mirror (a duration, e.g. `5m`). Default `5m`; `0` turns runtime estimates off entirely. Without a mirror they are off whatever this says. Read at startup. |
 | `HTTP_API_RUNTIME_ESTIMATE_BACKFILL` | How much job history runtime estimates read at startup, and how long a group of similar jobs is remembered without a new completion. Default `168h`. At most 500,000 of the newest records are read; the log says when that cap is hit. Read at startup. |
 | `HTTP_API_TOOL_STATS_MAX_SERIES` | Cap on distinct call combinations held in memory and in the database, per kind. Default `10000`; past it new combinations fold into `other`. This is what bounds memory and disk. |
