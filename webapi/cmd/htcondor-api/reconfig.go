@@ -430,11 +430,11 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.OAuth2TokenURL.Knob),
 	fromKnob(knobs.OAuth2UserinfoURL.Knob),
 	fromKnob(knobs.OAuth2RedirectURL.Knob),
-	{name: "HTTP_API_OAUTH2_CLIENT_SECRET_FILE"},
-	{name: "HTTP_API_OAUTH2_SCOPES"},
-	{name: "HTTP_API_OAUTH2_USERNAME_CLAIM"},
-	{name: "HTTP_API_OAUTH2_GROUPS_CLAIM"},
-	{name: "HTTP_API_OAUTH2_REQUIREMENTS"},
+	fromKnob(knobs.OAuth2ClientSecretFile.Knob),
+	fromKnob(knobs.OAuth2Scopes.Knob),
+	fromKnob(knobs.OAuth2UsernameClaim.Knob),
+	fromKnob(knobs.OAuth2GroupsClaim.Knob),
+	fromKnob(knobs.OAuth2Requirements.Knob),
 	{name: "HTTP_API_IDENTITY_MAP_STRIP_DOMAIN"},
 
 	// The skills poll's ticker is started once, when the MCP server is

@@ -202,7 +202,7 @@ func (c *ConfigSource) Definition(id ID) (Definition, bool) {
 		Enabled:  true,
 		Transfer: TransferSpool,
 		Service:  id.Service(c.ServicePrefix()),
-		Origin:   "HTTP_API_CONNECTORS",
+		Origin:   knobs.ConnectorInstances.Name(),
 	}
 
 	// A builtin supplies everything the operator should not have to
