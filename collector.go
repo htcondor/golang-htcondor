@@ -767,6 +767,16 @@ func (c *Collector) Advertise(ctx context.Context, ad *classad.ClassAd, opts *Ad
 	if err := ensureMyAddress(ad); err != nil {
 		return err
 	}
+	// And in the private ad, here rather than per connection. The
+	// fan-out below hands every goroutine the same opts.PrivateAd, so
+	// leaving this to putAdvertiseAds had each of them write MyAddress
+	// into one unsynchronised ClassAd -- a write/write race on its index
+	// map and Attributes slice, and a read/write race against the
+	// siblings serializing it, which classad forbids outright. Doing it
+	// once up here leaves putAdvertiseAds' copy a pure lookup.
+	if err := copyMyAddressToPrivateAd(ad, opts.PrivateAd); err != nil {
+		return err
+	}
 
 	// An advertisement goes to EVERY configured collector, unlike a
 	// query, which goes to whichever answers first.
@@ -900,6 +910,29 @@ func (c *Collector) AdvertiseMultiple(ctx context.Context, ads []*classad.ClassA
 		return c.advertiseMultipleTo(ctx, addrs[0], ads, opts)
 	}
 
+	// Normalise the caller's ads once, before the fan-out. Every
+	// goroutine below walks the same []*classad.ClassAd, and
+	// ensureMyAddress WRITES an ad that arrived without MyAddress, so
+	// leaving it to the workers raced N goroutines on one
+	// unsynchronised ClassAd -- against each other and against the
+	// siblings reading and serializing the same ad. Only ads missing
+	// the attribute are affected, that being the only write; everything
+	// else the workers touch is read-only.
+	//
+	// Pre-pass errors are kept per ad and folded into the result below,
+	// so an ad that cannot be normalised fails on its own rather than
+	// taking the batch down.
+	pre := make([]error, len(ads))
+	for i, ad := range ads {
+		if ad == nil {
+			pre[i] = fmt.Errorf("ad cannot be nil")
+			continue
+		}
+		if err := ensureMyAddress(ad); err != nil {
+			pre[i] = err
+		}
+	}
+
 	type result struct {
 		addr string
 		errs []error
@@ -933,6 +966,13 @@ func (c *Collector) AdvertiseMultiple(ctx context.Context, ads []*classad.ClassA
 
 	errs := make([]error, len(ads))
 	for i, m := range merged {
+		if pre[i] != nil {
+			// It never reached any collector; say why, rather than
+			// reporting whatever each connection made of a nil or
+			// un-normalisable ad.
+			errs[i] = pre[i]
+			continue
+		}
 		if len(m.Failed) == 0 {
 			continue
 		}
@@ -1098,6 +1138,32 @@ func getCommandForAdvertise(ad *classad.ClassAd) commands.CommandType {
 }
 
 // ensureMyAddress ensures the ad has a MyAddress attribute
+// copyMyAddressToPrivateAd gives the private ad the public ad's
+// MyAddress when it has none, matching dc_collector.cpp: the collector
+// and negotiator match a private ad to its public ad by MyAddress and
+// Name. A nil private ad, or one that already carries the attribute, is
+// left alone.
+//
+// Split out so it can be done once, before a multi-collector fan-out,
+// rather than inside each connection: the ad is the caller's and is
+// shared by every goroutine.
+func copyMyAddressToPrivateAd(ad, privateAd *classad.ClassAd) error {
+	if privateAd == nil {
+		return nil
+	}
+	if _, ok := privateAd.Lookup("MyAddress"); ok {
+		return nil
+	}
+	addr, ok := ad.EvaluateAttrString("MyAddress")
+	if !ok {
+		return nil
+	}
+	if err := privateAd.Set("MyAddress", addr); err != nil {
+		return fmt.Errorf("failed to copy MyAddress into private ad: %w", err)
+	}
+	return nil
+}
+
 func ensureMyAddress(ad *classad.ClassAd) error {
 	_, ok := ad.Lookup("MyAddress")
 	if ok {
@@ -1134,15 +1200,12 @@ func putAdvertiseAds(ctx context.Context, msg *message.Message, ad, privateAd *c
 		return nil
 	}
 
-	// Copy MyAddress from the public ad into the private ad if missing there,
-	// matching dc_collector.cpp (the negotiator matches private<->public ads by
-	// MyAddress and Name).
-	if _, ok := privateAd.Lookup("MyAddress"); !ok {
-		if addr, ok := ad.EvaluateAttrString("MyAddress"); ok {
-			if err := privateAd.Set("MyAddress", addr); err != nil {
-				return fmt.Errorf("failed to copy MyAddress into private ad: %w", err)
-			}
-		}
+	// Normally a no-op by now: Advertise does this once before fanning
+	// out, because doing it here wrote the caller's ad from every
+	// per-collector goroutine. Kept so direct callers of this function
+	// still get a private ad that carries MyAddress.
+	if err := copyMyAddressToPrivateAd(ad, privateAd); err != nil {
+		return err
 	}
 
 	// Send the private ad WITH private attributes so a ClaimId survives.
