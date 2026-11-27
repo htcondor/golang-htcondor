@@ -155,6 +155,58 @@ The web UI counts as enabled when it is compiled in (the
 `/mcp/oauth2/` only on a server whose only surface is MCP; both
 spellings are routed wherever MCP is on.
 
+## The built-in identity provider
+
+`HTTP_API_ENABLE_IDP = true` runs an OIDC provider inside this server
+at `/idp/*` — discovery, authorize, token, userinfo and JWKS — with its
+own username/password accounts in the unified application database,
+bcrypt-hashed. Off by default.
+
+**Read this before turning it on: in production it gives you exactly
+one account.** On first start with no `admin` user it generates a
+random 16-character password, creates `admin`, and **prints the
+credentials to the terminal**. There is no admin page for adding a
+second account, and no command that creates one. The other accounts you
+may have seen — `user` and `newbie` — are seeded only in demo mode.
+
+So the built-in provider is for evaluation, demos, and a deployment
+whose only interactive user is the operator. **A multi-user site wants
+an external OIDC provider**, configured with `HTTP_API_OAUTH2_*` — the
+campus one, or anything else that already knows who your users are.
+That is the supported shape, and it is what [Local identity
+mapping](#local-identity-mapping) and
+[`HTTP_API_OAUTH2_REQUIREMENTS`](#local-identity-mapping) exist to
+serve.
+
+Capture that terminal output on first start. The password is generated
+once and only printed; nothing stores a recoverable copy, so losing it
+means clearing the account out of the database.
+
+Logins are rate-limited twice over, **by source address and by
+username**, and only failures are charged. The username half is what
+makes guessing spread across many addresses still meet a limit; not
+charging successes is what keeps a site whose users all arrive from one
+NAT address from limiting them to a few logins a minute between them.
+
+Three settings tune what it issues, each read only when the provider is
+on:
+
+| | |
+| --- | --- |
+| `HTTP_API_IDP_ISSUER` | the issuer it names in its own documents. Unset derives it from the externally-visible URL, as `HTTP_API_OAUTH2_ISSUER` does. |
+| `HTTP_API_IDP_ACCESS_TOKEN_LIFESPAN` | default one hour |
+| `HTTP_API_IDP_REFRESH_TOKEN_LIFESPAN` | default 30 days |
+
+The refresh lifespan must be at least the access lifespan or **the
+provider refuses to start** — a refresh token that died first would
+make every refresh fail the moment the access token expired. A
+lifespan that is not a positive duration also refuses to start rather
+than being quietly ignored: a token lifetime is not a thing to get
+wrong silently.
+
+`HTTP_API_IDP_DB_PATH` is gone. The provider shares the unified
+application database and that setting is no longer read.
+
 ## MCP without OAuth2
 
 Some deployments never use it. An MCP gateway in front of this server can
