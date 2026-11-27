@@ -1289,7 +1289,7 @@ const defaultSkillsReloadInterval = 5 * time.Minute
 // fatal. This governs how promptly documentation refreshes; refusing to
 // start an access point's API over it would be wildly out of proportion.
 func loadSkillsReloadInterval(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_MCP_SKILLS_RELOAD_INTERVAL")
+	raw, ok := cfg.Get(knobs.MCPSkillsReloadInterval.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return defaultSkillsReloadInterval
 	}
@@ -1832,7 +1832,7 @@ func loadMCPConfig(cfg *config.Config, listenAddrFromConfig string, webUIEnabled
 	// Load server-level instructions for MCP agents
 	// A directory of site-authored Markdown skills to publish to agents.
 	// Typically a checkout of the site's documentation repository.
-	if dir, ok := cfg.Get("HTTP_API_MCP_SKILLS_DIR"); ok && strings.TrimSpace(dir) != "" {
+	if dir, ok := cfg.Get(knobs.MCPSkillsDir.Name()); ok && strings.TrimSpace(dir) != "" {
 		config.skillsDir = strings.TrimSpace(dir)
 		logger.Info(logging.DestinationHTTP, "MCP site skills directory configured",
 			"dir", config.skillsDir)
@@ -1845,7 +1845,7 @@ func loadMCPConfig(cfg *config.Config, listenAddrFromConfig string, webUIEnabled
 	// changes, which is what makes the default affordable.
 	config.skillsReloadInterval = loadSkillsReloadInterval(cfg, logger)
 
-	if disabled, ok := cfg.Get("HTTP_API_MCP_DISABLED_TOOLS"); ok && strings.TrimSpace(disabled) != "" {
+	if disabled, ok := cfg.Get(knobs.MCPDisabledTools.Name()); ok && strings.TrimSpace(disabled) != "" {
 		config.disabledTools = disabled
 		logger.Info(logging.DestinationMCP, "MCP tools disabled by configuration", "patterns", disabled)
 	}
@@ -1856,8 +1856,8 @@ func loadMCPConfig(cfg *config.Config, listenAddrFromConfig string, webUIEnabled
 			"MCP is read-only by configuration (HTTP_API_MCP_READ_ONLY); no tool that changes anything will be offered or accepted")
 	}
 
-	config.confirmSubmitOver = mcpConfirmOver(cfg, "HTTP_API_MCP_CONFIRM_SUBMIT_OVER")
-	config.confirmRemoveOver = mcpConfirmOver(cfg, "HTTP_API_MCP_CONFIRM_REMOVE_OVER")
+	config.confirmSubmitOver = mcpConfirmOver(cfg, knobs.MCPConfirmSubmitOver.Name())
+	config.confirmRemoveOver = mcpConfirmOver(cfg, knobs.MCPConfirmRemoveOver.Name())
 	if config.confirmSubmitOver > 0 || config.confirmRemoveOver > 0 {
 		logger.Info(logging.DestinationMCP,
 			"MCP will ask the person running the client to confirm bulk job operations",
@@ -3987,7 +3987,7 @@ func mcpCIMDEnabled(cfg *config.Config) bool {
 // by having them all in one body.
 func loadMCPRedaction(cfg *config.Config, into *mcpConfig) {
 	into.disableSecretRedaction = !mcpRedactSecretsEnabled(cfg)
-	if rules, ok := cfg.Get("HTTP_API_MCP_REDACT_DISABLED_RULES"); ok {
+	if rules, ok := cfg.Get(knobs.MCPRedactDisabledRules.Name()); ok {
 		into.redactDisabledRules = rules
 	}
 }
@@ -4002,7 +4002,7 @@ func loadMCPRedaction(cfg *config.Config, into *mcpConfig) {
 // yes please" are "read-only" and "full write access", and a daemon that
 // guesses wrong on that one should not come up at all.
 func mcpReadOnly(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_READ_ONLY")
+	raw, ok := cfg.Get(knobs.MCPReadOnly.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
 	}
@@ -4044,7 +4044,7 @@ func mcpConfirmOver(cfg *config.Config, name string) int {
 // and defaults on for the same reason a build log's masking does: the
 // common case is not an attacker.
 func mcpRedactSecretsEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_REDACT_SECRETS")
+	raw, ok := cfg.Get(knobs.MCPRedactSecrets.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return true
 	}
@@ -4450,7 +4450,7 @@ func loadTokenRetention(cfg *config.Config, logger *logging.Logger) string {
 }
 
 func loadMCPMaxRequestDuration(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_MCP_MAX_REQUEST_DURATION")
+	raw, ok := cfg.Get(knobs.MCPMaxRequestDuration.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
 	}
@@ -4477,7 +4477,10 @@ func loadMCPMaxRequestDuration(cfg *config.Config, logger *logging.Logger) time.
 // loadMCPWatchMaxWait reads HTTP_API_MCP_WATCH_MAX_WAIT, the cap on how
 // long the MCP watch_jobs tool may block in-call before returning.
 //
-//	unset      the mcpserver built-in default (currently 20s)
+//	unset      45s, or less where HTTP_API_MCP_MAX_REQUEST_DURATION is
+//	           tight enough for watchMaxWait to derive something
+//	           smaller; the mcpserver built-in 20s only applies when
+//	           nothing sensible can be derived
 //	a duration that cap, e.g. 15s
 //
 // It must stay under the gateway/proxy timeout in front of this daemon:
@@ -4486,7 +4489,7 @@ func loadMCPMaxRequestDuration(cfg *config.Config, logger *logging.Logger) time.
 // though the watch was registered. Returning zero here leaves the
 // mcpserver default in place.
 func loadMCPWatchMaxWait(cfg *config.Config, logger *logging.Logger) time.Duration {
-	raw, ok := cfg.Get("HTTP_API_MCP_WATCH_MAX_WAIT")
+	raw, ok := cfg.Get(knobs.MCPWatchMaxWait.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
 	}

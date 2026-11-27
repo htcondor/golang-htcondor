@@ -78,7 +78,7 @@ func (h *Handler) SetMCPReadOnly(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	readOnly := h.reconfigBool("HTTP_API_MCP_READ_ONLY", spec, false)
+	readOnly := h.reconfigBool(knobs.MCPReadOnly.Name(), spec, false)
 	h.mcpReadOnly.Store(readOnly)
 	h.mcpServer.SetReadOnly(readOnly)
 }
@@ -147,7 +147,7 @@ func (h *Handler) SetMCPRedactSecrets(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	h.mcpDisableSecretRedaction = !h.reconfigBool("HTTP_API_MCP_REDACT_SECRETS", spec, true)
+	h.mcpDisableSecretRedaction = !h.reconfigBool(knobs.MCPRedactSecrets.Name(), spec, true)
 	h.applyMCPRedaction()
 }
 
@@ -381,7 +381,7 @@ func (h *Handler) SetMCPConfirmSubmitOver(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	v := h.reconfigCount("HTTP_API_MCP_CONFIRM_SUBMIT_OVER", spec)
+	v := h.reconfigCount(knobs.MCPConfirmSubmitOver.Name(), spec)
 	h.mcpConfirmSubmitOver.Store(int64(v))
 	h.mcpServer.SetConfirmThresholds(v, int(h.mcpConfirmRemoveOver.Load()))
 }
@@ -392,7 +392,7 @@ func (h *Handler) SetMCPConfirmRemoveOver(spec string) {
 	if h.mcpServer == nil {
 		return
 	}
-	v := h.reconfigCount("HTTP_API_MCP_CONFIRM_REMOVE_OVER", spec)
+	v := h.reconfigCount(knobs.MCPConfirmRemoveOver.Name(), spec)
 	h.mcpConfirmRemoveOver.Store(int64(v))
 	h.mcpServer.SetConfirmThresholds(int(h.mcpConfirmSubmitOver.Load()), v)
 }

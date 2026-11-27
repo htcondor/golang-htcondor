@@ -424,6 +424,36 @@ The externally-visible base URL of the MCP listener, for a deployment
 that serves MCP on an address of its own. Unset, MCP is reached at
 `HTTP_API_BASE_URL` like everything else.
 
+### `HTTP_API_MCP_CONFIRM_REMOVE_OVER`
+
+**Whole number.** Default `0`. A change is installed by `condor_reconfig`.
+
+The same, for the number of jobs remove_jobs would remove. Zero is
+off. Counting the matches costs one extra queue query per gated call,
+which is why it is not on by default.
+
+### `HTTP_API_MCP_CONFIRM_SUBMIT_OVER`
+
+**Whole number.** Default `0`. A change is installed by `condor_reconfig`.
+
+Ask the person running the client to confirm before submit_job submits
+more than this many jobs. Zero, the default, is off. This is a prompt
+and not a limit: a client that cannot present the question --
+including any client older than MCP protocol 2026-07-28 -- proceeds
+unasked, logged at WARN.
+
+See [Asking a person before a bulk
+operation](agents.md#asking-a-person-before-a-bulk-operation).
+
+### `HTTP_API_MCP_DISABLED_TOOLS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+MCP tools this access point does not offer, as glob patterns separated
+by commas or whitespace.
+
+See [Disabling tools](agents.md#disabling-tools).
+
 ### `HTTP_API_MCP_LISTEN_ADDR`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -432,6 +462,83 @@ A second address to serve MCP on, separate from
 `HTTP_API_LISTEN_ADDR`. Unset serves MCP on the one listener, which is
 what almost every deployment wants; this is for separating the agent
 surface onto its own port or interface.
+
+### `HTTP_API_MCP_MAX_REQUEST_DURATION`
+
+**Duration.** Unset stops an MCP request at 15 minutes. Changing it needs a restart.
+
+Hard stop on an MCP request that is still making progress. While one
+runs its write deadline is moved forward, so `HTTP_API_WRITE_TIMEOUT`
+-- an absolute deadline meant for ordinary replies -- does not decide
+how long a deliberately waiting tool may wait. A request that stops
+making progress is still cut off on its last window; this is the
+backstop for one that never finishes at all. It needs a unit, and a
+value without one refuses to start.
+
+### `HTTP_API_MCP_READ_ONLY`
+
+**Boolean.** Default `false`. A change is installed by `condor_reconfig`.
+
+Serve MCP with no tool that changes anything, for every caller
+whatever their scopes. Off by default. While it is on, mcp:write is
+neither advertised nor granted.
+
+See [A read-only access point](agents.md#a-read-only-access-point).
+
+### `HTTP_API_MCP_REDACT_DISABLED_RULES`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Masking rules to turn off, as glob patterns over rule ids separated by
+commas or whitespace.
+
+### `HTTP_API_MCP_REDACT_SECRETS`
+
+**Boolean.** Default `true`. A change is installed by `condor_reconfig`.
+
+Mask credential-shaped text in MCP tool results. On by default, and
+worth leaving on: a tool result is read by a model and then often by a
+log.
+
+See [Masking credentials in tool
+results](agents.md#masking-credentials-in-tool-results).
+
+### `HTTP_API_MCP_SKILLS_DIR`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Directory of site-authored Markdown skills published to agents.
+Re-read periodically and on reconfigure, so a checkout updated in
+place is noticed without either.
+
+See [Site skills](agents.md#site-skills).
+
+### `HTTP_API_MCP_SKILLS_RELOAD_INTERVAL`
+
+**Duration.** Default `5m`. Changing it needs a restart.
+
+How often that directory is re-read, so a checkout updated underneath
+the daemon is noticed without a reconfigure. Zero disables the poll
+and leaves reloads to condor_reconfig. The check is stat-only until
+something actually changes. A value under one second is raised to one
+second rather than honoured: it would stat the tree hundreds of times
+a minute to learn nothing.
+
+### `HTTP_API_MCP_WATCH_MAX_WAIT`
+
+**Duration.** Unset blocks for at most 45 seconds, or less where HTTP_API_MCP_MAX_REQUEST_DURATION is tight enough to derive something smaller. Changing it needs a restart.
+
+Cap on how long the MCP check_watches and watch_jobs tools may block
+in-call before returning. This number is advertised to the agent in
+the tool schema, so it has to be one the whole path can deliver and
+not just this server. 45 seconds is not a server limit -- the server
+will hold a request far longer -- it is what an MCP client is observed
+to wait for before abandoning the call, which returns nothing at all
+to the agent rather than a timeout it could act on. Set it lower where
+a gateway or proxy with a tighter timeout sits in front of this
+server, and higher only where the clients reaching this deployment are
+known to be configured for a longer tool timeout. It needs a unit, as
+above.
 
 ### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
 
@@ -1032,10 +1139,8 @@ each one.
 | `HTTP_API_MCP_CIMD` | Resolve an `https://` MCP `client_id` as a Client ID Metadata Document (a public client). Default `true`; set `false` to require DCR. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
 | `HTTP_API_MCP_CIMD_ALLOWED_HOSTS` | Comma/space list of host or `.domain` patterns a CIMD `client_id` may point at. Empty = any host (SSRF guards still apply). Recommended for production: without it, unauthenticated callers choose which public hosts this server fetches from. |
 | `HTTP_API_MCP_DCR` | Accept dynamic client registration (RFC 7591) at `/oauth2/register` (and `/mcp/oauth2/register` where MCP is on). Default `true`; set `false` when every client is seeded, operator-provisioned or CIMD. Registrations are then refused with 403 and the endpoint is not advertised. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
-| `HTTP_API_MCP_WATCH_MAX_WAIT` | Cap on how long the MCP `check_watches`/`watch_jobs` tools may block in-call before returning (a duration, e.g. `15s`). This number is advertised to the agent in the tool schema, so it has to be one the whole path can deliver, not just this server. Unset = `45s`, or the value derived from `HTTP_API_MCP_MAX_REQUEST_DURATION` where that is tighter. 45s is not a server limit — the server will hold a request for 14m30s by default — it is what an MCP client is observed to wait for before abandoning the call, which returns *nothing at all* to the agent rather than a timeout it could act on. **Set this lower when a gateway or proxy with a tighter timeout sits in front of this server**; set it higher only when you know the clients reaching this deployment are configured for a longer tool timeout. |
 | `HTTP_API_CREDD_ADDRESS` | Single-AP mode only (refused in multi-AP mode, where each access point's schedd names its own). Pins the credd this server talks to (a sinful, e.g. `<10.0.0.5:9618?sock=credd>`), overriding discovery. Normally unnecessary: the credd is read from the schedd itself, which publishes its own credd as `CredDIpAddr` in its ad and address file — the same binding `DCSchedd::getCreddAddress` uses. Set this when fronting a remote schedd that does not advertise it, since a credd that is not the submitting schedd's accepts credentials and leaves jobs held anyway. |
 | `HTTP_API_REQUIRED_CREDENTIALS` | OAuth service credentials that must exist before a job may be submitted (comma- or space-separated, e.g. `scitokens`). Some access points hold every job submitted without them, whatever the job actually uses. Each submit path checks the caller's credentials first and stores a placeholder for any that is missing, so a person using the web UI does not get a held job for a reason unrelated to what they asked for; a real credential obtained later through the OAuth flow replaces the placeholder. Presence is cached per user for 5 minutes. Best effort: if the credd is unavailable or refuses, the submit still proceeds and the reason is logged. Unset = nothing is required. |
-| `HTTP_API_MCP_MAX_REQUEST_DURATION` | Hard stop on an MCP request that is still making progress (a duration, e.g. `5m`). Unset = 15m. While an MCP request runs its write deadline is moved forward, so `HTTP_API_WRITE_TIMEOUT` — which is an absolute deadline meant for ordinary replies — does not decide how long a deliberately waiting tool may wait. A request that stops making progress is still cut off on its last window; this is the backstop for one that never finishes at all. |
 | `HTTP_API_ADVERTISE` | Advertise this API server to the collector (a `HTCondorAPI` ad: endpoint, schedd, mirror health, versions). Default `true`; `daemon.Advertise` is a no-op without `COLLECTOR_HOST`, so this only matters to opt out when a collector is configured. |
 | `HTTP_API_DBMIRROR_NAME` | Pin job-queue routing to the htcondordb mirror advertising this `Name`. Set it when more than one mirror advertises to the pool: nothing in the ad says which schedd each one mirrors, so without a pin the freshest is chosen, which is a guess. |
 | `HTTP_API_DBMIRROR_ADDRESS` | Dial this sinful string instead of the mirror's advertised `MyAddress`, for one reachable only over NAT, a tunnel, or a Kubernetes Service. Freshness still comes from the collector ad — this changes where to connect, not whether the mirror is current enough to trust — and it applies whether the mirror was found through the collector or not. |
@@ -1066,15 +1171,7 @@ each one.
 | `HTTP_API_IDENTITY_MAP_STRIP_DOMAIN` | `true` to also match the local part of a scoped subject. Pair with `HTTP_API_OAUTH2_REQUIREMENTS`. |
 | `HTTP_API_DAGMAN_PATH` | Absolute path to `condor_dagman` on the **access point**, for the `submit_dag` tool. **Normally unnecessary — discovered from the schedd's `BIN`; set it only if that discovery is refused.** The server asks the schedd for `BIN` once (a READ-level `condor_config_val` query) and uses `$(BIN)/condor_dagman`; this knob overrides that, and `/usr/bin/condor_dagman` is the fallback when neither is available. `condor_submit_dag` normally finds the binary with `which` on the submitting machine, which is no help here: this server submits to a schedd it shares no filesystem with. |
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
-| `HTTP_API_MCP_SKILLS_DIR` | Directory of site-authored Markdown skills to publish to agents. Re-read periodically and on SIGHUP. See [Site skills](agents.md#site-skills). |
-| `HTTP_API_MCP_SKILLS_RELOAD_INTERVAL` | How often to re-read `HTTP_API_MCP_SKILLS_DIR` so a checkout updated underneath the daemon is noticed without a reconfigure (a duration, e.g. `1m`). Default `5m`; `0` disables the poll and leaves reloads to `condor_reconfig`. The check is stat-only until something actually changes. Read at startup. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |
-| `HTTP_API_MCP_READ_ONLY` | Serve MCP with no tool that changes anything, for every caller whatever their scopes. Default `false`. `mcp:write` is neither advertised nor granted while it is on. Applied on SIGHUP. See [A read-only access point](agents.md#a-read-only-access-point). |
-| `HTTP_API_MCP_CONFIRM_SUBMIT_OVER` | Ask the person running the client to confirm before `submit_job` submits more than this many jobs. Default `0`, which is off. Needs a client that can present the question: one that cannot — including any client older than MCP protocol 2026-07-28 — proceeds unasked, logged at `WARN`. This is a prompt, not a limit. Applied on SIGHUP. See [Asking a person before a bulk operation](agents.md#asking-a-person-before-a-bulk-operation). |
-| `HTTP_API_MCP_CONFIRM_REMOVE_OVER` | The same, for the number of jobs `remove_jobs` would remove. Default `0`, off. Counting the matches costs one extra queue query per gated call. |
-| `HTTP_API_MCP_DISABLED_TOOLS` | MCP tools this access point does not offer, as glob patterns separated by commas or whitespace. Applied on SIGHUP. See [Disabling tools](agents.md#disabling-tools). |
-| `HTTP_API_MCP_REDACT_SECRETS` | Mask credential-shaped text in MCP tool results. Default `true`. Applied on SIGHUP. See [Masking credentials in tool results](agents.md#masking-credentials-in-tool-results). |
-| `HTTP_API_MCP_REDACT_DISABLED_RULES` | Masking rules to turn off, as glob patterns over rule ids separated by commas or whitespace. Applied on SIGHUP. |
 | `HTTP_API_TRUSTED_PROXIES` | Comma-separated CIDRs (or bare addresses) whose `X-Forwarded-For` / `X-Real-IP` are honored when recording a client address. Unset means none are, and the peer address is logged. |
 | `HTTP_API_LLM_API_KEY_FILE` | Path to a file with the LLM API key. Enables the chat assistant. The file must not be world-accessible: 0600, 0400, or 0440 (what a Kubernetes secret volume is under `fsGroup`). |
 | `HTTP_API_LLM_API_URL` | Override the upstream Anthropic Messages endpoint (proxy / gateway). The full URL of the `/v1/messages` route. |

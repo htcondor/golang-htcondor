@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 	"github.com/htcondor/golang-htcondor/webapi/redact"
 )
 
@@ -82,7 +83,7 @@ func (s *Server) SetSecretRedaction(enabled bool, disabledRules string) {
 		s.redaction.Store(&redactionState{})
 		s.logger.Info(logging.DestinationMCP,
 			"MCP credential masking is off; job output reaches callers exactly as the job wrote it",
-			"setting", "HTTP_API_MCP_REDACT_SECRETS")
+			"setting", knobs.MCPRedactSecrets.Name())
 		return
 	}
 

@@ -126,7 +126,7 @@ var reconfigParams = []reconfigParam{
 	// point: a tool withdrawn because policy changed should stop working
 	// without waiting for agents to reconnect.
 	{
-		name: "HTTP_API_MCP_DISABLED_TOOLS",
+		name: knobs.MCPDisabledTools.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPDisabledTools(v)
 		},
@@ -138,7 +138,7 @@ var reconfigParams = []reconfigParam{
 	// expect, which is the worst possible moment to be told to restart
 	// the daemon.
 	{
-		name: "HTTP_API_MCP_READ_ONLY",
+		name: knobs.MCPReadOnly.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPReadOnly(v)
 		},
@@ -150,13 +150,13 @@ var reconfigParams = []reconfigParam{
 	// an agent act at an unexpected scale wants the gate up for the
 	// sessions already connected, not at the next restart.
 	{
-		name: "HTTP_API_MCP_CONFIRM_SUBMIT_OVER",
+		name: knobs.MCPConfirmSubmitOver.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPConfirmSubmitOver(v)
 		},
 	},
 	{
-		name: "HTTP_API_MCP_CONFIRM_REMOVE_OVER",
+		name: knobs.MCPConfirmRemoveOver.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPConfirmRemoveOver(v)
 		},
@@ -195,13 +195,13 @@ var reconfigParams = []reconfigParam{
 	// a credential, or that a rule is eating something it needs, should
 	// not have to restart the daemon to say so.
 	{
-		name: "HTTP_API_MCP_REDACT_SECRETS",
+		name: knobs.MCPRedactSecrets.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPRedactSecrets(v)
 		},
 	},
 	{
-		name: "HTTP_API_MCP_REDACT_DISABLED_RULES",
+		name: knobs.MCPRedactDisabledRules.Name(),
 		apply: func(s reconfigTarget, v string) {
 			s.SetMCPRedactDisabledRules(v)
 		},
@@ -249,7 +249,7 @@ var reconfigParams = []reconfigParam{
 	// immediacy and an unconditional re-read: the poll skips files whose
 	// size and modification time are unchanged, and this does not.
 	{
-		name:  "HTTP_API_MCP_SKILLS_DIR",
+		name:  knobs.MCPSkillsDir.Name(),
 		apply: func(s reconfigTarget, v string) { s.SetMCPSkillsDir(v) },
 	},
 	// The web chat assistant's half of MCP_INSTRUCTIONS: the operator's
@@ -429,6 +429,13 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.SSHGatewaySessionMemoryMB.Knob),
 	fromKnob(knobs.SSHGatewaySessionDiskMB.Knob),
 
+	// The two MCP request deadlines. Both are captured when the
+	// handler is built and advertised to agents in a tool schema, so a
+	// change reaches neither a running request nor a client that has
+	// already read the schema. Neither was listed before.
+	fromKnob(knobs.MCPMaxRequestDuration.Knob),
+	fromKnob(knobs.MCPWatchMaxWait.Knob),
+
 	// The JupyterLab limits and grace periods. Each is stamped into a
 	// session's submit description when the session is created, so a
 	// change reaches sessions created after a restart and no others --
@@ -477,7 +484,7 @@ var reconfigParams = []reconfigParam{
 	// The skills poll's ticker is started once, when the MCP server is
 	// built. Changing how often it fires needs a restart; changing what it
 	// reads does not (see HTTP_API_MCP_SKILLS_DIR above).
-	{name: "HTTP_API_MCP_SKILLS_RELOAD_INTERVAL"},
+	{name: knobs.MCPSkillsReloadInterval.Name()},
 
 	// The connector output sweep's ticker is likewise started once. Which
 	// connectors exist, and their policy, do reload; how often finished
@@ -627,10 +634,10 @@ func (w *reconfigWatcher) reconfigure(cfg *config.Config) {
 	// pull, a new deployment of the site's documentation -- which a diff
 	// of the setting itself cannot see. This is the only parameter here
 	// whose meaning lives outside the configuration file.
-	if dir := configValue(cfg, "HTTP_API_MCP_SKILLS_DIR"); dir != "" {
+	if dir := configValue(cfg, knobs.MCPSkillsDir.Name()); dir != "" {
 		w.srv.SetMCPSkillsDir(dir)
-		if !slices.Contains(applied, "HTTP_API_MCP_SKILLS_DIR") {
-			applied = append(applied, "HTTP_API_MCP_SKILLS_DIR")
+		if !slices.Contains(applied, knobs.MCPSkillsDir.Name()) {
+			applied = append(applied, knobs.MCPSkillsDir.Name())
 		}
 	}
 

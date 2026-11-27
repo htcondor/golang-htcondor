@@ -346,6 +346,33 @@ var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.R
 var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup,
 	"The externally-visible base URL of the MCP listener, for a deployment that serves MCP on an address of its own. Unset, MCP is reached at HTTP_API_BASE_URL like everything else.")
 
+// MCPConfirmRemoveOver is HTTP_API_MCP_CONFIRM_REMOVE_OVER.
+//
+// The same, for the number of jobs remove_jobs would remove. Zero is
+// off. Counting the matches costs one extra queue query per gated
+// call, which is why it is not on by default.
+var MCPConfirmRemoveOver = config.DefineInt("HTTP_API_MCP_CONFIRM_REMOVE_OVER", 0, config.Reconfig,
+	"The same, for the number of jobs remove_jobs would remove. Zero is off. Counting the matches costs one extra queue query per gated call, which is why it is not on by default.")
+
+// MCPConfirmSubmitOver is HTTP_API_MCP_CONFIRM_SUBMIT_OVER.
+//
+// Ask the person running the client to confirm before submit_job
+// submits more than this many jobs. Zero, the default, is off. This is
+// a prompt and not a limit: a client that cannot present the question
+// -- including any client older than MCP protocol 2026-07-28 --
+// proceeds unasked, logged at WARN. See "Asking a person before a bulk
+// operation" in the operator guide.
+var MCPConfirmSubmitOver = config.DefineInt("HTTP_API_MCP_CONFIRM_SUBMIT_OVER", 0, config.Reconfig,
+	"Ask the person running the client to confirm before submit_job submits more than this many jobs. Zero, the default, is off. This is a prompt and not a limit: a client that cannot present the question -- including any client older than MCP protocol 2026-07-28 -- proceeds unasked, logged at WARN. See \"Asking a person before a bulk operation\" in the operator guide.")
+
+// MCPDisabledTools is HTTP_API_MCP_DISABLED_TOOLS.
+//
+// MCP tools this access point does not offer, as glob patterns
+// separated by commas or whitespace. See "Disabling tools" in the
+// operator guide.
+var MCPDisabledTools = config.DefineString("HTTP_API_MCP_DISABLED_TOOLS", "", config.Reconfig,
+	"MCP tools this access point does not offer, as glob patterns separated by commas or whitespace. See \"Disabling tools\" in the operator guide.")
+
 // MCPListenAddr is HTTP_API_MCP_LISTEN_ADDR.
 //
 // A second address to serve MCP on, separate from
@@ -354,6 +381,63 @@ var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup
 // surface onto its own port or interface.
 var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.Startup,
 	"A second address to serve MCP on, separate from HTTP_API_LISTEN_ADDR. Unset serves MCP on the one listener, which is what almost every deployment wants; this is for separating the agent surface onto its own port or interface.")
+
+// MCPMaxRequestDuration is HTTP_API_MCP_MAX_REQUEST_DURATION.
+//
+// Hard stop on an MCP request that is still making progress. While one
+// runs its write deadline is moved forward, so HTTP_API_WRITE_TIMEOUT
+// -- an absolute deadline meant for ordinary replies -- does not
+// decide how long a deliberately waiting tool may wait. A request that
+// stops making progress is still cut off on its last window; this is
+// the backstop for one that never finishes at all. It needs a unit,
+// and a value without one refuses to start.
+var MCPMaxRequestDuration = config.DefineDuration("HTTP_API_MCP_MAX_REQUEST_DURATION", time.Duration(0) /* 0s */, config.Startup,
+	"Hard stop on an MCP request that is still making progress. While one runs its write deadline is moved forward, so HTTP_API_WRITE_TIMEOUT -- an absolute deadline meant for ordinary replies -- does not decide how long a deliberately waiting tool may wait. A request that stops making progress is still cut off on its last window; this is the backstop for one that never finishes at all. It needs a unit, and a value without one refuses to start.")
+
+// MCPReadOnly is HTTP_API_MCP_READ_ONLY.
+//
+// Serve MCP with no tool that changes anything, for every caller
+// whatever their scopes. Off by default. While it is on, mcp:write is
+// neither advertised nor granted. See "A read-only access point" in
+// the operator guide.
+var MCPReadOnly = config.DefineBool("HTTP_API_MCP_READ_ONLY", false, config.Reconfig,
+	"Serve MCP with no tool that changes anything, for every caller whatever their scopes. Off by default. While it is on, mcp:write is neither advertised nor granted. See \"A read-only access point\" in the operator guide.")
+
+// MCPRedactDisabledRules is HTTP_API_MCP_REDACT_DISABLED_RULES.
+//
+// Masking rules to turn off, as glob patterns over rule ids separated
+// by commas or whitespace.
+var MCPRedactDisabledRules = config.DefineString("HTTP_API_MCP_REDACT_DISABLED_RULES", "", config.Reconfig,
+	"Masking rules to turn off, as glob patterns over rule ids separated by commas or whitespace.")
+
+// MCPRedactSecrets is HTTP_API_MCP_REDACT_SECRETS.
+//
+// Mask credential-shaped text in MCP tool results. On by default, and
+// worth leaving on: a tool result is read by a model and then often by
+// a log. See "Masking credentials in tool results" in the operator
+// guide.
+var MCPRedactSecrets = config.DefineBool("HTTP_API_MCP_REDACT_SECRETS", true, config.Reconfig,
+	"Mask credential-shaped text in MCP tool results. On by default, and worth leaving on: a tool result is read by a model and then often by a log. See \"Masking credentials in tool results\" in the operator guide.")
+
+// MCPSkillsDir is HTTP_API_MCP_SKILLS_DIR.
+//
+// Directory of site-authored Markdown skills published to agents.
+// Re-read periodically and on reconfigure, so a checkout updated in
+// place is noticed without either. See "Site skills" in the operator
+// guide.
+var MCPSkillsDir = config.DefineString("HTTP_API_MCP_SKILLS_DIR", "", config.Reconfig,
+	"Directory of site-authored Markdown skills published to agents. Re-read periodically and on reconfigure, so a checkout updated in place is noticed without either. See \"Site skills\" in the operator guide.")
+
+// MCPSkillsReloadInterval is HTTP_API_MCP_SKILLS_RELOAD_INTERVAL.
+//
+// How often that directory is re-read, so a checkout updated
+// underneath the daemon is noticed without a reconfigure. Zero
+// disables the poll and leaves reloads to condor_reconfig. The check
+// is stat-only until something actually changes. A value under one
+// second is raised to one second rather than honoured: it would stat
+// the tree hundreds of times a minute to learn nothing.
+var MCPSkillsReloadInterval = config.DefineDuration("HTTP_API_MCP_SKILLS_RELOAD_INTERVAL", time.Duration(300000000000) /* 5m */, config.Startup,
+	"How often that directory is re-read, so a checkout updated underneath the daemon is noticed without a reconfigure. Zero disables the poll and leaves reloads to condor_reconfig. The check is stat-only until something actually changes. A value under one second is raised to one second rather than honoured: it would stat the tree hundreds of times a minute to learn nothing.")
 
 // MCPSuperuserGroup is HTTP_API_MCP_SUPERUSER_GROUP.
 //
@@ -364,6 +448,22 @@ var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.S
 // Deprecated: do not use it in new configuration.
 var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
 	"Obsolete: do not use it in new configuration. Group(s) whose members may change any user's jobs through MCP. Read as a raw string and split downstream, as above.")
+
+// MCPWatchMaxWait is HTTP_API_MCP_WATCH_MAX_WAIT.
+//
+// Cap on how long the MCP check_watches and watch_jobs tools may block
+// in-call before returning. This number is advertised to the agent in
+// the tool schema, so it has to be one the whole path can deliver and
+// not just this server. 45 seconds is not a server limit -- the server
+// will hold a request far longer -- it is what an MCP client is
+// observed to wait for before abandoning the call, which returns
+// nothing at all to the agent rather than a timeout it could act on.
+// Set it lower where a gateway or proxy with a tighter timeout sits in
+// front of this server, and higher only where the clients reaching
+// this deployment are known to be configured for a longer tool
+// timeout. It needs a unit, as above.
+var MCPWatchMaxWait = config.DefineDuration("HTTP_API_MCP_WATCH_MAX_WAIT", time.Duration(0) /* 0s */, config.Startup,
+	"Cap on how long the MCP check_watches and watch_jobs tools may block in-call before returning. This number is advertised to the agent in the tool schema, so it has to be one the whole path can deliver and not just this server. 45 seconds is not a server limit -- the server will hold a request far longer -- it is what an MCP client is observed to wait for before abandoning the call, which returns nothing at all to the agent rather than a timeout it could act on. Set it lower where a gateway or proxy with a tighter timeout sits in front of this server, and higher only where the clients reaching this deployment are known to be configured for a longer tool timeout. It needs a unit, as above.")
 
 // OAuth2AccessTokenLifespan is HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN.
 //
@@ -1080,8 +1180,18 @@ var All = []config.Knob{
 	Log.Knob,
 	MCPAdminGroup.Knob,
 	MCPBaseURL.Knob,
+	MCPConfirmRemoveOver.Knob,
+	MCPConfirmSubmitOver.Knob,
+	MCPDisabledTools.Knob,
 	MCPListenAddr.Knob,
+	MCPMaxRequestDuration.Knob,
+	MCPReadOnly.Knob,
+	MCPRedactDisabledRules.Knob,
+	MCPRedactSecrets.Knob,
+	MCPSkillsDir.Knob,
+	MCPSkillsReloadInterval.Knob,
 	MCPSuperuserGroup.Knob,
+	MCPWatchMaxWait.Knob,
 	OAuth2AccessTokenLifespan.Knob,
 	OAuth2AuthURL.Knob,
 	OAuth2ClientID.Knob,
