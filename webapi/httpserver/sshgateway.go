@@ -35,6 +35,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/apassign"
 	"github.com/htcondor/golang-htcondor/webapi/interactive"
 	"github.com/htcondor/golang-htcondor/webapi/jobssh"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 	"github.com/htcondor/golang-htcondor/webapi/sftpjobs"
 	"github.com/htcondor/golang-htcondor/webapi/sshgateway"
 	"github.com/htcondor/golang-htcondor/webapi/sshkeys"
@@ -385,7 +386,7 @@ func (h *Handler) startSSHGateway(ctx context.Context, issuer string) error {
 	if strings.TrimSpace(h.sshGatewayPublicHost) == "" {
 		h.logger.Warn(logging.DestinationHTTP,
 			"The SSH gateway has no public name, so clients cannot discover it",
-			"set", "HTTP_API_SSH_GATEWAY_HOST",
+			"set", knobs.SSHGatewayHost.Name(),
 			"to", "the name users ssh to, e.g. ap.example.edu (add :port only if it is not 22)",
 			"listening_on", h.sshGatewayAddress)
 	}
@@ -955,7 +956,7 @@ func (h *Handler) sshGatewayBanlist() (*sshgateway.Banlist, error) {
 	if cfg.Disabled {
 		h.logger.Warn(logging.DestinationHTTP,
 			"The SSH gateway will not lock out sources that repeatedly fail to log in",
-			"setting", "HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE")
+			"setting", knobs.SSHGatewayLockoutDisable.Name())
 		return nil, nil
 	}
 

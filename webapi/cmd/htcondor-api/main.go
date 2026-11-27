@@ -1435,18 +1435,18 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 	// machine can dump them with condor_config_val -- so a private key
 	// must come from a file the operator has permission-locked, not
 	// from a setting and not from the environment.
-	mcpCfg.sshGatewayAddress, _ = cfg.Get("HTTP_API_SSH_GATEWAY_ADDRESS")
-	mcpCfg.sshGatewayIssuer, _ = cfg.Get("HTTP_API_SSH_GATEWAY_ISSUER")
-	mcpCfg.sshHostKeyFile, _ = cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
-	mcpCfg.sshCAKeyFile, _ = cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
-	mcpCfg.sshGatewayHost, _ = cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
-	mcpCfg.sandboxCacheDir, _ = cfg.Get("HTTP_API_SANDBOX_CACHE_DIR")
-	mcpCfg.sandboxCacheMB = intParam(cfg, "HTTP_API_SANDBOX_CACHE_MB")
-	mcpCfg.sandboxMaxGB = intParam(cfg, "HTTP_API_SANDBOX_MAX_GB")
+	mcpCfg.sshGatewayAddress = knobs.SSHGatewayAddress.Get(cfg)
+	mcpCfg.sshGatewayIssuer = knobs.SSHGatewayIssuer.Get(cfg)
+	mcpCfg.sshHostKeyFile = knobs.SSHHostKeyFile.Get(cfg)
+	mcpCfg.sshCAKeyFile = knobs.SSHCAKeyFile.Get(cfg)
+	mcpCfg.sshGatewayHost = knobs.SSHGatewayHost.Get(cfg)
+	mcpCfg.sandboxCacheDir = knobs.SandboxCacheDir.Get(cfg)
+	mcpCfg.sandboxCacheMB = intParam(cfg, knobs.SandboxCacheMB.Name())
+	mcpCfg.sandboxMaxGB = intParam(cfg, knobs.SandboxMaxGB.Name())
 	mcpCfg.sshLockout = loadSSHGatewayLockout(cfg, logger)
-	mcpCfg.sshSessionCpus = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_CPUS", logger)
-	mcpCfg.sshSessionMemMB = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB", logger)
-	mcpCfg.sshSessionDiskMB = positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_SESSION_DISK_MB", logger)
+	mcpCfg.sshSessionCpus = positiveConfigInt(cfg, knobs.SSHGatewaySessionCPUs.Name(), logger)
+	mcpCfg.sshSessionMemMB = positiveConfigInt(cfg, knobs.SSHGatewaySessionMemoryMB.Name(), logger)
+	mcpCfg.sshSessionDiskMB = positiveConfigInt(cfg, knobs.SSHGatewaySessionDiskMB.Name(), logger)
 
 	if len(mcpCfg.identityMapStrategies) > 0 || len(mcpCfg.identityGroupSources) > 0 {
 		mcpCfg.identityMapPasswdFile, _ = cfg.Get("HTTP_API_IDENTITY_MAP_PASSWD_FILE")
@@ -2325,7 +2325,13 @@ func splitCommaList(v string) []string {
 // HTCondor's config parser treats as boolean-true: "true", "1",
 // "yes", "on").
 func loadUserHeaderTrustAnyUnsafe(cfg *config.Config) bool {
-	return knobs.UserHeaderTrustAny.Get(cfg)
+	// isTruthyConfigValue, not BoolKnob.Get. This setting has always
+	// taken "yes" and "on", which HTCondor's param_boolean does not
+	// and BoolKnob therefore does not either; declaring the knob
+	// narrowed it by accident, and an operator who wrote "yes" would
+	// find the flag off. It fails closed, so nothing was exposed --
+	// but it is not what they asked for.
+	return isTruthyConfigValue(firstConfigValue(cfg, knobs.UserHeaderTrustAny.Name()))
 }
 
 // setupCollector creates collector from CLI flag or config
@@ -3099,10 +3105,10 @@ func runDemoMode(earlyBuf *logging.EarlyBuffer) error {
 	//
 	// Still off unless HTTP_API_SSH_GATEWAY_ADDRESS is set, so a plain
 	// `-demo` binds no second port and mints no CA.
-	demoGatewayAddr, _ := cfg.Get("HTTP_API_SSH_GATEWAY_ADDRESS")
-	demoGatewayHost, _ := cfg.Get("HTTP_API_SSH_GATEWAY_HOST")
-	demoSSHHostKey, _ := cfg.Get("HTTP_API_SSH_HOST_KEY_FILE")
-	demoSSHCAKey, _ := cfg.Get("HTTP_API_SSH_CA_KEY_FILE")
+	demoGatewayAddr := knobs.SSHGatewayAddress.Get(cfg)
+	demoGatewayHost := knobs.SSHGatewayHost.Get(cfg)
+	demoSSHHostKey := knobs.SSHHostKeyFile.Get(cfg)
+	demoSSHCAKey := knobs.SSHCAKeyFile.Get(cfg)
 	// And the KEK, without which there is no key store to generate the
 	// gateway's host key and CA into: the gateway refuses to start
 	// rather than mint keys it cannot keep. Read here too so that
@@ -4590,18 +4596,23 @@ func publicBaseURL(cfg *config.Config) string {
 // gets the protection unless they went looking for it.
 func loadSSHGatewayLockout(cfg *config.Config, logger *logging.Logger) httpserver.SSHGatewayLockoutConfig {
 	out := httpserver.SSHGatewayLockoutConfig{
-		Threshold:    positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD", logger),
-		NetThreshold: positiveConfigInt(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD", logger),
-		Window:       configDurationSetting(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW", logger),
-		BanTime:      configDurationSetting(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_TIME", logger),
-		MaxBanTime:   configDurationSetting(cfg, "HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME", logger),
+		Threshold:    positiveConfigInt(cfg, knobs.SSHGatewayLockoutThreshold.Name(), logger),
+		NetThreshold: positiveConfigInt(cfg, knobs.SSHGatewayLockoutNetThreshold.Name(), logger),
+		Window:       configDurationSetting(cfg, knobs.SSHGatewayLockoutWindow.Name(), logger),
+		BanTime:      configDurationSetting(cfg, knobs.SSHGatewayLockoutTime.Name(), logger),
+		MaxBanTime:   configDurationSetting(cfg, knobs.SSHGatewayLockoutMaxTime.Name(), logger),
 	}
-	if raw, ok := cfg.Get("HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED"); ok {
-		out.TrustedNetworks = splitConfigList(raw)
-	}
-	if raw, ok := cfg.Get("HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE"); ok {
-		out.Disabled = isTruthyConfigValue(raw)
-	}
+	// A comma-or-space list, which no knob type reads: ListKnob splits
+	// on commas alone and WordsKnob on whitespace alone, and this one
+	// is documented as either. The name comes from the table; the
+	// split stays here.
+	out.TrustedNetworks = splitConfigList(knobs.SSHGatewayLockoutTrusted.Get(cfg))
+	// isTruthyConfigValue, not BoolKnob.Get: this setting has always
+	// taken "yes" and "on", which HTCondor's own param_boolean does
+	// not and BoolKnob therefore does not either. Narrowing it would
+	// quietly turn the lockout back on for a deployment that wrote
+	// "yes" -- the safe direction, but not the one they asked for.
+	out.Disabled = isTruthyConfigValue(firstConfigValue(cfg, knobs.SSHGatewayLockoutDisable.Name()))
 	return out
 }
 

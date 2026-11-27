@@ -575,6 +575,32 @@ that does not parse, refuses to start rather than being guessed at --
 How long a request may take to arrive in full, as a Go duration. A
 value that cannot be parsed is logged and the default applies.
 
+### `HTTP_API_SANDBOX_CACHE_DIR`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where the +jobs file service keeps sandbox output it has already
+fetched. Unset means no cache and every read fetches the sandbox
+again. It has to be real local storage with room for the budget below:
+on tmpfs the cache is memory the kernel cannot reclaim. Its contents
+are discarded at every start and may be deleted by hand while the
+server runs.
+
+### `HTTP_API_SANDBOX_CACHE_MB`
+
+**Whole number.** Unset budgets the cache at 4096 MiB. Changing it needs a restart.
+
+That cache's budget in MiB. A negative number disables the cache. A
+value that is not a whole number refuses to start.
+
+### `HTTP_API_SANDBOX_MAX_GB`
+
+**Whole number.** Unset serves a sandbox up to 8 GiB. Changing it needs a restart.
+
+The largest job sandbox the +jobs file service will serve, in GiB. A
+negative number means no limit. Refused the same way as above when it
+is not a whole number.
+
 ### `HTTP_API_SITE_APP_<instance>_*`
 
 A lab's own web interface, published to the people it belongs to. Each
@@ -650,6 +676,146 @@ applies: the cap can be raised but not turned off, because reading a
 typo as "no ceiling" would turn one bad line into an unbounded
 fan-out, which is the thing the limit is for.
 
+### `HTTP_API_SSH_CA_KEY_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The CA key user certificates are signed with. Unset, one is generated
+and sealed as above. Without a CA key certificates are simply
+unavailable and the device flow still works. Holds or names a
+credential: keep it readable only by the account the server runs as.
+
+### `HTTP_API_SSH_GATEWAY_ADDRESS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where the SSH gateway listens, e.g. :2222. Unset disables the gateway
+entirely.
+
+See [The SSH gateway](ssh-gateway.md).
+
+### `HTTP_API_SSH_GATEWAY_HOST`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The name or names users actually ssh to, e.g. ap.example.edu,
+separated by commas. It is what the web interface prints as the ssh
+command, and also what the host certificate and the published
+known_hosts line are narrowed to, so list every name and alias in use.
+It cannot be derived: the listen address is usually not what anybody
+types, since a container listening on :2222 sits behind a service
+publishing 22 somewhere else. Unset prints no command and falls host
+verification back to a wildcard pattern.
+
+### `HTTP_API_SSH_GATEWAY_ISSUER`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The OAuth2 issuer the gateway's device flow runs against. Unset uses
+this server's own issuer; set it where this process cannot reach its
+own public URL. A login that fails with "could not start the login
+flow" is usually this, left pointing at the default
+http://localhost:8080.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Turn the lockout off. Written true, t, 1, yes or on -- the last two
+are accepted here although HTCondor configuration does not take them
+generally, because this setting always has. It is on by default,
+because the gateway listens on a public SSH port where unauthenticated
+traffic from people who are not users is the background noise rather
+than an exception, and a default of counting nothing would mean nobody
+gets the protection unless they went looking for it.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME`
+
+**Duration.** Unset stops the doubling at 24 hours. Changing it needs a restart.
+
+Where the doubling stops. Needs a unit, as above.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD`
+
+**Whole number.** Unset allows four times the host threshold. Changing it needs a restart.
+
+The same budget for the network around a host, shared by every address
+in it, so a spray across a handful of addresses is caught where each
+one alone would not be.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD`
+
+**Whole number.** Unset allows 10 failed logins from one host. Changing it needs a restart.
+
+How many failed logins one host may accumulate inside the window
+before new connections from it are refused.
+
+See [Locking out what keeps
+knocking](ssh-gateway.md#locking-out-what-keeps-knocking).
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_TIME`
+
+**Duration.** Unset locks out for 15 minutes the first time. Changing it needs a restart.
+
+How long the first lockout of a source lasts. Each subsequent one
+doubles. Needs a unit, as above.
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Addresses and CIDR blocks that are never counted and never locked out,
+separated by commas or spaces or both. Put the office and the
+monitoring host here so that testing the gateway cannot lock you out
+of it, and put a load balancer here if one fronts the port --
+otherwise every client behind it shares one source address and one
+budget. A value that does not parse refuses to start rather than being
+ignored: the setting exists so an operator cannot be shut out of their
+own gateway, and passing over a typo in it would leave them believing
+they are safe.
+
+See [Behind a load balancer](ssh-gateway.md#behind-a-load-balancer).
+
+### `HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW`
+
+**Duration.** Unset remembers a failure for 10 minutes. Changing it needs a restart.
+
+How long a failed login is remembered against its source. Needs a
+unit, and a value without one refuses to start rather than being
+guessed at.
+
+### `HTTP_API_SSH_GATEWAY_SESSION_CPUS`
+
+**Whole number.** Unset requests 1 CPU. Changing it needs a restart.
+
+CPUs requested by a session the gateway creates on demand, for a
+caller who connected by name rather than to a job they already have.
+
+### `HTTP_API_SSH_GATEWAY_SESSION_DISK_MB`
+
+**Whole number.** Unset requests 8192 MiB. Changing it needs a restart.
+
+Disk in MiB for the same session. The default is 8 GiB rather than
+something batch-sized because a VS Code Remote server installs itself
+into the sandbox and dies unpacking it in less -- as a kernel
+out-of-space error deep in a client log, not as anything HTCondor
+reports.
+
+### `HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB`
+
+**Whole number.** Unset requests 1024 MiB. Changing it needs a restart.
+
+Memory in MiB for the same session.
+
+### `HTTP_API_SSH_HOST_KEY_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The host key clients pin. Unset, one is generated and kept sealed in
+the application database, which is what most deployments want. Holds
+or names a credential: keep it readable only by the account the server
+runs as.
+
 ### `HTTP_API_SUBMIT_FILE_DEFAULTS`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -709,11 +875,14 @@ live grant is somebody's session whatever its age.
 
 **Boolean.** Default `false`. Changing it needs a restart.
 
-Accept the user header from any source address. For demonstration and
-testing only: with it on, anything that can reach this server can
-claim to be any user, so it undoes authentication rather than relaxing
-it. Off by default, and the server logs a warning for as long as it is
-on. Leave it off anywhere a real person has an account.
+Accept the user header from any source address. Written true, t, 1,
+yes or on -- the last two are accepted here although HTCondor
+configuration does not take them generally, because this setting
+always has. For demonstration and testing only: with it on, anything
+that can reach this server can claim to be any user, so it undoes
+authentication rather than relaxing it. Off by default, and the server
+logs a warning for as long as it is on. Leave it off anywhere a real
+person has an account.
 
 ### `HTTP_API_WRITE_TIMEOUT`
 

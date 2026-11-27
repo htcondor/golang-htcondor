@@ -127,8 +127,11 @@ func TestSecretSettingsSaySo(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Twice per setting: once in the doc comment, once in the string
-	// handed to Define.
-	if n := strings.Count(string(gen), marker); n != wantSecret*2 {
+	// handed to Define. The comment is wrapped, so a sentence can be
+	// split across lines and a plain Count would miss it; unwrap the
+	// continuations first.
+	unwrapped := regexp.MustCompile(`\n//\s*`).ReplaceAllString(string(gen), " ")
+	if n := strings.Count(unwrapped, marker); n != wantSecret*2 {
 		t.Errorf("the marker appears %d times for %d secret settings; want %d",
 			n, wantSecret, wantSecret*2)
 	}

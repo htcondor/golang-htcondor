@@ -407,6 +407,33 @@ var reconfigParams = []reconfigParam{
 	// configuration and reconfiguring does not look like it worked.
 	fromKnob(knobs.UserHeaderTrustAny.Knob),
 
+	// The SSH gateway. The listener is bound, and the host and CA keys
+	// are loaded or generated, once at startup; the lockout is built
+	// with the gateway and its banlist keeps its own counters, so a
+	// reconfigure would have to restart the listener to change any of
+	// it. None of these was listed before, so a change to any of them
+	// did nothing and nothing said so.
+	fromKnob(knobs.SSHGatewayAddress.Knob),
+	fromKnob(knobs.SSHGatewayIssuer.Knob),
+	fromKnob(knobs.SSHGatewayHost.Knob),
+	fromKnob(knobs.SSHHostKeyFile.Knob),
+	fromKnob(knobs.SSHCAKeyFile.Knob),
+	fromKnob(knobs.SSHGatewayLockoutThreshold.Knob),
+	fromKnob(knobs.SSHGatewayLockoutNetThreshold.Knob),
+	fromKnob(knobs.SSHGatewayLockoutWindow.Knob),
+	fromKnob(knobs.SSHGatewayLockoutTime.Knob),
+	fromKnob(knobs.SSHGatewayLockoutMaxTime.Knob),
+	fromKnob(knobs.SSHGatewayLockoutTrusted.Knob),
+	fromKnob(knobs.SSHGatewayLockoutDisable.Knob),
+	fromKnob(knobs.SSHGatewaySessionCPUs.Knob),
+	fromKnob(knobs.SSHGatewaySessionMemoryMB.Knob),
+	fromKnob(knobs.SSHGatewaySessionDiskMB.Knob),
+
+	// The +jobs sandbox cache, sized when the file service is built.
+	fromKnob(knobs.SandboxCacheDir.Knob),
+	fromKnob(knobs.SandboxCacheMB.Knob),
+	fromKnob(knobs.SandboxMaxGB.Knob),
+
 	// The HTTP server's timeouts, captured when it was built.
 	fromKnob(knobs.ReadTimeout.Knob),
 	fromKnob(knobs.WriteTimeout.Knob),

@@ -450,6 +450,32 @@ var PingInterval = config.DefineDuration("HTTP_API_PING_INTERVAL", time.Duration
 var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(30000000000) /* 30s */, config.Startup,
 	"How long a request may take to arrive in full, as a Go duration. A value that cannot be parsed is logged and the default applies.")
 
+// SandboxCacheDir is HTTP_API_SANDBOX_CACHE_DIR.
+//
+// Where the +jobs file service keeps sandbox output it has already
+// fetched. Unset means no cache and every read fetches the sandbox
+// again. It has to be real local storage with room for the budget
+// below: on tmpfs the cache is memory the kernel cannot reclaim. Its
+// contents are discarded at every start and may be deleted by hand
+// while the server runs.
+var SandboxCacheDir = config.DefineString("HTTP_API_SANDBOX_CACHE_DIR", "", config.Startup,
+	"Where the +jobs file service keeps sandbox output it has already fetched. Unset means no cache and every read fetches the sandbox again. It has to be real local storage with room for the budget below: on tmpfs the cache is memory the kernel cannot reclaim. Its contents are discarded at every start and may be deleted by hand while the server runs.")
+
+// SandboxCacheMB is HTTP_API_SANDBOX_CACHE_MB.
+//
+// That cache's budget in MiB. A negative number disables the cache. A
+// value that is not a whole number refuses to start.
+var SandboxCacheMB = config.DefineInt("HTTP_API_SANDBOX_CACHE_MB", 0, config.Startup,
+	"That cache's budget in MiB. A negative number disables the cache. A value that is not a whole number refuses to start.")
+
+// SandboxMaxGB is HTTP_API_SANDBOX_MAX_GB.
+//
+// The largest job sandbox the +jobs file service will serve, in GiB. A
+// negative number means no limit. Refused the same way as above when
+// it is not a whole number.
+var SandboxMaxGB = config.DefineInt("HTTP_API_SANDBOX_MAX_GB", 0, config.Startup,
+	"The largest job sandbox the +jobs file service will serve, in GiB. A negative number means no limit. Refused the same way as above when it is not a whole number.")
+
 // SpoolBufferDir is HTTP_API_SPOOL_BUFFER_DIR.
 //
 // Where an archive dropped in the SSH gateway's /submit/, or posted to
@@ -475,6 +501,142 @@ var SpoolBufferDir = config.DefineString("HTTP_API_SPOOL_BUFFER_DIR", "", config
 // for.
 var SpoolMaxUploadBytes = config.DefineBytes("HTTP_API_SPOOL_MAX_UPLOAD_BYTES", 0 /* 0 */, config.Startup,
 	"The most bytes one upload command may transfer: a PUT or POST to a job's input, a redeemed upload URL, or an upload_job_input tool call. A cluster-wide upload counts the archive once per proc it serves, so a 10 MiB archive spooled to 50 procs is 500 MiB against this and not 10. Written as a byte count or a size -- 1000M, 2G, 1000MiB all work, and units are powers of 1024. A cluster-wide call that cannot fit spools what it can and reports the remainder, so the limit costs an extra call rather than failing; a single-proc upload over it is refused. A value that is zero, negative or unreadable is reported and the default applies: the cap can be raised but not turned off, because reading a typo as \"no ceiling\" would turn one bad line into an unbounded fan-out, which is the thing the limit is for.")
+
+// SSHCAKeyFile is HTTP_API_SSH_CA_KEY_FILE.
+//
+// The CA key user certificates are signed with. Unset, one is
+// generated and sealed as above. Without a CA key certificates are
+// simply unavailable and the device flow still works. Holds or names a
+// credential: keep it readable only by the account the server runs as.
+var SSHCAKeyFile = config.DefineString("HTTP_API_SSH_CA_KEY_FILE", "", config.Startup,
+	"The CA key user certificates are signed with. Unset, one is generated and sealed as above. Without a CA key certificates are simply unavailable and the device flow still works. Holds or names a credential: keep it readable only by the account the server runs as.")
+
+// SSHGatewayAddress is HTTP_API_SSH_GATEWAY_ADDRESS.
+//
+// Where the SSH gateway listens, e.g. :2222. Unset disables the
+// gateway entirely. See "The SSH gateway" in the operator guide.
+var SSHGatewayAddress = config.DefineString("HTTP_API_SSH_GATEWAY_ADDRESS", "", config.Startup,
+	"Where the SSH gateway listens, e.g. :2222. Unset disables the gateway entirely. See \"The SSH gateway\" in the operator guide.")
+
+// SSHGatewayHost is HTTP_API_SSH_GATEWAY_HOST.
+//
+// The name or names users actually ssh to, e.g. ap.example.edu,
+// separated by commas. It is what the web interface prints as the ssh
+// command, and also what the host certificate and the published
+// known_hosts line are narrowed to, so list every name and alias in
+// use. It cannot be derived: the listen address is usually not what
+// anybody types, since a container listening on :2222 sits behind a
+// service publishing 22 somewhere else. Unset prints no command and
+// falls host verification back to a wildcard pattern.
+var SSHGatewayHost = config.DefineString("HTTP_API_SSH_GATEWAY_HOST", "", config.Startup,
+	"The name or names users actually ssh to, e.g. ap.example.edu, separated by commas. It is what the web interface prints as the ssh command, and also what the host certificate and the published known_hosts line are narrowed to, so list every name and alias in use. It cannot be derived: the listen address is usually not what anybody types, since a container listening on :2222 sits behind a service publishing 22 somewhere else. Unset prints no command and falls host verification back to a wildcard pattern.")
+
+// SSHGatewayIssuer is HTTP_API_SSH_GATEWAY_ISSUER.
+//
+// The OAuth2 issuer the gateway's device flow runs against. Unset uses
+// this server's own issuer; set it where this process cannot reach its
+// own public URL. A login that fails with "could not start the login
+// flow" is usually this, left pointing at the default
+// http://localhost:8080.
+var SSHGatewayIssuer = config.DefineString("HTTP_API_SSH_GATEWAY_ISSUER", "", config.Startup,
+	"The OAuth2 issuer the gateway's device flow runs against. Unset uses this server's own issuer; set it where this process cannot reach its own public URL. A login that fails with \"could not start the login flow\" is usually this, left pointing at the default http://localhost:8080.")
+
+// SSHGatewayLockoutDisable is HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE.
+//
+// Turn the lockout off. Written true, t, 1, yes or on -- the last two
+// are accepted here although HTCondor configuration does not take them
+// generally, because this setting always has. It is on by default,
+// because the gateway listens on a public SSH port where
+// unauthenticated traffic from people who are not users is the
+// background noise rather than an exception, and a default of counting
+// nothing would mean nobody gets the protection unless they went
+// looking for it.
+var SSHGatewayLockoutDisable = config.DefineBool("HTTP_API_SSH_GATEWAY_LOCKOUT_DISABLE", false, config.Startup,
+	"Turn the lockout off. Written true, t, 1, yes or on -- the last two are accepted here although HTCondor configuration does not take them generally, because this setting always has. It is on by default, because the gateway listens on a public SSH port where unauthenticated traffic from people who are not users is the background noise rather than an exception, and a default of counting nothing would mean nobody gets the protection unless they went looking for it.")
+
+// SSHGatewayLockoutMaxTime is HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME.
+//
+// Where the doubling stops. Needs a unit, as above.
+var SSHGatewayLockoutMaxTime = config.DefineDuration("HTTP_API_SSH_GATEWAY_LOCKOUT_MAX_TIME", time.Duration(0) /* 0s */, config.Startup,
+	"Where the doubling stops. Needs a unit, as above.")
+
+// SSHGatewayLockoutNetThreshold is HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD.
+//
+// The same budget for the network around a host, shared by every
+// address in it, so a spray across a handful of addresses is caught
+// where each one alone would not be.
+var SSHGatewayLockoutNetThreshold = config.DefineInt("HTTP_API_SSH_GATEWAY_LOCKOUT_NET_THRESHOLD", 0, config.Startup,
+	"The same budget for the network around a host, shared by every address in it, so a spray across a handful of addresses is caught where each one alone would not be.")
+
+// SSHGatewayLockoutThreshold is HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD.
+//
+// How many failed logins one host may accumulate inside the window
+// before new connections from it are refused. See "Locking out what
+// keeps knocking" in the operator guide.
+var SSHGatewayLockoutThreshold = config.DefineInt("HTTP_API_SSH_GATEWAY_LOCKOUT_THRESHOLD", 0, config.Startup,
+	"How many failed logins one host may accumulate inside the window before new connections from it are refused. See \"Locking out what keeps knocking\" in the operator guide.")
+
+// SSHGatewayLockoutTime is HTTP_API_SSH_GATEWAY_LOCKOUT_TIME.
+//
+// How long the first lockout of a source lasts. Each subsequent one
+// doubles. Needs a unit, as above.
+var SSHGatewayLockoutTime = config.DefineDuration("HTTP_API_SSH_GATEWAY_LOCKOUT_TIME", time.Duration(0) /* 0s */, config.Startup,
+	"How long the first lockout of a source lasts. Each subsequent one doubles. Needs a unit, as above.")
+
+// SSHGatewayLockoutTrusted is HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED.
+//
+// Addresses and CIDR blocks that are never counted and never locked
+// out, separated by commas or spaces or both. Put the office and the
+// monitoring host here so that testing the gateway cannot lock you out
+// of it, and put a load balancer here if one fronts the port --
+// otherwise every client behind it shares one source address and one
+// budget. A value that does not parse refuses to start rather than
+// being ignored: the setting exists so an operator cannot be shut out
+// of their own gateway, and passing over a typo in it would leave them
+// believing they are safe. See "Behind a load balancer" in the
+// operator guide.
+var SSHGatewayLockoutTrusted = config.DefineString("HTTP_API_SSH_GATEWAY_LOCKOUT_TRUSTED", "", config.Startup,
+	"Addresses and CIDR blocks that are never counted and never locked out, separated by commas or spaces or both. Put the office and the monitoring host here so that testing the gateway cannot lock you out of it, and put a load balancer here if one fronts the port -- otherwise every client behind it shares one source address and one budget. A value that does not parse refuses to start rather than being ignored: the setting exists so an operator cannot be shut out of their own gateway, and passing over a typo in it would leave them believing they are safe. See \"Behind a load balancer\" in the operator guide.")
+
+// SSHGatewayLockoutWindow is HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW.
+//
+// How long a failed login is remembered against its source. Needs a
+// unit, and a value without one refuses to start rather than being
+// guessed at.
+var SSHGatewayLockoutWindow = config.DefineDuration("HTTP_API_SSH_GATEWAY_LOCKOUT_WINDOW", time.Duration(0) /* 0s */, config.Startup,
+	"How long a failed login is remembered against its source. Needs a unit, and a value without one refuses to start rather than being guessed at.")
+
+// SSHGatewaySessionCPUs is HTTP_API_SSH_GATEWAY_SESSION_CPUS.
+//
+// CPUs requested by a session the gateway creates on demand, for a
+// caller who connected by name rather than to a job they already have.
+var SSHGatewaySessionCPUs = config.DefineInt("HTTP_API_SSH_GATEWAY_SESSION_CPUS", 0, config.Startup,
+	"CPUs requested by a session the gateway creates on demand, for a caller who connected by name rather than to a job they already have.")
+
+// SSHGatewaySessionDiskMB is HTTP_API_SSH_GATEWAY_SESSION_DISK_MB.
+//
+// Disk in MiB for the same session. The default is 8 GiB rather than
+// something batch-sized because a VS Code Remote server installs
+// itself into the sandbox and dies unpacking it in less -- as a kernel
+// out-of-space error deep in a client log, not as anything HTCondor
+// reports.
+var SSHGatewaySessionDiskMB = config.DefineInt("HTTP_API_SSH_GATEWAY_SESSION_DISK_MB", 0, config.Startup,
+	"Disk in MiB for the same session. The default is 8 GiB rather than something batch-sized because a VS Code Remote server installs itself into the sandbox and dies unpacking it in less -- as a kernel out-of-space error deep in a client log, not as anything HTCondor reports.")
+
+// SSHGatewaySessionMemoryMB is HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB.
+//
+// Memory in MiB for the same session.
+var SSHGatewaySessionMemoryMB = config.DefineInt("HTTP_API_SSH_GATEWAY_SESSION_MEMORY_MB", 0, config.Startup,
+	"Memory in MiB for the same session.")
+
+// SSHHostKeyFile is HTTP_API_SSH_HOST_KEY_FILE.
+//
+// The host key clients pin. Unset, one is generated and kept sealed in
+// the application database, which is what most deployments want. Holds
+// or names a credential: keep it readable only by the account the
+// server runs as.
+var SSHHostKeyFile = config.DefineString("HTTP_API_SSH_HOST_KEY_FILE", "", config.Startup,
+	"The host key clients pin. Unset, one is generated and kept sealed in the application database, which is what most deployments want. Holds or names a credential: keep it readable only by the account the server runs as.")
 
 // SubmitFileDefaults is HTTP_API_SUBMIT_FILE_DEFAULTS.
 //
@@ -534,14 +696,16 @@ var TokenRetention = config.DefineString("HTTP_API_TOKEN_RETENTION", "", config.
 
 // UserHeaderTrustAny is HTTP_API_USER_HEADER_TRUST_ANY.
 //
-// Accept the user header from any source address. For demonstration
-// and testing only: with it on, anything that can reach this server
-// can claim to be any user, so it undoes authentication rather than
-// relaxing it. Off by default, and the server logs a warning for as
-// long as it is on. Leave it off anywhere a real person has an
-// account.
+// Accept the user header from any source address. Written true, t, 1,
+// yes or on -- the last two are accepted here although HTCondor
+// configuration does not take them generally, because this setting
+// always has. For demonstration and testing only: with it on, anything
+// that can reach this server can claim to be any user, so it undoes
+// authentication rather than relaxing it. Off by default, and the
+// server logs a warning for as long as it is on. Leave it off anywhere
+// a real person has an account.
 var UserHeaderTrustAny = config.DefineBool("HTTP_API_USER_HEADER_TRUST_ANY", false, config.Startup,
-	"Accept the user header from any source address. For demonstration and testing only: with it on, anything that can reach this server can claim to be any user, so it undoes authentication rather than relaxing it. Off by default, and the server logs a warning for as long as it is on. Leave it off anywhere a real person has an account.")
+	"Accept the user header from any source address. Written true, t, 1, yes or on -- the last two are accepted here although HTCondor configuration does not take them generally, because this setting always has. For demonstration and testing only: with it on, anything that can reach this server can claim to be any user, so it undoes authentication rather than relaxing it. Off by default, and the server logs a warning for as long as it is on. Leave it off anywhere a real person has an account.")
 
 // WriteTimeout is HTTP_API_WRITE_TIMEOUT.
 //
@@ -835,8 +999,26 @@ var All = []config.Knob{
 	OAuth2UsernameClaim.Knob,
 	PingInterval.Knob,
 	ReadTimeout.Knob,
+	SandboxCacheDir.Knob,
+	SandboxCacheMB.Knob,
+	SandboxMaxGB.Knob,
 	SpoolBufferDir.Knob,
 	SpoolMaxUploadBytes.Knob,
+	SSHCAKeyFile.Knob,
+	SSHGatewayAddress.Knob,
+	SSHGatewayHost.Knob,
+	SSHGatewayIssuer.Knob,
+	SSHGatewayLockoutDisable.Knob,
+	SSHGatewayLockoutMaxTime.Knob,
+	SSHGatewayLockoutNetThreshold.Knob,
+	SSHGatewayLockoutThreshold.Knob,
+	SSHGatewayLockoutTime.Knob,
+	SSHGatewayLockoutTrusted.Knob,
+	SSHGatewayLockoutWindow.Knob,
+	SSHGatewaySessionCPUs.Knob,
+	SSHGatewaySessionDiskMB.Knob,
+	SSHGatewaySessionMemoryMB.Knob,
+	SSHHostKeyFile.Knob,
 	SubmitFileDefaults.Knob,
 	SubmitFileOverrides.Knob,
 	TLSCACert.Knob,
