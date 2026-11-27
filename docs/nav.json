@@ -12,6 +12,13 @@
           "order": 10
         },
         {
+          "path": "user/assistant.md",
+          "url": "/docs/user/assistant",
+          "title": "Working with an AI assistant",
+          "audience": "user",
+          "order": 15
+        },
+        {
           "path": "user/ssh.md",
           "url": "/docs/user/ssh",
           "title": "Shell access over SSH",
