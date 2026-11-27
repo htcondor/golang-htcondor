@@ -27,9 +27,9 @@ func consentTestHandler(t *testing.T, adminGroup, superuserGroup string) *Handle
 		logger:          lg,
 		anyUserRead:     newPrincipalSet(adminGroup, ""),
 		anyUserWrite:    newPrincipalSet(superuserGroup, ""),
-		mcpReadGroups:   newGroupSet(""),
-		mcpWriteGroups:  newGroupSet(""),
-		mcpAccessGroups: newGroupSet(""),
+		mcpReadGroups:   newOptInPrincipalSet("", ""),
+		mcpWriteGroups:  newOptInPrincipalSet("", ""),
+		mcpAccessGroups: newOptInPrincipalSet("", ""),
 	}
 }
 

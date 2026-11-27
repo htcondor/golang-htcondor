@@ -348,7 +348,7 @@ func TestConsentPageOffersOnlyGrantableCondorLevels(t *testing.T) {
 		return rec.Body.String()
 	}
 
-	open := &Handler{logger: testLogger(t)}
+	open := withOpenGates(&Handler{logger: testLogger(t)})
 	page := render(open, nil)
 	if strings.Contains(page, "condor:/ADMINISTRATOR") {
 		t.Error("the consent page offers condor:/ADMINISTRATOR, which grants nothing")
@@ -359,7 +359,7 @@ func TestConsentPageOffersOnlyGrantableCondorLevels(t *testing.T) {
 		}
 	}
 
-	gated := &Handler{logger: testLogger(t), mcpWriteGroups: newGroupSet("writers")}
+	gated := withOpenGates(&Handler{logger: testLogger(t), mcpWriteGroups: newOptInPrincipalSet("writers", "")})
 	if page := render(gated, []string{"readers"}); strings.Contains(page, `value="condor:/WRITE"`) || strings.Contains(page, `value="mcp:write"`) {
 		t.Error("the consent page offers WRITE to a user the write group denies")
 	}
@@ -377,11 +377,11 @@ func TestCondorWriteFollowsTheWriteGroup(t *testing.T) {
 		groups []string
 		want   bool
 	}{
-		{"no groups configured", &Handler{}, nil, true},
-		{"write group, member", &Handler{mcpWriteGroups: newGroupSet("writers")}, []string{"writers"}, true},
-		{"write group, not a member", &Handler{mcpWriteGroups: newGroupSet("writers")}, []string{"readers"}, false},
-		{"access group only, not a member", &Handler{mcpAccessGroups: newGroupSet("login")}, []string{"other"}, false},
-		{"access group only, member", &Handler{mcpAccessGroups: newGroupSet("login")}, []string{"login"}, true},
+		{"no groups configured", withOpenGates(&Handler{}), nil, true},
+		{"write group, member", withOpenGates(&Handler{mcpWriteGroups: newOptInPrincipalSet("writers", "")}), []string{"writers"}, true},
+		{"write group, not a member", withOpenGates(&Handler{mcpWriteGroups: newOptInPrincipalSet("writers", "")}), []string{"readers"}, false},
+		{"access group only, not a member", withOpenGates(&Handler{mcpAccessGroups: newOptInPrincipalSet("login", "")}), []string{"other"}, false},
+		{"access group only, member", withOpenGates(&Handler{mcpAccessGroups: newOptInPrincipalSet("login", "")}), []string{"login"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, spelling := range []string{"condor:/WRITE", "condor:/write"} {

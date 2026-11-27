@@ -418,6 +418,43 @@ var LLMOperatorInstructionsFile = config.DefineString("HTTP_API_LLM_OPERATOR_INS
 var Log = config.DefineString("HTTP_API_LOG", "", config.Startup,
 	"Where this daemon writes its log: a file, or the words stdout or stderr. A named file that cannot be written falls back to stdout with a message -- except under condor_master, where stdout is discarded and there would be nowhere to report anything, so the daemon refuses to start and the reason goes to the master's log instead.")
 
+// MCPAccessGroup is HTTP_API_MCP_ACCESS_GROUP.
+//
+// Obsolete: superseded by HTTP_API_MCP_ACCESS_GROUPS. An older
+// spelling of HTTP_API_MCP_ACCESS_GROUPS, honored where that is unset
+// and named as superseded in the startup log when it is read. It
+// already accepted a list, which is why the replacement is plural.
+//
+// Deprecated: superseded by HTTP_API_MCP_ACCESS_GROUPS.
+var MCPAccessGroup = config.DefineString("HTTP_API_MCP_ACCESS_GROUP", "", config.Reconfig,
+	"Obsolete: superseded by HTTP_API_MCP_ACCESS_GROUPS. An older spelling of HTTP_API_MCP_ACCESS_GROUPS, honored where that is unset and named as superseded in the startup log when it is read. It already accepted a list, which is why the replacement is plural.")
+
+// MCPAccessGroups is HTTP_API_MCP_ACCESS_GROUPS.
+//
+// Groups whose members may reach /mcp at all. Comma-separated, or a
+// JSON array to spell a group name containing a comma. Unset, with
+// HTTP_API_MCP_ACCESS_USERS unset too, places no requirement on the
+// surface and every authenticated caller reaches it; naming anybody in
+// either half restricts it to the people named. See "Authorization
+// groups" in the operator guide.
+var MCPAccessGroups = config.DefineString("HTTP_API_MCP_ACCESS_GROUPS", "", config.Reconfig,
+	"Groups whose members may reach /mcp at all. Comma-separated, or a JSON array to spell a group name containing a comma. Unset, with HTTP_API_MCP_ACCESS_USERS unset too, places no requirement on the surface and every authenticated caller reaches it; naming anybody in either half restricts it to the people named. See \"Authorization groups\" in the operator guide.")
+
+// MCPAccessUsers is HTTP_API_MCP_ACCESS_USERS.
+//
+// Users who may reach /mcp, named individually rather than through a
+// group -- which is the only half that decides anything where
+// HTTP_API_GROUP_SOURCE is token and the token carries no groups.
+// Identities are compared the way HTCondor compares two users: the
+// domain case-insensitively, the part before the @ exactly, and a bare
+// name matches only a bare name. Write alice@example.org, not alice,
+// where the access point reports fully-qualified users. Naming
+// somebody here restricts the surface to the people named, here or in
+// HTTP_API_MCP_ACCESS_GROUPS. See "Authorization groups" in the
+// operator guide.
+var MCPAccessUsers = config.DefineString("HTTP_API_MCP_ACCESS_USERS", "", config.Reconfig,
+	"Users who may reach /mcp, named individually rather than through a group -- which is the only half that decides anything where HTTP_API_GROUP_SOURCE is token and the token carries no groups. Identities are compared the way HTCondor compares two users: the domain case-insensitively, the part before the @ exactly, and a bare name matches only a bare name. Write alice@example.org, not alice, where the access point reports fully-qualified users. Naming somebody here restricts the surface to the people named, here or in HTTP_API_MCP_ACCESS_GROUPS. See \"Authorization groups\" in the operator guide.")
+
 // MCPAdminGroup is HTTP_API_MCP_ADMIN_GROUP.
 //
 // Obsolete: superseded by HTTP_API_ANYUSER_READ_GROUPS. Group(s) whose
@@ -488,6 +525,26 @@ var MCPListenAddr = config.DefineString("HTTP_API_MCP_LISTEN_ADDR", "", config.S
 var MCPMaxRequestDuration = config.DefineDuration("HTTP_API_MCP_MAX_REQUEST_DURATION", time.Duration(0) /* 0s */, config.Startup,
 	"Hard stop on an MCP request that is still making progress. While one runs its write deadline is moved forward, so HTTP_API_WRITE_TIMEOUT -- an absolute deadline meant for ordinary replies -- does not decide how long a deliberately waiting tool may wait. A request that stops making progress is still cut off on its last window; this is the backstop for one that never finishes at all. It needs a unit, and a value without one refuses to start.")
 
+// MCPReadGroup is HTTP_API_MCP_READ_GROUP.
+//
+// Obsolete: superseded by HTTP_API_MCP_READ_GROUPS. An older spelling
+// of HTTP_API_MCP_READ_GROUPS, honored where that is unset and named
+// as superseded in the startup log.
+//
+// Deprecated: superseded by HTTP_API_MCP_READ_GROUPS.
+var MCPReadGroup = config.DefineString("HTTP_API_MCP_READ_GROUP", "", config.Reconfig,
+	"Obsolete: superseded by HTTP_API_MCP_READ_GROUPS. An older spelling of HTTP_API_MCP_READ_GROUPS, honored where that is unset and named as superseded in the startup log.")
+
+// MCPReadGroups is HTTP_API_MCP_READ_GROUPS.
+//
+// Groups whose members are granted the mcp:read scope, which reads the
+// caller's own jobs through /mcp. Unset, with HTTP_API_MCP_READ_USERS
+// unset too, the scope follows the access gate instead: whoever may
+// reach /mcp may read through it. See "Authorization groups" in the
+// operator guide.
+var MCPReadGroups = config.DefineString("HTTP_API_MCP_READ_GROUPS", "", config.Reconfig,
+	"Groups whose members are granted the mcp:read scope, which reads the caller's own jobs through /mcp. Unset, with HTTP_API_MCP_READ_USERS unset too, the scope follows the access gate instead: whoever may reach /mcp may read through it. See \"Authorization groups\" in the operator guide.")
+
 // MCPReadOnly is HTTP_API_MCP_READ_ONLY.
 //
 // Serve MCP with no tool that changes anything, for every caller
@@ -496,6 +553,15 @@ var MCPMaxRequestDuration = config.DefineDuration("HTTP_API_MCP_MAX_REQUEST_DURA
 // the operator guide.
 var MCPReadOnly = config.DefineBool("HTTP_API_MCP_READ_ONLY", false, config.Reconfig,
 	"Serve MCP with no tool that changes anything, for every caller whatever their scopes. Off by default. While it is on, mcp:write is neither advertised nor granted. See \"A read-only access point\" in the operator guide.")
+
+// MCPReadUsers is HTTP_API_MCP_READ_USERS.
+//
+// Users granted the mcp:read scope, named individually rather than
+// through a group. Identities are compared as for
+// HTTP_API_MCP_ACCESS_USERS. See "Authorization groups" in the
+// operator guide.
+var MCPReadUsers = config.DefineString("HTTP_API_MCP_READ_USERS", "", config.Reconfig,
+	"Users granted the mcp:read scope, named individually rather than through a group. Identities are compared as for HTTP_API_MCP_ACCESS_USERS. See \"Authorization groups\" in the operator guide.")
 
 // MCPRedactDisabledRules is HTTP_API_MCP_REDACT_DISABLED_RULES.
 //
@@ -560,6 +626,36 @@ var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", 
 // timeout. It needs a unit, as above.
 var MCPWatchMaxWait = config.DefineDuration("HTTP_API_MCP_WATCH_MAX_WAIT", time.Duration(0) /* 0s */, config.Startup,
 	"Cap on how long the MCP check_watches and watch_jobs tools may block in-call before returning. This number is advertised to the agent in the tool schema, so it has to be one the whole path can deliver and not just this server. 45 seconds is not a server limit -- the server will hold a request far longer -- it is what an MCP client is observed to wait for before abandoning the call, which returns nothing at all to the agent rather than a timeout it could act on. Set it lower where a gateway or proxy with a tighter timeout sits in front of this server, and higher only where the clients reaching this deployment are known to be configured for a longer tool timeout. It needs a unit, as above.")
+
+// MCPWriteGroup is HTTP_API_MCP_WRITE_GROUP.
+//
+// Obsolete: superseded by HTTP_API_MCP_WRITE_GROUPS. An older spelling
+// of HTTP_API_MCP_WRITE_GROUPS, honored where that is unset and named
+// as superseded in the startup log.
+//
+// Deprecated: superseded by HTTP_API_MCP_WRITE_GROUPS.
+var MCPWriteGroup = config.DefineString("HTTP_API_MCP_WRITE_GROUP", "", config.Reconfig,
+	"Obsolete: superseded by HTTP_API_MCP_WRITE_GROUPS. An older spelling of HTTP_API_MCP_WRITE_GROUPS, honored where that is unset and named as superseded in the startup log.")
+
+// MCPWriteGroups is HTTP_API_MCP_WRITE_GROUPS.
+//
+// Groups whose members are granted the mcp:write scope -- and
+// condor:/WRITE, which mints an IDTOKEN carrying the same
+// authorization, so the two follow one policy rather than offering the
+// same power under two names. Unset, with HTTP_API_MCP_WRITE_USERS
+// unset too, the scope follows the access gate. See "Authorization
+// groups" in the operator guide.
+var MCPWriteGroups = config.DefineString("HTTP_API_MCP_WRITE_GROUPS", "", config.Reconfig,
+	"Groups whose members are granted the mcp:write scope -- and condor:/WRITE, which mints an IDTOKEN carrying the same authorization, so the two follow one policy rather than offering the same power under two names. Unset, with HTTP_API_MCP_WRITE_USERS unset too, the scope follows the access gate. See \"Authorization groups\" in the operator guide.")
+
+// MCPWriteUsers is HTTP_API_MCP_WRITE_USERS.
+//
+// Users granted the mcp:write scope, named individually rather than
+// through a group. Identities are compared as for
+// HTTP_API_MCP_ACCESS_USERS. See "Authorization groups" in the
+// operator guide.
+var MCPWriteUsers = config.DefineString("HTTP_API_MCP_WRITE_USERS", "", config.Reconfig,
+	"Users granted the mcp:write scope, named individually rather than through a group. Identities are compared as for HTTP_API_MCP_ACCESS_USERS. See \"Authorization groups\" in the operator guide.")
 
 // OAuth2AccessTokenLifespan is HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN.
 //
@@ -996,6 +1092,38 @@ var UserHeaderTrustAny = config.DefineBool("HTTP_API_USER_HEADER_TRUST_ANY", fal
 var VSCodeImage = config.DefineString("HTTP_API_VSCODE_IMAGE", "", config.Startup,
 	"The container image a VS Code session runs. Any transfer scheme works, so a .sif staged on OSDF can be named directly. Set, it wins outright and a caller cannot override it; unset, a caller may name an image, which grants them nothing new since they can already submit a job with any image. Unset otherwise runs a published code-server image. See \"VS Code sessions\" in the operator guide.")
 
+// WebUIAccessGroup is HTTP_API_WEBUI_ACCESS_GROUP.
+//
+// Obsolete: superseded by HTTP_API_WEBUI_ACCESS_GROUPS. An older
+// spelling of HTTP_API_WEBUI_ACCESS_GROUPS, honored where that is
+// unset and named as superseded in the startup log.
+//
+// Deprecated: superseded by HTTP_API_WEBUI_ACCESS_GROUPS.
+var WebUIAccessGroup = config.DefineString("HTTP_API_WEBUI_ACCESS_GROUP", "", config.Reconfig,
+	"Obsolete: superseded by HTTP_API_WEBUI_ACCESS_GROUPS. An older spelling of HTTP_API_WEBUI_ACCESS_GROUPS, honored where that is unset and named as superseded in the startup log.")
+
+// WebUIAccessGroups is HTTP_API_WEBUI_ACCESS_GROUPS.
+//
+// Groups whose members may log in to the web interface. Separate from
+// the MCP gate because the two answer different questions: somebody
+// may be entitled to open this access point's pages without being
+// entitled to drive it through an agent, and the reverse. Unset, with
+// HTTP_API_WEBUI_ACCESS_USERS unset too, the MCP access gate applies
+// instead -- which is what gated the browser before these were
+// separate settings. See "Authorization groups" in the operator guide.
+var WebUIAccessGroups = config.DefineString("HTTP_API_WEBUI_ACCESS_GROUPS", "", config.Reconfig,
+	"Groups whose members may log in to the web interface. Separate from the MCP gate because the two answer different questions: somebody may be entitled to open this access point's pages without being entitled to drive it through an agent, and the reverse. Unset, with HTTP_API_WEBUI_ACCESS_USERS unset too, the MCP access gate applies instead -- which is what gated the browser before these were separate settings. See \"Authorization groups\" in the operator guide.")
+
+// WebUIAccessUsers is HTTP_API_WEBUI_ACCESS_USERS.
+//
+// Users who may log in to the web interface, named individually rather
+// than through a group. Identities are compared as for
+// HTTP_API_MCP_ACCESS_USERS. Naming somebody here is enough to make
+// the web interface answer to its own gate rather than the MCP one.
+// See "Authorization groups" in the operator guide.
+var WebUIAccessUsers = config.DefineString("HTTP_API_WEBUI_ACCESS_USERS", "", config.Reconfig,
+	"Users who may log in to the web interface, named individually rather than through a group. Identities are compared as for HTTP_API_MCP_ACCESS_USERS. Naming somebody here is enough to make the web interface answer to its own gate rather than the MCP one. See \"Authorization groups\" in the operator guide.")
+
 // WriteTimeout is HTTP_API_WRITE_TIMEOUT.
 //
 // How long a response may take to write, as a Go duration. This bounds
@@ -1283,6 +1411,9 @@ var All = []config.Knob{
 	LLMModel.Knob,
 	LLMOperatorInstructionsFile.Knob,
 	Log.Knob,
+	MCPAccessGroup.Knob,
+	MCPAccessGroups.Knob,
+	MCPAccessUsers.Knob,
 	MCPAdminGroup.Knob,
 	MCPBaseURL.Knob,
 	MCPConfirmRemoveOver.Knob,
@@ -1290,13 +1421,19 @@ var All = []config.Knob{
 	MCPDisabledTools.Knob,
 	MCPListenAddr.Knob,
 	MCPMaxRequestDuration.Knob,
+	MCPReadGroup.Knob,
+	MCPReadGroups.Knob,
 	MCPReadOnly.Knob,
+	MCPReadUsers.Knob,
 	MCPRedactDisabledRules.Knob,
 	MCPRedactSecrets.Knob,
 	MCPSkillsDir.Knob,
 	MCPSkillsReloadInterval.Knob,
 	MCPSuperuserGroup.Knob,
 	MCPWatchMaxWait.Knob,
+	MCPWriteGroup.Knob,
+	MCPWriteGroups.Knob,
+	MCPWriteUsers.Knob,
 	OAuth2AccessTokenLifespan.Knob,
 	OAuth2AuthURL.Knob,
 	OAuth2ClientID.Knob,
@@ -1343,6 +1480,9 @@ var All = []config.Knob{
 	TokenRetention.Knob,
 	UserHeaderTrustAny.Knob,
 	VSCodeImage.Knob,
+	WebUIAccessGroup.Knob,
+	WebUIAccessGroups.Knob,
+	WebUIAccessUsers.Knob,
 	WriteTimeout.Knob,
 	ConnectorInstances.Knob,
 	PickerInstances.Knob,
@@ -1355,6 +1495,10 @@ var All = []config.Knob{
 // operator still has in their configuration.
 var Obsolete = map[string]string{
 	"HTTP_API_LISTEN":              "HTTP_API_LISTEN_ADDR",
+	"HTTP_API_MCP_ACCESS_GROUP":    "HTTP_API_MCP_ACCESS_GROUPS",
 	"HTTP_API_MCP_ADMIN_GROUP":     "HTTP_API_ANYUSER_READ_GROUPS",
+	"HTTP_API_MCP_READ_GROUP":      "HTTP_API_MCP_READ_GROUPS",
 	"HTTP_API_MCP_SUPERUSER_GROUP": "HTTP_API_ANYUSER_WRITE_GROUPS",
+	"HTTP_API_MCP_WRITE_GROUP":     "HTTP_API_MCP_WRITE_GROUPS",
+	"HTTP_API_WEBUI_ACCESS_GROUP":  "HTTP_API_WEBUI_ACCESS_GROUPS",
 }

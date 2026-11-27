@@ -209,13 +209,30 @@ func (h *Handler) applyMCPRedaction() {
 // takes effect on the next refresh rather than mid-request.
 
 // SetMCPAccessGroups installs the groups required for MCP access.
-func (h *Handler) SetMCPAccessGroups(raw string) { h.mcpAccessGroups.set(raw) }
+//
+// Emptying it, with no users named either, restores the unrestricted
+// default: these gates are opt-in, so requiring nobody requires
+// nothing. That is the opposite of the AnyUser setters below, and it is
+// decided once, where the set is built.
+func (h *Handler) SetMCPAccessGroups(raw string) { h.mcpAccessGroups.setGroups(raw) }
+
+// SetMCPAccessUsers installs the identities admitted to MCP without
+// belonging to a configured group.
+func (h *Handler) SetMCPAccessUsers(raw string) { h.mcpAccessGroups.setUsers(raw) }
 
 // SetMCPReadGroups installs the groups required for MCP read access.
-func (h *Handler) SetMCPReadGroups(raw string) { h.mcpReadGroups.set(raw) }
+func (h *Handler) SetMCPReadGroups(raw string) { h.mcpReadGroups.setGroups(raw) }
+
+// SetMCPReadUsers installs the identities granted MCP read access
+// without belonging to a configured group.
+func (h *Handler) SetMCPReadUsers(raw string) { h.mcpReadGroups.setUsers(raw) }
 
 // SetMCPWriteGroups installs the groups required for MCP write access.
-func (h *Handler) SetMCPWriteGroups(raw string) { h.mcpWriteGroups.set(raw) }
+func (h *Handler) SetMCPWriteGroups(raw string) { h.mcpWriteGroups.setGroups(raw) }
+
+// SetMCPWriteUsers installs the identities granted MCP write access
+// without belonging to a configured group.
+func (h *Handler) SetMCPWriteUsers(raw string) { h.mcpWriteGroups.setUsers(raw) }
 
 // SetAnyUserReadGroups installs the groups whose members may request
 // the anyuser:read entitlement -- reading every user's jobs. Emptying
@@ -237,8 +254,13 @@ func (h *Handler) SetAnyUserWriteGroups(raw string) { h.anyUserWrite.setGroups(r
 func (h *Handler) SetAnyUserWriteUsers(raw string) { h.anyUserWrite.setUsers(raw) }
 
 // SetWebUIAccessGroups installs the groups required to log in to the web
-// interface. Emptying it restores the fallback to the MCP access groups.
-func (h *Handler) SetWebUIAccessGroups(raw string) { h.webuiAccessGroups.set(raw) }
+// interface. Emptying it, with no users named either, restores the
+// fallback to the MCP access gate.
+func (h *Handler) SetWebUIAccessGroups(raw string) { h.webuiAccessGroups.setGroups(raw) }
+
+// SetWebUIAccessUsers installs the identities admitted to the web
+// interface without belonging to a configured group.
+func (h *Handler) SetWebUIAccessUsers(raw string) { h.webuiAccessGroups.setUsers(raw) }
 
 // SetWebUIAppOnlyGroups installs the groups whose members land in their
 // site app rather than the dashboard. Reloadable for the same reason

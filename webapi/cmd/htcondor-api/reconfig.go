@@ -67,13 +67,17 @@ func fromKnob(k config.Knob) reconfigParam {
 type reconfigTarget interface {
 	SetMCPInstructions(string)
 	SetMCPAccessGroups(string)
+	SetMCPAccessUsers(string)
 	SetMCPReadGroups(string)
+	SetMCPReadUsers(string)
 	SetMCPWriteGroups(string)
+	SetMCPWriteUsers(string)
 	SetAnyUserReadGroups(string)
 	SetAnyUserReadUsers(string)
 	SetAnyUserWriteGroups(string)
 	SetAnyUserWriteUsers(string)
 	SetWebUIAccessGroups(string)
+	SetWebUIAccessUsers(string)
 	SetWebUIAppOnlyGroups(string)
 	SetWebUIAdminGroups(string)
 	SetWebUISiteName(string)
@@ -226,17 +230,40 @@ var reconfigParams = []reconfigParam{
 	//
 	// Sessions already granted keep their grant until they refresh, at
 	// which point the reauthorization path re-runs the policy.
+	//
+	// Each group setting carries the singular spelling it replaced, so
+	// an operator who has not migrated still gets their value applied
+	// -- and gets the plural setting's value instead the moment they
+	// write one. The user halves are new and supersede nothing.
 	{
-		name:  "HTTP_API_MCP_ACCESS_GROUP",
-		apply: func(s reconfigTarget, v string) { s.SetMCPAccessGroups(v) },
+		name: knobs.MCPAccessGroups.Name(),
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		supersedes: knobs.MCPAccessGroup.Name(),
+		apply:      func(s reconfigTarget, v string) { s.SetMCPAccessGroups(v) },
 	},
 	{
-		name:  "HTTP_API_MCP_READ_GROUP",
-		apply: func(s reconfigTarget, v string) { s.SetMCPReadGroups(v) },
+		name:  knobs.MCPAccessUsers.Name(),
+		apply: func(s reconfigTarget, v string) { s.SetMCPAccessUsers(v) },
 	},
 	{
-		name:  "HTTP_API_MCP_WRITE_GROUP",
-		apply: func(s reconfigTarget, v string) { s.SetMCPWriteGroups(v) },
+		name: knobs.MCPReadGroups.Name(),
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		supersedes: knobs.MCPReadGroup.Name(),
+		apply:      func(s reconfigTarget, v string) { s.SetMCPReadGroups(v) },
+	},
+	{
+		name:  knobs.MCPReadUsers.Name(),
+		apply: func(s reconfigTarget, v string) { s.SetMCPReadUsers(v) },
+	},
+	{
+		name: knobs.MCPWriteGroups.Name(),
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		supersedes: knobs.MCPWriteGroup.Name(),
+		apply:      func(s reconfigTarget, v string) { s.SetMCPWriteGroups(v) },
+	},
+	{
+		name:  knobs.MCPWriteUsers.Name(),
+		apply: func(s reconfigTarget, v string) { s.SetMCPWriteUsers(v) },
 	},
 	// Who may REQUEST the two cross-user entitlements. Each group
 	// setting carries the obsolete spelling it replaced, so an operator
@@ -288,8 +315,14 @@ var reconfigParams = []reconfigParam{
 		apply: func(s reconfigTarget, v string) { s.SetChatInstructions(v) },
 	},
 	{
-		name:  "HTTP_API_WEBUI_ACCESS_GROUP",
-		apply: func(s reconfigTarget, v string) { s.SetWebUIAccessGroups(v) },
+		name: knobs.WebUIAccessGroups.Name(),
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		supersedes: knobs.WebUIAccessGroup.Name(),
+		apply:      func(s reconfigTarget, v string) { s.SetWebUIAccessGroups(v) },
+	},
+	{
+		name:  knobs.WebUIAccessUsers.Name(),
+		apply: func(s reconfigTarget, v string) { s.SetWebUIAccessUsers(v) },
 	},
 	{
 		name:  "HTTP_API_WEBUI_APP_ONLY_GROUP",

@@ -54,7 +54,7 @@ func TestConsentFormSubmitsEveryScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}
-	h := &Handler{logger: lg}
+	h := withOpenGates(&Handler{logger: lg})
 
 	requested := []string{
 		"openid", "profile", "email", "offline_access",
@@ -97,7 +97,7 @@ func TestDeviceConsentFormSubmitsEveryScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}
-	h := &Handler{logger: lg}
+	h := withOpenGates(&Handler{logger: lg})
 
 	requested := []string{"openid", "mcp:read", "mcp:write", "offline_access"}
 	rec := httptest.NewRecorder()

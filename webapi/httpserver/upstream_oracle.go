@@ -56,7 +56,7 @@ type upstreamUserInfoOracle struct {
 	// validate and scopesFor are the deployment's own policy, the same
 	// two systemGroupOracle consults, so a group read from the provider
 	// is judged by exactly the rules a group read at login was.
-	validate  func(groups []string) error
+	validate  func(actor string, groups []string) error
 	scopesFor func(actor string, groups, requested []string) []string
 
 	logger *logging.Logger
@@ -146,7 +146,7 @@ func (o *upstreamUserInfoOracle) Check(ctx context.Context, username string, sco
 	}
 
 	groups := extractGroups(info.Groups)
-	if err := o.validate(groups); err != nil {
+	if err := o.validate(username, groups); err != nil {
 		return ReauthDecision{
 			Status: UserStatusRevoked,
 			Reason: fmt.Sprintf("group membership at the identity provider no longer grants access: %v", err),

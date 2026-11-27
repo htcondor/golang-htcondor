@@ -37,7 +37,7 @@ normally refused. While a placementd is reachable it instead gets a
 *placement-only* session: no username, and it reaches only `/placement`,
 `/placement/device`, `GET /api/v1/auth/me`, `/api/v1/placement/me*`, the
 device-flow paths and sign-out. Every other route answers 403 (or sends a
-page load to `/placement`). `HTTP_API_WEBUI_ACCESS_GROUP` is not applied
+page load to `/placement`). `HTTP_API_WEBUI_ACCESS_GROUPS` is not applied
 to these sessions; whether they get a token is the placementd map file's
 decision.
 
