@@ -73,6 +73,21 @@ wholesale on every reconfigure; and eight declared settings appeared in
 means a change to them does nothing and nothing says so. A test now
 checks the declaration against the table in both directions.
 
+**Three parsers in this codebase disagree about what "true" is, and
+converting a name is how you find out which one a setting was using.**
+`BoolKnob` mirrors HTCondor's `param_boolean`, which takes `true`, `t`,
+`1` and a ClassAd expression -- and not `yes` or `on`. `featureOffered`
+uses `strconv.ParseBool`, which takes neither of those either but
+refuses to start on anything else. `isTruthyConfigValue` takes `yes`
+and `on` and quietly returns false for the rest. Reading a setting with
+the wrong one of the three is a silent behaviour change in whichever
+direction that setting happened to be written: `HTTP_API_USER_HEADER_TRUST_ANY`
+was narrowed by exactly this and described in its own commit message as
+a widening, and the identical mistake on the SSH lockout was caught by
+an existing test within seconds. The rule that came out of it is that a
+boolean's accepted spellings are something to read out of the old code
+before converting it, never something to assume from the type.
+
 **The scope test has a blind spot exactly where the scope was wrong a
 second time.** `TestReconfigScopesMatchTheKnobs` walks `knobs.All`,
 which by construction excludes a family's per-instance settings --
@@ -519,14 +534,36 @@ when the lint covers everything.
 *The generated reference has landed*, out of order with the rest of the
 stage and deliberately so: it covered a fraction when it landed -- 22
 declared settings of roughly 240 -- but from here every setting
-converted documents itself. Fifty-six are declared as of this
-writing, with 162 names still read as string literals outside generated
-code -- and, of the settings the server reads, none is undocumented any
-more. The two names a census still turns up, HTTP_API_WEBUI_PRIVACY and
-HTTP_API_WEBUI_TERMS, are labels handed to resolvePolicy for its
-messages rather than settings anything looks up; the real pair is
-_FILE and _URL, both of which the reference carries. A lint over string
-literals will have to know the difference. Left until the conversion was finished, the whole exercise
+converted documents itself.
+
+Where that stands: 99 settings are declared and 111 names are still
+read as string literals outside generated code. Of the settings the
+server reads, **none is undocumented any more** -- the two names a
+census still turns up, HTTP_API_WEBUI_PRIVACY and HTTP_API_WEBUI_TERMS,
+are labels handed to resolvePolicy for its messages rather than
+settings anything looks up, and the real pair is _FILE and _URL, both
+of which the reference carries.
+
+The lint this stage planned did not happen and is not going to. Two
+tests do its work without a golangci-lint plugin and with failure
+messages that name the fix: a declared setting is never also spelled by
+hand, and everything not yet declared is a frozen inventory in
+testdata/undeclared-settings.txt that fails in both directions.
+Declaring a setting is therefore a two-line change, the table gaining an
+entry and the inventory losing one, and nothing new can be added
+stringly without a deliberate edit to a file whose header says not to.
+
+**The conversion is worth doing for the bugs, not only for the
+reference.** Across six batches, forty-three settings turned out to be
+in reconfigParams nowhere, which by that file's own reasoning means a
+change to them was neither applied nor reported: nine OAuth2 and
+identity-provider settings, six of the last undocumented nine, every
+one of the eighteen SSH gateway and sandbox settings, the four
+JupyterLab limits, both MCP request deadlines, and four of the five
+chat-assistant settings. The SSH group was picked for the batch
+*because* a count said it held fifteen of the then seventy-one in that
+state; the prediction was right and the test confirmed each one on
+declaration. A batch that finds nothing has not happened yet. Left until the conversion was finished, the whole exercise
 would have paid nothing out until the last setting moved. It writes
 into a marked region of `docs/operator/config.md` rather than a page of
 its own, so the prose no table can generate stays where it is, and the
@@ -576,8 +613,28 @@ rendered reference page, and the check that the paths it declares are
 routes the server registers -- the one that would catch an endpoint
 added without documentation.
 
-**4. The user guide.** The genuinely missing audience. Everything before
-this exists to make writing it, and keeping it correct, cheap.
+**4. The user guide.** *Started.* The genuinely missing audience.
+Everything before this exists to make writing it, and keeping it
+correct, cheap.
+
+`user/assistant.md` is the first page written rather than moved, which
+this note predicted it would have to be. It deliberately does not
+repeat the per-client setup steps: the access point serves those live
+at /mcp, and the clients change their configuration formats faster than
+this guide changes, so a copy would be wrong within a release. What a
+written page adds is what the served one cannot -- that the assistant
+acts as the user and gains them nothing new, and the three things worth
+care, which are that it works at a volume a person would pause at, that
+submitting a job is running code whatever decided to submit it, and
+that its own account of what it did is not the record.
+
+Writing a user page has a failure mode the rest of this stage does not:
+nothing compiles, so a plausible and wrong sentence survives. One did,
+briefly -- a claim that retrying a timed-out watch is safe, when the
+watch may already be registered and a retry would make a second. Every
+capability the page names was checked against the tools the server
+actually registers, and every limit against a setting a site really
+has.
 
 **5. Screenshots.**
 
