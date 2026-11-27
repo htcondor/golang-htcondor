@@ -133,8 +133,68 @@ func (h *DeviceCodeHandler) HandleDeviceAuthorizationRequest(ctx context.Context
 	}, nil
 }
 
-// HandleDeviceAccessRequest handles token requests with device_code grant type
+// DeviceCodeClientMismatchError reports a device code presented at the
+// token endpoint by a client other than the one it was issued to.
+type DeviceCodeClientMismatchError struct {
+	// IssuedTo is the client_id the device code was issued to.
+	IssuedTo string
+	// PresentedBy is the client_id that presented it.
+	PresentedBy string
+}
+
+func (e *DeviceCodeClientMismatchError) Error() string {
+	return fmt.Sprintf("device code was issued to client %q, presented by %q", e.IssuedTo, e.PresentedBy)
+}
+
+// HandleDeviceAccessRequest handles token requests with device_code grant type.
+//
+// Deprecated: use HandleDeviceAccessRequestForClient, which refuses a
+// device code presented by a client other than the one it was issued
+// to. This method performs no such check, and both of its writes --
+// the poll timestamp and, on success, the 'used' status -- land before
+// a caller that checks afterwards can refuse anything. A caller that
+// keeps using it must do the binding itself BEFORE the call, since by
+// the time this returns the code has already been spent.
 func (h *DeviceCodeHandler) HandleDeviceAccessRequest(ctx context.Context, deviceCode string, session fosite.Session) (fosite.Requester, error) {
+	return h.handleDeviceAccessRequest(ctx, deviceCode, "", session)
+}
+
+// HandleDeviceAccessRequestForClient handles a device_code grant presented
+// by presentedClientID, refusing the code unless it was issued to that
+// client.
+//
+// The binding is checked before anything is written. A device code is a
+// bearer secret, so a party that holds one can present it under any
+// client_id it likes; the refusal that answers such a poll has to leave
+// the code exactly as it found it, or the refusal is itself the damage.
+// Both writes on this path are destructive to the rightful client:
+// MarkDeviceCodePolled holds it at slow_down, and
+// InvalidateDeviceCodeSession spends the grant outright -- after which
+// the user_code cannot be re-approved either, since
+// ApproveDeviceCodeSession matches only a pending row, so the person at
+// the browser has to start over.
+//
+// An empty presentedClientID skips the check, which is the deprecated
+// HandleDeviceAccessRequest's behaviour; new callers pass the client_id
+// RFC 8628 3.4 already requires them to collect.
+func (h *DeviceCodeHandler) HandleDeviceAccessRequestForClient(ctx context.Context, deviceCode, presentedClientID string, session fosite.Session) (fosite.Requester, error) {
+	return h.handleDeviceAccessRequest(ctx, deviceCode, presentedClientID, session)
+}
+
+func (h *DeviceCodeHandler) handleDeviceAccessRequest(ctx context.Context, deviceCode, presentedClientID string, session fosite.Session) (fosite.Requester, error) {
+	// Bind before writing. An unknown code is not refused here: it has
+	// no issuing client to compare against, and the lookup below is
+	// what answers for it.
+	if presentedClientID != "" {
+		issuedTo, found, err := h.storage.deviceCodeClientID(ctx, deviceCode)
+		if err != nil {
+			return nil, fosite.ErrServerError.WithWrap(err).WithDebug("Failed to read the device code's client")
+		}
+		if found && issuedTo != presentedClientID {
+			return nil, &DeviceCodeClientMismatchError{IssuedTo: issuedTo, PresentedBy: presentedClientID}
+		}
+	}
+
 	// RFC 8628 section 3.5: a client polling faster than its interval
 	// is told to slow down, whatever state the code is in, and that
 	// poll does not count as one.
@@ -166,6 +226,20 @@ func (h *DeviceCodeHandler) HandleDeviceAccessRequest(ctx context.Context, devic
 			return nil, err
 		}
 		return nil, err
+	}
+
+	// Re-check the binding against the session that was actually
+	// loaded, not just the client column read above, so the write below
+	// is ordered after a check on the authoritative value.
+	if presentedClientID != "" {
+		issued := request.GetClient()
+		if issued == nil || issued.GetID() != presentedClientID {
+			issuedID := ""
+			if issued != nil {
+				issuedID = issued.GetID()
+			}
+			return nil, &DeviceCodeClientMismatchError{IssuedTo: issuedID, PresentedBy: presentedClientID}
+		}
 	}
 
 	// Invalidate the device code after successful use

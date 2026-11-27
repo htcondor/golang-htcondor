@@ -1278,9 +1278,17 @@ func (h *Handler) handleDeviceCodeTokenRequest(w http.ResponseWriter, r *http.Re
 	session := newEmptySession()
 
 	// Handle device code access request
-	request, err := deviceHandler.HandleDeviceAccessRequest(ctx, deviceCode, session)
+	request, err := deviceHandler.HandleDeviceAccessRequestForClient(ctx, deviceCode, presentedClientID, session)
 	if err != nil {
 		// Map errors to OAuth error responses
+		var mismatch *DeviceCodeClientMismatchError
+		if errors.As(err, &mismatch) {
+			h.logger.Warn(logging.DestinationHTTP, "Device code redeemed by a client it was not issued to",
+				"issued_to", mismatch.IssuedTo, "presented_by", mismatch.PresentedBy)
+			h.writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
+				"this device code was not issued to this client")
+			return
+		}
 		if errors.Is(err, ErrAuthorizationPending) {
 			h.writeOAuthError(w, http.StatusBadRequest, "authorization_pending", "Authorization pending")
 			return
@@ -1311,11 +1319,17 @@ func (h *Handler) handleDeviceCodeTokenRequest(w http.ResponseWriter, r *http.Re
 	// buys an access token AND a refresh token for whatever identity
 	// approved it, under any client that asks.
 	//
+	// HandleDeviceAccessRequestForClient makes that check, and makes it
+	// before it writes anything, so a refused poll leaves the code
+	// redeemable by the client it belongs to. The check below is kept as
+	// a backstop against a future path into this function that forgets
+	// to pass the client through; it should be unreachable.
+	//
 	// This binds to the client_id presented; it does not yet authenticate
 	// the client, which 3.4 also requires of a confidential one. Doing
 	// that needs two things first: the CLI has to send the client_secret
-	// it already holds (this commit), and dynamic registration has to stop
-	// recording every client as confidential while advertising support for
+	// it already holds, and dynamic registration has to stop recording
+	// every client as confidential while advertising support for
 	// token_endpoint_auth_method "none" (mcp_handlers.go, Public: false).
 	// Until then, requiring authentication would refuse every deployed
 	// client.
