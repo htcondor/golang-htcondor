@@ -300,7 +300,7 @@ func mintGroupedSubjectToken(t *testing.T, server *Server, subject string, group
 // Exchange applies the current group policy to the subject, as refresh does.
 func TestExchangeNarrowsToCurrentGroupPolicy(t *testing.T) {
 	server, _ := newProvenanceServer(t)
-	server.mcpAdminGroups = newGroupSet("condor-admins")
+	server.anyUserRead = newPrincipalSet("condor-admins", "")
 	secret := insertConfidentialClient(t, server, "actor",
 		[]string{tokenExchangeGrantType}, []string{"mcp:read", "mcp:admin"})
 	subject := mintGroupedSubjectToken(t, server, "alice",
@@ -312,7 +312,7 @@ func TestExchangeNarrowsToCurrentGroupPolicy(t *testing.T) {
 	}
 
 	// The admin group moves; alice's recorded groups no longer qualify.
-	server.mcpAdminGroups = newGroupSet("pool-admins")
+	server.anyUserRead = newPrincipalSet("pool-admins", "")
 	status, body := exchangeFor(t, server, "actor", secret, subject, "")
 	if status != http.StatusOK {
 		t.Fatalf("exchange: %d %v", status, body)

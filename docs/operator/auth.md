@@ -59,6 +59,42 @@ and `condor:/WRITE` do not:
 
 Everything below applies to both.
 
+### Who may request one
+
+Neither entitlement is granted to anybody until you say who may ask for
+it. Four settings, a group list and a user list per entitlement:
+
+| Entitlement | Groups | Users |
+| --- | --- | --- |
+| `anyuser:read` | `HTTP_API_ANYUSER_READ_GROUPS` | `HTTP_API_ANYUSER_READ_USERS` |
+| `anyuser:write` | `HTTP_API_ANYUSER_WRITE_GROUPS` | `HTTP_API_ANYUSER_WRITE_USERS` |
+
+Either list alone is enough, and both are comma-separated. **Unset means
+nobody** — the opposite of the access gates elsewhere in this file,
+where an unset group means "no requirement". A cross-user privilege with
+nothing configured has to belong to no one.
+
+The user list exists because the group list cannot always decide. With
+`HTTP_API_GROUP_SOURCE = token` and a token that carries no groups —
+the default, and the only option in a container — there is nothing for
+a group check to read, and naming one person should not require
+inventing a directory group for them.
+
+Identities are compared the way HTCondor compares two users: the domain
+case-insensitively, the part before the `@` exactly, and **a bare name
+matches only a bare name**. On an access point that reports
+fully-qualified users, `alice` matches nothing and `alice@example.org`
+is what you want. This is the single most common way to write a user
+list that silently grants nobody anything.
+
+Being on one of these lists is permission to **ask** for the scope. It
+is not the scope. A credential carries an entitlement only by requesting
+it and being granted it — at consent for an OAuth2 client, at mint for a
+key. `MCP_ADMIN_USERS` is the one setting in this area that does not
+work that way: it hands the read tier directly to a caller whose
+credential states no scopes at all. It is deprecated for that reason,
+and these settings are not its replacement in meaning.
+
 A key is minted in one of two models, and the difference between them is
 how that claim is kept honest.
 

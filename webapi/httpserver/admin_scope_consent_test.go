@@ -24,12 +24,12 @@ func consentTestHandler(t *testing.T, adminGroup, superuserGroup string) *Handle
 		t.Fatalf("logger: %v", err)
 	}
 	return &Handler{
-		logger:             lg,
-		mcpAdminGroups:     newGroupSet(adminGroup),
-		mcpSuperuserGroups: newGroupSet(superuserGroup),
-		mcpReadGroups:      newGroupSet(""),
-		mcpWriteGroups:     newGroupSet(""),
-		mcpAccessGroups:    newGroupSet(""),
+		logger:          lg,
+		anyUserRead:     newPrincipalSet(adminGroup, ""),
+		anyUserWrite:    newPrincipalSet(superuserGroup, ""),
+		mcpReadGroups:   newGroupSet(""),
+		mcpWriteGroups:  newGroupSet(""),
+		mcpAccessGroups: newGroupSet(""),
 	}
 }
 
@@ -205,7 +205,7 @@ func TestAdvertisedPrivilegedScopesAreNotGrantedByDefault(t *testing.T) {
 
 	outsider := []string{"users"}
 	for _, scope := range []string{"mcp:admin", "mcp:superuser", scopeAnyUserRead, scopeAnyUserWrite} {
-		got := h.getScopesForGroups(outsider, []string{scope})
+		got := h.getScopesForGroups("", outsider, []string{scope})
 		if slices.Contains(got, scope) {
 			t.Errorf("%s was granted to a user in none of the privileged groups: %v", scope, got)
 		}
@@ -213,14 +213,14 @@ func TestAdvertisedPrivilegedScopesAreNotGrantedByDefault(t *testing.T) {
 
 	// And the entitled user does get them, or the advertisement is a
 	// promise the server never keeps.
-	if got := h.getScopesForGroups([]string{"condor-admins"}, []string{scopeAnyUserRead}); !slices.Contains(got, scopeAnyUserRead) {
+	if got := h.getScopesForGroups("", []string{"condor-admins"}, []string{scopeAnyUserRead}); !slices.Contains(got, scopeAnyUserRead) {
 		t.Errorf("an admin-group member was not granted %s: %v", scopeAnyUserRead, got)
 	}
-	if got := h.getScopesForGroups([]string{"condor-supers"}, []string{scopeAnyUserWrite}); !slices.Contains(got, scopeAnyUserWrite) {
+	if got := h.getScopesForGroups("", []string{"condor-supers"}, []string{scopeAnyUserWrite}); !slices.Contains(got, scopeAnyUserWrite) {
 		t.Errorf("a superuser-group member was not granted %s: %v", scopeAnyUserWrite, got)
 	}
 	// Neither implies the other.
-	if got := h.getScopesForGroups([]string{"condor-admins"}, []string{scopeAnyUserWrite}); slices.Contains(got, scopeAnyUserWrite) {
+	if got := h.getScopesForGroups("", []string{"condor-admins"}, []string{scopeAnyUserWrite}); slices.Contains(got, scopeAnyUserWrite) {
 		t.Errorf("the admin group was granted %s: %v", scopeAnyUserWrite, got)
 	}
 }
@@ -230,7 +230,7 @@ func TestAdvertisedPrivilegedScopesAreNotGrantedByDefault(t *testing.T) {
 func TestAnyUserScopesNeedAConfiguredGroup(t *testing.T) {
 	h := consentTestHandler(t, "", "")
 	for _, scope := range []string{scopeAnyUserRead, scopeAnyUserWrite} {
-		if got := h.getScopesForGroups([]string{"anyone"}, []string{scope}); slices.Contains(got, scope) {
+		if got := h.getScopesForGroups("", []string{"anyone"}, []string{scope}); slices.Contains(got, scope) {
 			t.Errorf("%s was granted with no group configured: %v", scope, got)
 		}
 	}

@@ -489,7 +489,7 @@ func TestGetScopesForGroups(t *testing.T) {
 				mcpReadGroups:   newGroupSet(tt.readGroup),
 				mcpWriteGroups:  newGroupSet(tt.writeGroup),
 			}
-			got := h.getScopesForGroups(tt.userGroups, requested)
+			got := h.getScopesForGroups("", tt.userGroups, requested)
 			if len(got) != len(tt.expectedScopes) {
 				t.Fatalf("Expected scopes %v, got %v", tt.expectedScopes, got)
 			}

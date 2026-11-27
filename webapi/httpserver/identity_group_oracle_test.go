@@ -65,7 +65,7 @@ func oracleFor(t *testing.T, src droppriv.GroupLookup, required string) *systemG
 			}
 			return errors.New("not a member of " + required)
 		},
-		scopesFor: func(groups, requested []string) []string {
+		scopesFor: func(_ string, groups, requested []string) []string {
 			write := false
 			for _, g := range groups {
 				if g == testWriteGroup {

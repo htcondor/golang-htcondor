@@ -29,6 +29,15 @@ func TestReconfigScopesMatchTheKnobs(t *testing.T) {
 	byName := map[string]reconfigParam{}
 	for _, p := range reconfigParams {
 		byName[p.name] = p
+		// An obsolete spelling is covered by the entry that supersedes
+		// it: diff resolves it when the new setting is unset, so a
+		// change to it IS applied and IS reported -- under the new
+		// name, which is the point. Recording it as the superseding
+		// entry keeps both checks below meaningful for it: still
+		// listed, and still carrying an apply.
+		if p.supersedes != "" {
+			byName[p.supersedes] = p
+		}
 	}
 
 	for _, k := range knobs.All {

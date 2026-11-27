@@ -49,7 +49,7 @@ type systemGroupOracle struct {
 	// recomputes the scopes a membership earns. Both are the Handler's,
 	// so the oracle cannot drift from the policy applied at login.
 	validate  func(groups []string) error
-	scopesFor func(groups, requested []string) []string
+	scopesFor func(actor string, groups, requested []string) []string
 	logger    *logging.Logger
 
 	// subjectsAreAccounts says whether the name this oracle is handed is
@@ -132,7 +132,7 @@ func (o *systemGroupOracle) Check(ctx context.Context, username string, scopes [
 	// Still entitled to something, but perhaps less than before. Report
 	// the difference rather than failing the refresh, so a user who lost
 	// write access keeps working read-only.
-	allowed := o.scopesFor(groups, scopes)
+	allowed := o.scopesFor(username, groups, scopes)
 	var denied []string
 	for _, s := range scopes {
 		if !containsString(allowed, s) {

@@ -30,8 +30,10 @@ func (f *fakeTarget) record(knob, v string) {
 func (f *fakeTarget) SetMCPAccessGroups(v string)    { f.record("mcp_access", v) }
 func (f *fakeTarget) SetMCPReadGroups(v string)      { f.record("mcp_read", v) }
 func (f *fakeTarget) SetMCPWriteGroups(v string)     { f.record("mcp_write", v) }
-func (f *fakeTarget) SetMCPAdminGroups(v string)     { f.record("mcp_admin", v) }
-func (f *fakeTarget) SetMCPSuperuserGroups(v string) { f.record("mcp_superuser", v) }
+func (f *fakeTarget) SetAnyUserReadGroups(v string)  { f.record("anyuser_read_groups", v) }
+func (f *fakeTarget) SetAnyUserReadUsers(v string)   { f.record("anyuser_read_users", v) }
+func (f *fakeTarget) SetAnyUserWriteGroups(v string) { f.record("anyuser_write_groups", v) }
+func (f *fakeTarget) SetAnyUserWriteUsers(v string)  { f.record("anyuser_write_users", v) }
 func (f *fakeTarget) SetWebUIAccessGroups(v string)  { f.record("webui_access", v) }
 func (f *fakeTarget) SetWebUIAdminGroups(v string)   { f.record("webui_admin", v) }
 func (f *fakeTarget) SetWebUIAppOnlyGroups(v string) { f.record("webui_app_only", v) }
@@ -364,5 +366,89 @@ func TestReconfigReloadsAPAssignment(t *testing.T) {
 	w.reconfigure(configFrom(t, ""))
 	if n := len(single.groups["ap_assignment_reload"]); n != 0 {
 		t.Errorf("single-AP reconfigure reloaded the assignment %d times", n)
+	}
+}
+
+// The obsolete spelling still reaches the running server on SIGHUP.
+//
+// An operator who has not migrated gets a reconfigure that works, under
+// the name that replaced theirs: diff resolves the superseded setting
+// when the current one is unset, so there is no table entry for the old
+// name that could bypass the precedence.
+func TestReconfigAppliesASupersededGroupSetting(t *testing.T) {
+	target := &fakeTarget{}
+	w := newReconfigWatcher(configFrom(t, "HTTP_API_MCP_ADMIN_GROUP = chtc_admin\n"), target, nil)
+
+	applied, needRestart := w.diff(configFrom(t, "HTTP_API_MCP_ADMIN_GROUP = chtc_admin, chtc_ops\n"))
+
+	if want := []string{"HTTP_API_ANYUSER_READ_GROUPS"}; !reflect.DeepEqual(applied, want) {
+		t.Errorf("applied = %v, want %v -- a change to the old setting is reported under the new name", applied, want)
+	}
+	if len(needRestart) != 0 {
+		t.Errorf("needRestart = %v; the superseded setting is still dynamic", needRestart)
+	}
+	if got := target.groups["anyuser_read_groups"]; !reflect.DeepEqual(got, []string{"chtc_admin, chtc_ops"}) {
+		t.Errorf("server received %v", got)
+	}
+}
+
+// The current setting wins where both are set, and the reconfigure path
+// has to resolve it the same way the startup read does. If it did not,
+// an operator who narrowed the privilege with the new setting would
+// have the old one widen it back on the next SIGHUP -- silently, since
+// nothing would report a change.
+func TestCurrentGroupSettingOutranksTheSupersededOne(t *testing.T) {
+	target := &fakeTarget{}
+	const both = "HTTP_API_MCP_ADMIN_GROUP = everyone\n" +
+		"HTTP_API_ANYUSER_READ_GROUPS = a-few\n"
+	w := newReconfigWatcher(configFrom(t, "HTTP_API_MCP_ADMIN_GROUP = everyone\n"), target, nil)
+
+	applied, _ := w.diff(configFrom(t, both))
+
+	if want := []string{"HTTP_API_ANYUSER_READ_GROUPS"}; !reflect.DeepEqual(applied, want) {
+		t.Errorf("applied = %v, want %v", applied, want)
+	}
+	if got := target.groups["anyuser_read_groups"]; !reflect.DeepEqual(got, []string{"a-few"}) {
+		t.Errorf("server received %v, want the current setting's value alone", got)
+	}
+}
+
+// Clearing the current setting falls back to the superseded one rather
+// than to nothing, which is what the startup read does and therefore
+// what a reconfigure must do: a daemon restarted at that moment would
+// otherwise come up with a different policy from the one it was running.
+func TestClearingTheCurrentSettingFallsBackRatherThanRevoking(t *testing.T) {
+	target := &fakeTarget{}
+	const both = "HTTP_API_MCP_ADMIN_GROUP = everyone\n" +
+		"HTTP_API_ANYUSER_READ_GROUPS = a-few\n"
+	w := newReconfigWatcher(configFrom(t, both), target, nil)
+
+	w.diff(configFrom(t, "HTTP_API_MCP_ADMIN_GROUP = everyone\n"))
+
+	if got := target.groups["anyuser_read_groups"]; !reflect.DeepEqual(got, []string{"everyone"}) {
+		t.Errorf("server received %v, want the superseded setting's value", got)
+	}
+}
+
+// The user halves have no superseded spelling -- they are new -- and
+// must reach the server on their own.
+func TestReconfigAppliesTheUserHalves(t *testing.T) {
+	target := &fakeTarget{}
+	w := newReconfigWatcher(configFrom(t, ""), target, nil)
+
+	applied, _ := w.diff(configFrom(t,
+		"HTTP_API_ANYUSER_READ_USERS = alice@example.org\n"+
+			"HTTP_API_ANYUSER_WRITE_USERS = bob@example.org\n"))
+
+	want := []string{"HTTP_API_ANYUSER_READ_USERS", "HTTP_API_ANYUSER_WRITE_USERS"}
+	sort.Strings(applied)
+	if !reflect.DeepEqual(applied, want) {
+		t.Errorf("applied = %v, want %v", applied, want)
+	}
+	if got := target.groups["anyuser_read_users"]; !reflect.DeepEqual(got, []string{"alice@example.org"}) {
+		t.Errorf("server received read users %v", got)
+	}
+	if got := target.groups["anyuser_write_users"]; !reflect.DeepEqual(got, []string{"bob@example.org"}) {
+		t.Errorf("server received write users %v", got)
 	}
 }

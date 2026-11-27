@@ -1,10 +1,10 @@
 package authz
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 // ConfigGetter is the slice of the HTCondor config the authorization policy
@@ -41,8 +41,9 @@ type permEntry struct {
 // the C++ daemons, and the authorization holes (PunchHole) C++ daemons open for
 // the sessions they trust whatever the configuration says.
 //
-// Not safe for concurrent Init; Verify is read-only after Init (the holes are
-// safe to change concurrently).
+// Not safe for concurrent Init; after Init the policy itself is read-only and
+// Verify is safe to call concurrently (the holes and the name cache carry
+// their own locks).
 type Policy struct {
 	subsys  string
 	entries map[Perm]*permEntry
@@ -55,6 +56,11 @@ type Policy struct {
 	// Both default to the net package and are overridable for tests.
 	forwardResolve func(host string) []string
 	reverseResolve func(ip net.IP) []string
+
+	// dns caches reverseResolve by peer address. Verify runs per command,
+	// so without it a peer that opens a connection per command pays a PTR
+	// lookup per command, forever.
+	dns *ptrCache
 }
 
 const (
@@ -73,6 +79,7 @@ func NewPolicy(cfg ConfigGetter, subsys string) (*Policy, error) {
 		usePoolUsernameEquiv: configBool(cfg, "USE_POOL_USERNAME_EQUIVALENT", true),
 		forwardResolve:       defaultForwardResolve,
 		reverseResolve:       defaultReverseResolve,
+		dns:                  newPTRCache(DefaultDNSCacheTTL),
 	}
 	for _, perm := range allPerms {
 		p.entries[perm] = p.buildEntry(cfg, perm)
@@ -308,6 +315,24 @@ func (p *Policy) Authorize(perm, peerAddr, user string) bool {
 // port of IpVerify::Verify (without the result cache, which is a performance
 // detail).
 func (p *Policy) Verify(perm Perm, addr net.IP, user string) bool {
+	// One resolution for the whole decision, however many permissions it
+	// has to walk, and only if it gets as far as needing one.
+	return p.verify(perm, addr, user, &peerNames{
+		resolve: func() []string { return p.dns.lookup(addr, p.reverseResolve) },
+	})
+}
+
+// SetDNSCacheTTL sets how long Verify reuses a peer's resolved names. Zero or
+// less resolves afresh every time, which is what a pool that changes PTR
+// records and wants the change to take effect at once should ask for.
+//
+// Call it before the policy is in use; it is not safe against a concurrent
+// Verify.
+func (p *Policy) SetDNSCacheTTL(ttl time.Duration) {
+	p.dns = newPTRCache(ttl)
+}
+
+func (p *Policy) verify(perm Perm, addr net.IP, user string, names *peerNames) bool {
 	if perm == PermAllow {
 		return true
 	}
@@ -357,7 +382,7 @@ func (p *Policy) Verify(perm Perm, addr net.IP, user string) bool {
 	// still overrides an allow found on an earlier one. Deny is final once
 	// found, so breaking on it is faithful.
 	if !denied {
-		for _, host := range p.reverseResolve(addr) {
+		for _, host := range names.get() {
 			if lookupUser(e.denyUsers, user, nil, host) {
 				denied = true
 				break
@@ -382,7 +407,7 @@ func (p *Policy) Verify(perm Perm, addr net.IP, user string) bool {
 
 	// USE_TABLE with no match: a parent permission may imply this one.
 	for _, parent := range directlyImpliedBy(perm) {
-		if p.Verify(parent, addr, user) {
+		if p.verify(parent, addr, user, names) {
 			return true
 		}
 	}
@@ -447,27 +472,4 @@ func configBool(cfg ConfigGetter, key string, def bool) bool {
 		return false
 	}
 	return def
-}
-
-func defaultForwardResolve(host string) []string {
-	ips, err := net.DefaultResolver.LookupHost(context.Background(), host)
-	if err != nil {
-		return nil
-	}
-	return ips
-}
-
-func defaultReverseResolve(ip net.IP) []string {
-	if ip == nil {
-		return nil
-	}
-	names, err := net.DefaultResolver.LookupAddr(context.Background(), ip.String())
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, strings.TrimSuffix(n, "."))
-	}
-	return out
 }

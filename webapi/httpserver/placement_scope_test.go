@@ -149,7 +149,7 @@ func TestPlacementScopeCannotBeMixed(t *testing.T) {
 		t.Errorf("placement through the code flow: %d %s", rr.Code, rr.Body.String())
 	}
 	// And no group policy ever grants it on its own.
-	if got := s.getScopesForGroups([]string{"anyone"}, []string{placementScope, "mcp:read"}); slices.Contains(got, placementScope) {
+	if got := s.getScopesForGroups("", []string{"anyone"}, []string{placementScope, "mcp:read"}); slices.Contains(got, placementScope) {
 		t.Errorf("getScopesForGroups granted %v", got)
 	}
 }

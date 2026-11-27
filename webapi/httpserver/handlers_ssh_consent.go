@@ -392,7 +392,7 @@ func (h *Handler) handleSSHConsentApprove(w http.ResponseWriter, r *http.Request
 	// that cannot reach their job and no explanation of why. What the
 	// user consents to here is the login and the workspace; what the
 	// policy allows is still the ceiling.
-	accepted := h.getScopesForGroups(groups, request.GetRequestedScopes())
+	accepted := h.getScopesForGroups(username, groups, request.GetRequestedScopes())
 	accepted = h.scopesAllowedByScheddACL(ctx, username, accepted)
 
 	oidcSession := DefaultOpenIDConnectSession(username).WithGroups(groups)

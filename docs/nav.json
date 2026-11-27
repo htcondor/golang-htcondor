@@ -12,6 +12,13 @@
           "order": 10
         },
         {
+          "path": "user/jobs.md",
+          "url": "/docs/user/jobs",
+          "title": "Submitting and watching a job",
+          "audience": "user",
+          "order": 12
+        },
+        {
           "path": "user/assistant.md",
           "url": "/docs/user/assistant",
           "title": "Working with an AI assistant",
@@ -26,11 +33,25 @@
           "order": 20
         },
         {
+          "path": "user/interactive.md",
+          "url": "/docs/user/interactive",
+          "title": "Interactive sessions",
+          "audience": "user",
+          "order": 25
+        },
+        {
           "path": "user/sftp-job-submit.md",
           "url": "/docs/user/sftp-job-submit",
           "title": "Submitting jobs over SFTP",
           "audience": "user",
           "order": 30
+        },
+        {
+          "path": "user/connectors.md",
+          "url": "/docs/user/connectors",
+          "title": "Connecting an account",
+          "audience": "user",
+          "order": 35
         },
         {
           "path": "user/files.md",
@@ -93,6 +114,13 @@
           "title": "SSH gateway",
           "audience": "operator",
           "order": 70
+        },
+        {
+          "path": "operator/connectors.md",
+          "url": "/docs/operator/connectors",
+          "title": "Connected accounts",
+          "audience": "operator",
+          "order": 75
         },
         {
           "path": "operator/container-builds.md",

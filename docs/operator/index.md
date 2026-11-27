@@ -36,6 +36,7 @@ configured server. Each larger feature has a page of its own:
 | [Metrics and usage statistics](metrics.md) | `/metrics`, what is counted, the admin Usage page |
 | [Runtime and drain estimates](estimates.md) | How long a job will run; when a node would be empty |
 | [Web UI branding](branding.md) | Making the pages say who runs this access point |
+| [Connected accounts](connectors.md) | Letting users grant this access point files from their Drive, Box or OneDrive |
 | [Container builds](container-builds.md) | Building Apptainer images as jobs, and bounding what one may take |
 | [Site apps](site-apps.md) | Serving a lab's own web interface, to the people it belongs to |
 | [Outbound webhooks](webhooks.md) | Posting to a service when a user's jobs change state |
