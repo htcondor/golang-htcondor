@@ -4676,6 +4676,12 @@ func (sf *SubmitFile) pushMacroContext(jobID JobID, queueVars map[string]string)
 	sf.cfg.Set("ClusterId", strconv.Itoa(jobID.Cluster)) // Alias for Cluster
 	sf.cfg.Set("Node", strconv.Itoa(jobID.Proc))         // Alias for Process (parallel universe)
 
+	// Conveniences HTCondor defines as macros over the two above, so a
+	// submit file -- or the ORGANIZED_OUTPUT_PATTERN default -- can spell a
+	// per-job directory without writing both halves.
+	sf.cfg.Set("JobId", strconv.Itoa(jobID.Cluster)+"."+strconv.Itoa(jobID.Proc))
+	sf.cfg.Set("JobListId", strconv.Itoa(jobID.Cluster))
+
 	// Set queue-specific macros.
 	//
 	// In the order the queue statement declared them, because submit macro

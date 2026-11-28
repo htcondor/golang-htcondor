@@ -1,28 +1,24 @@
-`outputdirectory` is the job's output directory, which HTCondor resolves to a
-full path and this parser does not write at all.
+`outputdirectory` is the job's output directory. Against an oracle that has
+HTCONDOR-3618 the two sides agree; against one that predates it only Go writes
+the attribute.
 
-HTCONDOR-3618 added the organized output submit commands -- organized_output,
-organized_output_directory and organized_output_pattern -- and made
-output_directory f_special in the same change, because the two interact.
-SetOutputDirSpecial picks between them, expands the pattern, checks that it
-stays below the base directory, resolves the result against the job's initial
-working directory and assigns OutputDirectory itself.
+HTCONDOR-3618 added the organized output commands -- organized_output,
+organized_output_directory and organized_output_pattern -- which build an
+output directory per job from a base directory and a pattern. This parser
+implements them, so naming any of them writes OutputDirectory here. An older
+HTCondor has no such commands: it reads the names as ordinary submit macros,
+writes nothing, and the attribute appears on one side only.
 
-The Go parser has none of that. Before the change it carried output_directory
-as an ordinary table row, which wrote the value as it was spelled rather than
-as a full path, and the generator never produced a case that told the two
-apart. The organized output keywords gave it one: a base directory alone turns
-organized output on, the pattern comes from ORGANIZED_OUTPUT_PATTERN, and C++
-writes an attribute Go has no keyword for.
+Parsing them is not gated. A submit file naming organized_output_directory
+means the same thing wherever it is submitted, and an attribute an older
+schedd ignores costs the job nothing -- the same reasoning as
+keywordsAheadOfOracle.
 
-The output_directory row stays in the simple table -- see
-keywordsSpecialInOracle -- so a submit file naming it still writes the
-attribute, from the value as it was spelled. What is missing is everything
-SetOutputDirSpecial does on top: the organized output keywords have no row at
-all, and no path is resolved against Iwd.
+Note that output_directory itself is NOT the divergence. It stays an ordinary
+f_genfile row in the keyword table, which has always resolved it against Iwd
+the way SetOutputDirSpecial does, so it agrees against either oracle. What
+upstream changed for it was only which pass writes it, and that is recorded in
+keywordsSpecialInOracle rather than here.
 
-Implementing it is a separate change: it means porting SetOutputDirSpecial and
-giving the f_genfile role meaning in the simple pass, where today it is carried
-in the table and read by nothing.
-
-Oracle: has HTCONDOR-3618
+Sweep cannot prove this: the generator writes organized_output_directory only when the oracle's keyword table carries it, so against an older HTCondor the sweep sees output_directory alone, which agrees. TestOrganizedOutputMatchesOracle compares the organized output shapes directly, against either oracle.
+Oracle: lacks HTCONDOR-3618

@@ -244,7 +244,11 @@ func (sf *SubmitFile) setSimpleSubmitKeywords(ad *classad.ClassAd) error {
 			return err
 		}
 	}
-	return nil
+	// The organized output commands, which belong to this pass by subject
+	// but not by mechanism: HTCONDOR-3618 took them out of the table
+	// because they interact with output_directory, which the loop above
+	// has just written. Running them here keeps that order.
+	return sf.setOutputDirectory(ad)
 }
 
 // simpleKeywordParam is SubmitHash::submit_param(name, alt_name) for one table
