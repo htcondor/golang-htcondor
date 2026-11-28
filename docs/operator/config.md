@@ -1117,6 +1117,30 @@ The largest job sandbox the +jobs file service will serve, in GiB. A
 negative number means no limit. Refused the same way as above when it
 is not a whole number.
 
+### `HTTP_API_SITE_APPS_GITHUB`
+
+**Boolean.** Default `true`. Changing it needs a restart.
+
+Whether a bundle may be fetched from a GitHub release instead of
+attached. On by default: it publishes nothing the upload grant above
+does not already allow. The reason to turn it off is an access point
+with no egress, where the alternative is a button that only ever times
+out.
+
+See [Site apps](site-apps.md).
+
+### `HTTP_API_SITE_APPS_UPLOAD`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Whether an administrator may publish a bundle through the web
+interface. Off unless the site says otherwise: an uploaded app is
+served same-origin and can do anything its visitor can, so this is a
+grant separate from administering the server. Has no effect without
+`HTTP_API_SITE_APPS_DIR`.
+
+See [Site apps](site-apps.md).
+
 ### `HTTP_API_SITE_APP_<instance>_*`
 
 A lab's own web interface, published to the people it belongs to. Each
@@ -1417,6 +1441,29 @@ any image. Unset otherwise runs a published code-server image.
 
 See [VS Code sessions](interactive.md#vs-code-sessions).
 
+### `HTTP_API_WEBHOOKS`
+
+**Boolean.** Default `true`. Changing it needs a restart.
+
+Whether this access point offers outbound webhooks at all. On by
+default. Set false where the deployment permits no egress: the
+endpoints then answer 503 and neither the evaluator nor the delivery
+worker runs.
+
+See [Outbound webhooks](webhooks.md).
+
+### `HTTP_API_WEBHOOK_FANOUT_LIMIT`
+
+**Whole number.** Unset caps the fan-out at 500 jobs. Changing it needs a restart.
+
+Most jobs one webhook subscription may deliver for in a single pass.
+Past the cap it sends one summary a day and withholds the per-job
+deliveries until the selection drops back under it. Unset, or any
+value that is not positive, leaves the evaluator's own default of 500
+-- deliberately well above a normal batch and well below a large
+cluster. A bad value is reported and ignored rather than refusing to
+start, because it costs a noisier page and not a wrong answer.
+
 ### `HTTP_API_WEBUI_ACCESS_GROUPS`
 
 **String.** Unset by default. A change is installed by `condor_reconfig`.
@@ -1475,8 +1522,6 @@ each one.
 | `HTTP_API_WEBUI_PRIVACY_URL` / `HTTP_API_WEBUI_TERMS_URL` | Where those paths redirect instead, for a site whose policy lives elsewhere. The file wins when both are set. Reloaded on SIGHUP. |
 | `HTTP_API_SITE_APPS_DIR` | Directory of `<id>.zip` site-app bundles and their `<id>.yaml` policy files. Unset disables site apps entirely. See [Site apps](site-apps.md). |
 | `HTTP_API_SITE_APPS_RELOAD_INTERVAL` | How often that directory is rescanned, as a Go duration. Default one minute. |
-| `HTTP_API_WEBHOOKS` | Whether users may set up outbound webhooks. Default true; `false` makes the endpoints answer 503 and runs neither the evaluator nor the delivery worker. See [Outbound webhooks](webhooks.md). |
-| `HTTP_API_WEBHOOK_FANOUT_LIMIT` | The most jobs one webhook subscription may deliver for in a single pass. Default 500; past it it sends one summary a day and withholds the per-job deliveries until the selection drops back under the ceiling. |
 | `HTTP_API_WEBUI_APP_ONLY_GROUP` | Comma-separated group(s) whose members land in their site app rather than the dashboard, with the console navigation collapsed. Presentation only; it restricts nothing. Reloaded on SIGHUP. See [Site apps](site-apps.md#app-only-sessions). |
 | `HTTP_API_PROJECT_LEADS_FILE` | File naming each project's leads, who may use superuser mode on jobs whose `ProjectName` they lead. Re-read when it changes and on SIGHUP. See [Project leads](auth.md#project-leads). |
 | `HTTP_API_PROJECT_LEADS_GROUP` | Group-name pattern containing `{project}`, e.g. `{project}-leads`; members of the group it names for a project lead that project. Reloaded on SIGHUP. See [Project leads](auth.md#project-leads). |

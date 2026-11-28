@@ -2012,7 +2012,7 @@ func loadSiteAppsConfig(cfg *config.Config, logger *logging.Logger) siteAppsSett
 	// interface. Off unless the site says otherwise: an uploaded app is
 	// served same-origin and can do anything its visitor can, so this
 	// is a grant separate from administering the server.
-	upload := cfg.GetBool("HTTP_API_SITE_APPS_UPLOAD", false)
+	upload := knobs.SiteAppsUpload.Get(cfg)
 	if upload && dir != "" {
 		logger.Info(logging.DestinationHTTP,
 			"Site app upload is enabled; administrators may publish bundles through the web interface", "dir", dir)
@@ -2022,7 +2022,7 @@ func loadSiteAppsConfig(cfg *config.Config, logger *logging.Logger) siteAppsSett
 	// above does not already allow, and the reason to turn it off is
 	// an access point with no egress, where the alternative is a
 	// button that only ever times out.
-	github := cfg.GetBool("HTTP_API_SITE_APPS_GITHUB", true)
+	github := knobs.SiteAppsGitHub.Get(cfg)
 	return siteAppsSettings{Dir: dir, Reload: reload, Upload: upload, GitHub: github}
 }
 
@@ -2040,18 +2040,21 @@ type webhookSettings struct {
 // no egress at all, where the alternative is a page whose every delivery
 // times out.
 func loadWebhookSettings(cfg *config.Config, logger *logging.Logger) webhookSettings {
-	out := webhookSettings{Disabled: !cfg.GetBool("HTTP_API_WEBHOOKS", true)}
+	out := webhookSettings{Disabled: !knobs.Webhooks.Get(cfg)}
 	if out.Disabled {
 		logger.Info(logging.DestinationHTTP, "Outbound webhooks are disabled by configuration")
 		return out
 	}
-	if raw, ok := cfg.Get("HTTP_API_WEBHOOK_FANOUT_LIMIT"); ok {
+	// Read through the knob's Name rather than IntKnob.Get: the type
+	// reports a malformed value and falls back, and this additionally
+	// requires a POSITIVE number, which it does not know about.
+	if raw, ok := cfg.Get(knobs.WebhookFanoutLimit.Name()); ok {
 		n, err := strconv.Atoi(strings.TrimSpace(raw))
 		switch {
 		case err != nil || n < 1:
 			logger.Warn(logging.DestinationHTTP,
-				"Ignoring HTTP_API_WEBHOOK_FANOUT_LIMIT: want a positive number of jobs",
-				"value", raw)
+				"Ignoring the webhook fan-out limit: want a positive number of jobs",
+				"key", knobs.WebhookFanoutLimit.Name(), "value", raw)
 		default:
 			out.FanoutLimit = n
 			logger.Info(logging.DestinationHTTP, "Webhook fan-out limit", "jobs", n)
