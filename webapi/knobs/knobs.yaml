@@ -26,6 +26,17 @@
 #
 # Migration in progress: most settings are still read as strings
 # elsewhere. See design_notes/DOCUMENTATION_SITE.md.
+#
+# WHERE TO ADD ONE: beside the settings it belongs with, which for
+# HTTP_API_<SUBSYSTEM>_<REST> names is roughly alphabetical. Not at the
+# top, and not at whatever entry happens to be convenient.
+#
+# The generator sorts everything it emits -- knobs, families and
+# reference entries alike -- so the order here changes no output at all
+# and exists only for whoever reads this file. What it does change is
+# how often two unrelated batches collide: inserting each at the same
+# convenient anchor made every pair of them conflict in the same place,
+# which is a cost paid by whoever merges second, for nothing.
 
 knobs:
   # The reservations subsystem. All four are read strictly -- a

@@ -514,16 +514,41 @@ func knobType(kind string) string {
 
 // initialisms keep their capitalisation, so HTTP_API_TLS_CA_CERT reads
 // as TLSCACert rather than TlsCaCert.
+// initialisms keep their capitalisation, so HTTP_API_TLS_CA_CERT reads
+// as TLSCACert rather than TlsCaCert. Not every entry is an initialism:
+// some are two words the configuration spells as one, which would
+// otherwise read as Webui or Anyuser.
+//
+// ONE PER LINE, and sorted. Every batch of knob declarations tends to
+// add one, and when several shared a line every batch conflicted with
+// every other batch in the same place. On their own lines git merges
+// them without help. TestInitialismsAreSortedOnePerLine keeps it that
+// way.
 var initialisms = map[string]string{
-	"API": "API", "CA": "CA", "DB": "DB", "ID": "ID", "IDP": "IDP",
-	"GB": "GB", "LLM": "LLM", "MB": "MB", "MCP": "MCP", "OAUTH2": "OAuth2", "SSH": "SSH", "TLS": "TLS",
-	"UI": "UI", "URL": "URL", "VSCODE": "VSCode", "AP": "AP", "KEK": "KEK", "CPUS": "CPUs",
-	// EP is HTCondor's word for an execute point; CIMD and DCR are the
-	// two OAuth2 client-registration mechanisms /mcp offers.
-	"EP": "EP", "CIMD": "CIMD", "DCR": "DCR",
-	// Not initialisms: two words the configuration spells as one.
-	// Without these the identifiers read as Webui and Anyuser.
-	"WEBUI": "WebUI", "ANYUSER": "AnyUser",
+	"ANYUSER": "AnyUser", // two words the configuration spells as one
+	"AP":      "AP",
+	"API":     "API",
+	"CA":      "CA",
+	"CIMD":    "CIMD", // client ID metadata document, an OAuth2 client registration mechanism
+	"CPUS":    "CPUs",
+	"DB":      "DB",
+	"DCR":     "DCR", // dynamic client registration, the other one
+	"EP":      "EP",  // HTCondor's word for an execute point
+	"GB":      "GB",
+	"ID":      "ID",
+	"IDP":     "IDP",
+	"KEK":     "KEK",
+	"LLM":     "LLM",
+	"MB":      "MB",
+	"MCP":     "MCP",
+	"OAUTH2":  "OAuth2",
+	"SSH":     "SSH",
+	"TLS":     "TLS",
+	"TTL":     "TTL",
+	"UI":      "UI",
+	"URL":     "URL",
+	"VSCODE":  "VSCode", // two words the configuration spells as one
+	"WEBUI":   "WebUI",  // two words the configuration spells as one
 }
 
 // Identifier turns HTTP_API_TLS_CA_CERT into TLSCACert.
