@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"sort"
+
 	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
@@ -449,4 +451,71 @@ func TestUndeclaredSettingsOnlyShrink(t *testing.T) {
 				"knobs.yaml; remove the line.", name)
 		}
 	}
+}
+
+// initialisms is edited by almost every batch of knob declarations --
+// a new subsystem brings a new acronym -- so its layout decides how
+// often those batches conflict with each other.
+//
+// One entry per line, sorted. When several shared a line, every batch
+// that added one collided with every other batch in the same place,
+// and the merge had to be resolved by hand each time even though the
+// changes never disagreed. On their own lines git merges them without
+// help, because they are different lines.
+//
+// This is a formatting rule, which is usually not worth a test. It is
+// worth one here because the cost of it rotting is paid by whoever is
+// merging two unrelated PRs, not by whoever collapsed the lines.
+func TestInitialismsAreSortedOnePerLine(t *testing.T) {
+	b, err := os.ReadFile("generate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	const marker = "var initialisms = map[string]string{"
+	i := strings.Index(src, marker)
+	if i < 0 {
+		t.Fatal("generate.go no longer declares initialisms")
+	}
+	body := src[i+len(marker):]
+	j := strings.Index(body, "\n}")
+	if j < 0 {
+		t.Fatal("the initialisms map is not closed")
+	}
+
+	entry := regexp.MustCompile(`^\s*"([A-Z0-9]+)":\s*"[^"]*",`)
+	var keys []string
+	for _, line := range strings.Split(body[:j], "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		m := entry.FindStringSubmatch(line)
+		if m == nil {
+			t.Errorf("not one entry on its own line: %q", strings.TrimSpace(line))
+			continue
+		}
+		// A second entry on the same line is the thing this forbids.
+		if strings.Count(line, `":`) > 1 {
+			t.Errorf("more than one entry on a line: %q", strings.TrimSpace(line))
+		}
+		keys = append(keys, m[1])
+	}
+	if len(keys) < 10 {
+		t.Fatalf("found %d entries; this check would be near-vacuous", len(keys))
+	}
+	if !sort.StringsAreSorted(keys) {
+		t.Errorf("initialisms are not sorted; first out of order near %v",
+			firstUnsorted(keys))
+	}
+}
+
+// firstUnsorted names the pair that breaks the ordering, so the failure
+// says where to look rather than printing the whole map.
+func firstUnsorted(keys []string) []string {
+	for i := 1; i < len(keys); i++ {
+		if keys[i-1] > keys[i] {
+			return []string{keys[i-1], keys[i]}
+		}
+	}
+	return nil
 }

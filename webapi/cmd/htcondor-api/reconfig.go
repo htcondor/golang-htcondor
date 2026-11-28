@@ -121,6 +121,11 @@ type reconfigTarget interface {
 // parameters this daemon actually consumes rather than every key in the
 // configuration: a warning about a pool-wide knob htcondor-api never reads
 // would be noise, and noise is what teaches operators to ignore warnings.
+// Grouped by subsystem, with a comment on each group saying why its
+// settings are dynamic or are not. ADD A NEW GROUP BESIDE THE ONES IT
+// BELONGS WITH rather than at the end: appending every batch to the
+// same place made unrelated batches conflict there, every time, over
+// changes that never disagreed.
 var reconfigParams = []reconfigParam{
 	// --- Applied on reconfigure ---
 
