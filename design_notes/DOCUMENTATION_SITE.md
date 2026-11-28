@@ -608,10 +608,36 @@ OpenAPI-shaped, every internal `$ref` resolves, and the OAuth2 flow
 object is where `setOpenAPIOAuth2URLs` walks to find it, that last one
 being a silent no-op if any of those keys move.
 
-Still to do here: validating against the OpenAPI schema itself, a
-rendered reference page, and the check that the paths it declares are
-routes the server registers -- the one that would catch an endpoint
-added without documentation.
+**The route check landed** and this paragraph said otherwise for a
+while: `openapi_routes_test.go` asks the server's own mux whether each
+documented path is routed, and checks the other direction against a
+frozen inventory of 41 `/api/v1/` routes in no OpenAPI path, mostly
+web-console endpoints. Whether the document is meant to describe those
+is a product question, not a documentation one; freezing the set is
+what stops it growing while nobody decides.
+
+**Structural validation landed too, and not as a meta-schema
+validation.** Five classes, each one a thing that breaks a generated
+client: operationIds present and unique, every `{placeholder}` in a
+path template declared, every response described, every `required`
+property defined, no orphan component schema. The meta-schema was
+rejected deliberately -- it has to be vendored, it reports failures in
+schema language rather than in terms of this document, and it would
+miss the sharpest of the five, since two operations sharing an
+operationId is spec-valid and still makes one endpoint uncallable.
+
+All five passed on the document as it stood: 128 operations, zero
+defects. They are a ratchet, like the undeclared-settings inventory,
+and their value is in what they refuse next.
+
+Still to do here: a rendered reference page, which is stage 6's
+business rather than this one's.
+
+**What the document was actually wrong about was its prose, not its
+structure** -- see the openapi.json entry under "What the conversion
+keeps finding in shipped artifacts" below. Worth stating because it
+sets where to look next: the shapes are checkable and now checked, and
+the sentences are not.
 
 **4. The user guide.** *Started.* The genuinely missing audience.
 Everything before this exists to make writing it, and keeping it
