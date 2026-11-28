@@ -551,6 +551,30 @@ The externally-visible base URL of the MCP listener, for a deployment
 that serves MCP on an address of its own. Unset, MCP is reached at
 `HTTP_API_BASE_URL` like everything else.
 
+### `HTTP_API_MCP_CIMD`
+
+**Boolean.** Default `true`. Changing it needs a restart.
+
+Resolve an https:// MCP client_id as a Client ID Metadata Document,
+making the client a public one. On by default, which is the
+open-ecosystem posture: the SSRF guards apply whatever this is set to,
+and `HTTP_API_MCP_CIMD_ALLOWED_HOSTS` narrows which hosts a document
+may be fetched from. Set false to require dynamic client registration
+instead.
+
+See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients).
+
+### `HTTP_API_MCP_CIMD_ALLOWED_HOSTS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Host or .domain patterns a CIMD client_id may point at, separated by
+commas or whitespace. Empty allows any host, with the SSRF guards
+still applying. Worth setting in production: without it,
+unauthenticated callers choose which public hosts this server fetches
+from. Read as a raw string and split downstream, on whitespace as well
+as commas, so a list written either way keeps working.
+
 ### `HTTP_API_MCP_CONFIRM_REMOVE_OVER`
 
 **Whole number.** Default `0`. A change is installed by `condor_reconfig`.
@@ -571,6 +595,18 @@ unasked, logged at WARN.
 
 See [Asking a person before a bulk
 operation](agents.md#asking-a-person-before-a-bulk-operation).
+
+### `HTTP_API_MCP_DCR`
+
+**Boolean.** Default `true`. Changing it needs a restart.
+
+Accept dynamic client registration (RFC 7591) at /oauth2/register, and
+at /mcp/oauth2/register where MCP is on. On by default. Set false for
+a deployment whose clients are all seeded, operator-provisioned or
+CIMD: registration is then refused with 403 and the endpoint is not
+advertised.
+
+See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients).
 
 ### `HTTP_API_MCP_DISABLED_TOOLS`
 
@@ -671,6 +707,28 @@ and leaves reloads to condor_reconfig. The check is stat-only until
 something actually changes. A value under one second is raised to one
 second rather than honoured: it would stat the tree hundreds of times
 a minute to learn nothing.
+
+### `HTTP_API_MCP_TOKEN_EXCHANGE_ISSUERS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+External issuers whose tokens this server will exchange, as a JSON
+array of objects. Each needs issuer, jwks_uri and audience; jwks_uri
+must be https, and identity_domain is optional and defaults to the
+issuer's host. Unset disables external exchange entirely.
+
+See [Token exchange (RFC 8693)](auth.md#token-exchange-rfc-8693).
+
+### `HTTP_API_MCP_TRANSPORT`
+
+**String.** Unset serves the built-in transport. Changing it needs a restart.
+
+Which MCP transport serves /mcp: builtin or sdk. The SDK transport is
+stricter about the request -- notably it requires an Accept header
+naming both application/json and text/event-stream, which a
+spec-compliant client sends and a hand-written curl usually does not.
+An unrecognised value refuses to start rather than silently choosing,
+because which transport is serving decides what a client must send.
 
 ### `HTTP_API_MCP_WATCH_MAX_WAIT`
 
@@ -1412,10 +1470,6 @@ each one.
 | `HTTP_API_TOOL_STATS_OMIT_USER` | `true` renders every `/metrics` user label as `omitted`, for a site that does not want account names on a scrapeable endpoint. The database still records them. See [Usernames on /metrics](metrics.md#usernames-on-metrics). |
 | `HTTP_API_ENABLE_MCP` | Enable the MCP endpoint (`/mcp`), the `/mcp/oauth2/*` spelling of the OAuth2 endpoints, and the `mcp:read`/`mcp:write` scopes in OAuth2 metadata. Required by the chat assistant. OAuth2 itself is served whenever the web UI **or** MCP is enabled, so a web UI with this off still logs people in and serves the device flow. |
 | `HTTP_API_MCP_OAUTH2` | `false` serves MCP with the forwarded-HTCondor-token path alone: no OAuth2 authorize, token or registration endpoint, no protected-resource document for `/mcp`, no `/mcp/oauth2/*` spelling, and an OAuth2 token presented to `/mcp` is refused. Default `true`. For a deployment behind a gateway that forwards a per-user IDTOKEN on every request and holds no pool signing key. A web UI keeps its own OAuth2 regardless. Read at startup; changing it needs a restart. See [MCP without OAuth2](auth.md#mcp-without-oauth2). |
-| `HTTP_API_MCP_TOKEN_EXCHANGE_ISSUERS` | JSON array of trusted external issuers for RFC 8693 token exchange (see [Token exchange](auth.md#token-exchange-rfc-8693)). Unset disables external exchange. |
-| `HTTP_API_MCP_CIMD` | Resolve an `https://` MCP `client_id` as a Client ID Metadata Document (a public client). Default `true`; set `false` to require DCR. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
-| `HTTP_API_MCP_CIMD_ALLOWED_HOSTS` | Comma/space list of host or `.domain` patterns a CIMD `client_id` may point at. Empty = any host (SSRF guards still apply). Recommended for production: without it, unauthenticated callers choose which public hosts this server fetches from. |
-| `HTTP_API_MCP_DCR` | Accept dynamic client registration (RFC 7591) at `/oauth2/register` (and `/mcp/oauth2/register` where MCP is on). Default `true`; set `false` when every client is seeded, operator-provisioned or CIMD. Registrations are then refused with 403 and the endpoint is not advertised. See [MCP OAuth2 clients](auth.md#mcp-oauth2-clients). |
 | `HTTP_API_CREDD_ADDRESS` | Single-AP mode only (refused in multi-AP mode, where each access point's schedd names its own). Pins the credd this server talks to (a sinful, e.g. `<10.0.0.5:9618?sock=credd>`), overriding discovery. Normally unnecessary: the credd is read from the schedd itself, which publishes its own credd as `CredDIpAddr` in its ad and address file — the same binding `DCSchedd::getCreddAddress` uses. Set this when fronting a remote schedd that does not advertise it, since a credd that is not the submitting schedd's accepts credentials and leaves jobs held anyway. |
 | `HTTP_API_REQUIRED_CREDENTIALS` | OAuth service credentials that must exist before a job may be submitted (comma- or space-separated, e.g. `scitokens`). Some access points hold every job submitted without them, whatever the job actually uses. Each submit path checks the caller's credentials first and stores a placeholder for any that is missing, so a person using the web UI does not get a held job for a reason unrelated to what they asked for; a real credential obtained later through the OAuth flow replaces the placeholder. Presence is cached per user for 5 minutes. Best effort: if the credd is unavailable or refuses, the submit still proceeds and the reason is logged. Unset = nothing is required. |
 | `HTTP_API_ADVERTISE` | Advertise this API server to the collector (a `HTCondorAPI` ad: endpoint, schedd, mirror health, versions). Default `true`; `daemon.Advertise` is a no-op without `COLLECTOR_HOST`, so this only matters to opt out when a collector is configured. |

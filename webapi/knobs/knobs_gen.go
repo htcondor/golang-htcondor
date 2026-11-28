@@ -477,6 +477,30 @@ var MCPAdminGroup = config.DefineString("HTTP_API_MCP_ADMIN_GROUP", "", config.R
 var MCPBaseURL = config.DefineString("HTTP_API_MCP_BASE_URL", "", config.Startup,
 	"The externally-visible base URL of the MCP listener, for a deployment that serves MCP on an address of its own. Unset, MCP is reached at HTTP_API_BASE_URL like everything else.")
 
+// MCPCIMD is HTTP_API_MCP_CIMD.
+//
+// Resolve an https:// MCP client_id as a Client ID Metadata Document,
+// making the client a public one. On by default, which is the
+// open-ecosystem posture: the SSRF guards apply whatever this is set
+// to, and HTTP_API_MCP_CIMD_ALLOWED_HOSTS narrows which hosts a
+// document may be fetched from. Set false to require dynamic client
+// registration instead. See "MCP OAuth2 clients" in the operator
+// guide.
+var MCPCIMD = config.DefineBool("HTTP_API_MCP_CIMD", true, config.Startup,
+	"Resolve an https:// MCP client_id as a Client ID Metadata Document, making the client a public one. On by default, which is the open-ecosystem posture: the SSRF guards apply whatever this is set to, and HTTP_API_MCP_CIMD_ALLOWED_HOSTS narrows which hosts a document may be fetched from. Set false to require dynamic client registration instead. See \"MCP OAuth2 clients\" in the operator guide.")
+
+// MCPCIMDAllowedHosts is HTTP_API_MCP_CIMD_ALLOWED_HOSTS.
+//
+// Host or .domain patterns a CIMD client_id may point at, separated by
+// commas or whitespace. Empty allows any host, with the SSRF guards
+// still applying. Worth setting in production: without it,
+// unauthenticated callers choose which public hosts this server
+// fetches from. Read as a raw string and split downstream, on
+// whitespace as well as commas, so a list written either way keeps
+// working.
+var MCPCIMDAllowedHosts = config.DefineString("HTTP_API_MCP_CIMD_ALLOWED_HOSTS", "", config.Startup,
+	"Host or .domain patterns a CIMD client_id may point at, separated by commas or whitespace. Empty allows any host, with the SSRF guards still applying. Worth setting in production: without it, unauthenticated callers choose which public hosts this server fetches from. Read as a raw string and split downstream, on whitespace as well as commas, so a list written either way keeps working.")
+
 // MCPConfirmRemoveOver is HTTP_API_MCP_CONFIRM_REMOVE_OVER.
 //
 // The same, for the number of jobs remove_jobs would remove. Zero is
@@ -495,6 +519,17 @@ var MCPConfirmRemoveOver = config.DefineInt("HTTP_API_MCP_CONFIRM_REMOVE_OVER", 
 // operation" in the operator guide.
 var MCPConfirmSubmitOver = config.DefineInt("HTTP_API_MCP_CONFIRM_SUBMIT_OVER", 0, config.Reconfig,
 	"Ask the person running the client to confirm before submit_job submits more than this many jobs. Zero, the default, is off. This is a prompt and not a limit: a client that cannot present the question -- including any client older than MCP protocol 2026-07-28 -- proceeds unasked, logged at WARN. See \"Asking a person before a bulk operation\" in the operator guide.")
+
+// MCPDCR is HTTP_API_MCP_DCR.
+//
+// Accept dynamic client registration (RFC 7591) at /oauth2/register,
+// and at /mcp/oauth2/register where MCP is on. On by default. Set
+// false for a deployment whose clients are all seeded,
+// operator-provisioned or CIMD: registration is then refused with 403
+// and the endpoint is not advertised. See "MCP OAuth2 clients" in the
+// operator guide.
+var MCPDCR = config.DefineBool("HTTP_API_MCP_DCR", true, config.Startup,
+	"Accept dynamic client registration (RFC 7591) at /oauth2/register, and at /mcp/oauth2/register where MCP is on. On by default. Set false for a deployment whose clients are all seeded, operator-provisioned or CIMD: registration is then refused with 403 and the endpoint is not advertised. See \"MCP OAuth2 clients\" in the operator guide.")
 
 // MCPDisabledTools is HTTP_API_MCP_DISABLED_TOOLS.
 //
@@ -610,6 +645,28 @@ var MCPSkillsReloadInterval = config.DefineDuration("HTTP_API_MCP_SKILLS_RELOAD_
 // Deprecated: superseded by HTTP_API_ANYUSER_WRITE_GROUPS.
 var MCPSuperuserGroup = config.DefineString("HTTP_API_MCP_SUPERUSER_GROUP", "", config.Reconfig,
 	"Obsolete: superseded by HTTP_API_ANYUSER_WRITE_GROUPS. Group(s) whose members may change any user's jobs. Honored where HTTP_API_ANYUSER_WRITE_GROUPS is unset, and named as superseded in the startup log when it is read. Read as a raw string and split downstream, as above.")
+
+// MCPTokenExchangeIssuers is HTTP_API_MCP_TOKEN_EXCHANGE_ISSUERS.
+//
+// External issuers whose tokens this server will exchange, as a JSON
+// array of objects. Each needs issuer, jwks_uri and audience; jwks_uri
+// must be https, and identity_domain is optional and defaults to the
+// issuer's host. Unset disables external exchange entirely. See "Token
+// exchange (RFC 8693)" in the operator guide.
+var MCPTokenExchangeIssuers = config.DefineString("HTTP_API_MCP_TOKEN_EXCHANGE_ISSUERS", "", config.Startup,
+	"External issuers whose tokens this server will exchange, as a JSON array of objects. Each needs issuer, jwks_uri and audience; jwks_uri must be https, and identity_domain is optional and defaults to the issuer's host. Unset disables external exchange entirely. See \"Token exchange (RFC 8693)\" in the operator guide.")
+
+// MCPTransport is HTTP_API_MCP_TRANSPORT.
+//
+// Which MCP transport serves /mcp: builtin or sdk. The SDK transport
+// is stricter about the request -- notably it requires an Accept
+// header naming both application/json and text/event-stream, which a
+// spec-compliant client sends and a hand-written curl usually does
+// not. An unrecognised value refuses to start rather than silently
+// choosing, because which transport is serving decides what a client
+// must send.
+var MCPTransport = config.DefineString("HTTP_API_MCP_TRANSPORT", "", config.Startup,
+	"Which MCP transport serves /mcp: builtin or sdk. The SDK transport is stricter about the request -- notably it requires an Accept header naming both application/json and text/event-stream, which a spec-compliant client sends and a hand-written curl usually does not. An unrecognised value refuses to start rather than silently choosing, because which transport is serving decides what a client must send.")
 
 // MCPWatchMaxWait is HTTP_API_MCP_WATCH_MAX_WAIT.
 //
@@ -1510,8 +1567,11 @@ var All = []config.Knob{
 	MCPAccessUsers.Knob,
 	MCPAdminGroup.Knob,
 	MCPBaseURL.Knob,
+	MCPCIMD.Knob,
+	MCPCIMDAllowedHosts.Knob,
 	MCPConfirmRemoveOver.Knob,
 	MCPConfirmSubmitOver.Knob,
+	MCPDCR.Knob,
 	MCPDisabledTools.Knob,
 	MCPListenAddr.Knob,
 	MCPMaxRequestDuration.Knob,
@@ -1524,6 +1584,8 @@ var All = []config.Knob{
 	MCPSkillsDir.Knob,
 	MCPSkillsReloadInterval.Knob,
 	MCPSuperuserGroup.Knob,
+	MCPTokenExchangeIssuers.Knob,
+	MCPTransport.Knob,
 	MCPWatchMaxWait.Knob,
 	MCPWriteGroup.Knob,
 	MCPWriteGroups.Knob,

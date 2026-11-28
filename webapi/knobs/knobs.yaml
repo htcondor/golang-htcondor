@@ -1378,6 +1378,83 @@ knobs:
       is off. Counting the matches costs one extra queue query per
       gated call, which is why it is not on by default.
 
+  # How an MCP client registers and connects. All four are read
+  # strictly -- a malformed value refuses to start -- so they go
+  # through each knob's Name() rather than Get(), which would report and
+  # fall back. Which transport is serving decides what a client must
+  # send, and whether CIMD or DCR is offered decides whether a client
+  # can register at all; a daemon that guessed would be found out by a
+  # client rather than by an operator.
+  - name: HTTP_API_MCP_CIMD
+    type: bool
+    default: "true"
+    scope: startup
+    see:
+      - text: MCP OAuth2 clients
+        url: auth.md#mcp-oauth2-clients
+    doc: >
+      Resolve an https:// MCP client_id as a Client ID Metadata
+      Document, making the client a public one. On by default, which is
+      the open-ecosystem posture: the SSRF guards apply whatever this
+      is set to, and HTTP_API_MCP_CIMD_ALLOWED_HOSTS narrows which
+      hosts a document may be fetched from. Set false to require
+      dynamic client registration instead.
+
+  - name: HTTP_API_MCP_CIMD_ALLOWED_HOSTS
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Host or .domain patterns a CIMD client_id may point at,
+      separated by commas or whitespace. Empty allows any host, with
+      the SSRF guards still applying. Worth setting in production:
+      without it, unauthenticated callers choose which public hosts
+      this server fetches from. Read as a raw string and split
+      downstream, on whitespace as well as commas, so a list written
+      either way keeps working.
+
+  - name: HTTP_API_MCP_DCR
+    type: bool
+    default: "true"
+    scope: startup
+    see:
+      - text: MCP OAuth2 clients
+        url: auth.md#mcp-oauth2-clients
+    doc: >
+      Accept dynamic client registration (RFC 7591) at
+      /oauth2/register, and at /mcp/oauth2/register where MCP is on. On
+      by default. Set false for a deployment whose clients are all
+      seeded, operator-provisioned or CIMD: registration is then
+      refused with 403 and the endpoint is not advertised.
+
+  - name: HTTP_API_MCP_TOKEN_EXCHANGE_ISSUERS
+    type: string
+    default: ""
+    scope: startup
+    see:
+      - text: Token exchange (RFC 8693)
+        url: auth.md#token-exchange-rfc-8693
+    doc: >
+      External issuers whose tokens this server will exchange, as a
+      JSON array of objects. Each needs issuer, jwks_uri and audience;
+      jwks_uri must be https, and identity_domain is optional and
+      defaults to the issuer's host. Unset disables external exchange
+      entirely.
+
+  - name: HTTP_API_MCP_TRANSPORT
+    type: string
+    default: ""
+    scope: startup
+    default_doc: Unset serves the built-in transport.
+    doc: >
+      Which MCP transport serves /mcp: builtin or sdk. The SDK
+      transport is stricter about the request -- notably it requires an
+      Accept header naming both application/json and text/event-stream,
+      which a spec-compliant client sends and a hand-written curl
+      usually does not. An unrecognised value refuses to start rather
+      than silently choosing, because which transport is serving
+      decides what a client must send.
+
   - name: HTTP_API_MCP_DISABLED_TOOLS
     type: string
     default: ""
