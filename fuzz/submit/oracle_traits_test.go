@@ -10,8 +10,8 @@ import (
 // TestEveryTraitIsUsed keeps oracleTraits from accumulating probes nothing
 // consults. A trait is a claim about the oracle, and it earns its keep by
 // deciding something: whether a recorded divergence applies, which keyword
-// rows this parser may be ahead on, which digest keywords it may be behind
-// on, or what the Go side produces. A trait deciding none of those is a fix
+// rows this parser may be ahead on or still write from the simple table,
+// which digest keywords it may be behind on, or what the Go side produces. A trait deciding none of those is a fix
 // that landed and took its entry with it, or a probe
 // written ahead of the work it was for.
 //
@@ -24,9 +24,12 @@ func TestEveryTraitIsUsed(t *testing.T) {
 		named[req.ticket] = true
 	}
 	// The other places a trait decides something: which keyword rows this
-	// parser is allowed to be ahead on, and which digest keywords it is
-	// allowed to be behind on.
+	// parser is allowed to be ahead on or to keep writing from the simple
+	// table, and which digest keywords it is allowed to be behind on.
 	for _, ticket := range keywordsAheadOfOracle {
+		named[ticket] = true
+	}
+	for _, ticket := range keywordsSpecialInOracle {
 		named[ticket] = true
 	}
 	for _, ticket := range digestKeywordsBehindOracle {

@@ -112,6 +112,11 @@ var oracleTraits = []oracleTrait{
 		probe:  func(f oracleFacts) bool { _, ok := f.keyword["require_common_files"]; return ok },
 	},
 	{
+		ticket: "HTCONDOR-3618",
+		what:   "the organized_output submit commands exist and output_directory is special",
+		probe:  func(f oracleFacts) bool { _, ok := f.keyword["organized_output"]; return ok },
+	},
+	{
 		ticket: "HTCONDOR-4053",
 		what:   "the batch cpu/node submit commands exist",
 		probe:  func(f oracleFacts) bool { _, ok := f.keyword["batch_whole_nodes"]; return ok },
@@ -220,6 +225,31 @@ var keywordsAheadOfOracle = map[string]string{
 	"max_condor_version": "HTCONDOR-3065",
 }
 
+// keywordsSpecialInOracle are the rows this parser still writes from the
+// simple table that a newer HTCondor marks f_special, each with the change
+// that moved it.
+//
+// This is keywordsAheadOfOracle's opposite direction. There the Go table runs
+// ahead of a pinned oracle; here upstream has moved a keyword out of the
+// table-driven pass into a SetXXX method of its own, and this parser has not
+// followed. Keeping the row is the conservative half of that: the attribute
+// is still written, from the value as it was spelled, rather than silently
+// dropped the moment upstream reorganizes its own table.
+//
+// What the SetXXX method does on top -- resolving a path, reconciling two
+// keywords, rejecting a value -- is NOT done here, so an entry only says the
+// row may stay. The difference it leaves behind is recorded as a divergence
+// like any other, which is why these tickets are expected to be named by an
+// entry file too.
+//
+// An entry is honored only while the oracle HAS the named change, so it
+// lapses by itself if the pin moves to an HTCondor that predates it.
+//
+//nolint:unused // read by TestSimpleKeywordTableMatchesOracle
+var keywordsSpecialInOracle = map[string]string{
+	"output_directory": "HTCONDOR-3618",
+}
+
 // digestKeywordsBehindOracle are names a newer HTCondor prunes from a submit
 // digest and this library does not prune yet, each with the change that added
 // the keyword upstream.
@@ -238,24 +268,26 @@ var keywordsAheadOfOracle = map[string]string{
 //
 //nolint:unused // read by TestDigestKeywordsMatchOracle
 var digestKeywordsBehindOracle = map[string]string{
-	"annex_name":           "HTCONDOR-2015",
-	"restrict_to_annex":    "HTCONDOR-2015",
-	"targetannexname":      "HTCONDOR-2015",
-	"restricttoannex":      "HTCONDOR-2015",
-	"min_condor_version":   "HTCONDOR-3065",
-	"max_condor_version":   "HTCONDOR-3065",
-	"mincondorversion":     "HTCONDOR-3065",
-	"maxcondorversion":     "HTCONDOR-3065",
-	"batch_cpu_count":      "HTCONDOR-4053",
-	"batch_cpus_per_node":  "HTCONDOR-4053",
-	"batch_node_count":     "HTCONDOR-4053",
-	"batch_whole_nodes":    "HTCONDOR-4053",
-	"batchcpucount":        "HTCONDOR-4053",
-	"batchcpuspernode":     "HTCONDOR-4053",
-	"batchnodecount":       "HTCONDOR-4053",
-	"batchwholenodes":      "HTCONDOR-4053",
-	"require_common_files": "HTCONDOR-3955",
-	"common_input_files":   "HTCONDOR-3955",
+	"annex_name":                 "HTCONDOR-2015",
+	"restrict_to_annex":          "HTCONDOR-2015",
+	"targetannexname":            "HTCONDOR-2015",
+	"restricttoannex":            "HTCONDOR-2015",
+	"min_condor_version":         "HTCONDOR-3065",
+	"max_condor_version":         "HTCONDOR-3065",
+	"mincondorversion":           "HTCONDOR-3065",
+	"maxcondorversion":           "HTCONDOR-3065",
+	"batch_cpu_count":            "HTCONDOR-4053",
+	"batch_cpus_per_node":        "HTCONDOR-4053",
+	"batch_node_count":           "HTCONDOR-4053",
+	"batch_whole_nodes":          "HTCONDOR-4053",
+	"batchcpucount":              "HTCONDOR-4053",
+	"batchcpuspernode":           "HTCONDOR-4053",
+	"batchnodecount":             "HTCONDOR-4053",
+	"batchwholenodes":            "HTCONDOR-4053",
+	"require_common_files":       "HTCONDOR-3955",
+	"organized_output":           "HTCONDOR-3618",
+	"organized_output_directory": "HTCONDOR-3618",
+	"common_input_files":         "HTCONDOR-3955",
 }
 
 // digestKeywordsAheadOfOracle are names in this library's prunable-keyword
