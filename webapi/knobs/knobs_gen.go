@@ -1005,6 +1005,26 @@ var SandboxCacheMB = config.DefineInt("HTTP_API_SANDBOX_CACHE_MB", 0, config.Sta
 var SandboxMaxGB = config.DefineInt("HTTP_API_SANDBOX_MAX_GB", 0, config.Startup,
 	"The largest job sandbox the +jobs file service will serve, in GiB. A negative number means no limit. Refused the same way as above when it is not a whole number.")
 
+// SiteAppsGitHub is HTTP_API_SITE_APPS_GITHUB.
+//
+// Whether a bundle may be fetched from a GitHub release instead of
+// attached. On by default: it publishes nothing the upload grant above
+// does not already allow. The reason to turn it off is an access point
+// with no egress, where the alternative is a button that only ever
+// times out. See "Site apps" in the operator guide.
+var SiteAppsGitHub = config.DefineBool("HTTP_API_SITE_APPS_GITHUB", true, config.Startup,
+	"Whether a bundle may be fetched from a GitHub release instead of attached. On by default: it publishes nothing the upload grant above does not already allow. The reason to turn it off is an access point with no egress, where the alternative is a button that only ever times out. See \"Site apps\" in the operator guide.")
+
+// SiteAppsUpload is HTTP_API_SITE_APPS_UPLOAD.
+//
+// Whether an administrator may publish a bundle through the web
+// interface. Off unless the site says otherwise: an uploaded app is
+// served same-origin and can do anything its visitor can, so this is a
+// grant separate from administering the server. Has no effect without
+// HTTP_API_SITE_APPS_DIR. See "Site apps" in the operator guide.
+var SiteAppsUpload = config.DefineBool("HTTP_API_SITE_APPS_UPLOAD", false, config.Startup,
+	"Whether an administrator may publish a bundle through the web interface. Off unless the site says otherwise: an uploaded app is served same-origin and can do anything its visitor can, so this is a grant separate from administering the server. Has no effect without HTTP_API_SITE_APPS_DIR. See \"Site apps\" in the operator guide.")
+
 // SpoolBufferDir is HTTP_API_SPOOL_BUFFER_DIR.
 //
 // Where an archive dropped in the SSH gateway's /submit/, or posted to
@@ -1251,6 +1271,27 @@ var UserHeaderTrustAny = config.DefineBool("HTTP_API_USER_HEADER_TRUST_ANY", fal
 // code-server image. See "VS Code sessions" in the operator guide.
 var VSCodeImage = config.DefineString("HTTP_API_VSCODE_IMAGE", "", config.Startup,
 	"The container image a VS Code session runs. Any transfer scheme works, so a .sif staged on OSDF can be named directly. Set, it wins outright and a caller cannot override it; unset, a caller may name an image, which grants them nothing new since they can already submit a job with any image. Unset otherwise runs a published code-server image. See \"VS Code sessions\" in the operator guide.")
+
+// Webhooks is HTTP_API_WEBHOOKS.
+//
+// Whether this access point offers outbound webhooks at all. On by
+// default. Set false where the deployment permits no egress: the
+// endpoints then answer 503 and neither the evaluator nor the delivery
+// worker runs. See "Outbound webhooks" in the operator guide.
+var Webhooks = config.DefineBool("HTTP_API_WEBHOOKS", true, config.Startup,
+	"Whether this access point offers outbound webhooks at all. On by default. Set false where the deployment permits no egress: the endpoints then answer 503 and neither the evaluator nor the delivery worker runs. See \"Outbound webhooks\" in the operator guide.")
+
+// WebhookFanoutLimit is HTTP_API_WEBHOOK_FANOUT_LIMIT.
+//
+// Most jobs one webhook subscription may deliver for in a single pass.
+// Past the cap it sends one summary a day and withholds the per-job
+// deliveries until the selection drops back under it. Unset, or any
+// value that is not positive, leaves the evaluator's own default of
+// 500 -- deliberately well above a normal batch and well below a large
+// cluster. A bad value is reported and ignored rather than refusing to
+// start, because it costs a noisier page and not a wrong answer.
+var WebhookFanoutLimit = config.DefineInt("HTTP_API_WEBHOOK_FANOUT_LIMIT", 0, config.Startup,
+	"Most jobs one webhook subscription may deliver for in a single pass. Past the cap it sends one summary a day and withholds the per-job deliveries until the selection drops back under it. Unset, or any value that is not positive, leaves the evaluator's own default of 500 -- deliberately well above a normal batch and well below a large cluster. A bad value is reported and ignored rather than refusing to start, because it costs a noisier page and not a wrong answer.")
 
 // WebUIAccessGroup is HTTP_API_WEBUI_ACCESS_GROUP.
 //
@@ -1639,6 +1680,8 @@ var All = []config.Knob{
 	SandboxCacheDir.Knob,
 	SandboxCacheMB.Knob,
 	SandboxMaxGB.Knob,
+	SiteAppsGitHub.Knob,
+	SiteAppsUpload.Knob,
 	SpoolBufferDir.Knob,
 	SpoolMaxUploadBytes.Knob,
 	SSHCAKeyFile.Knob,
@@ -1664,6 +1707,8 @@ var All = []config.Knob{
 	TokenRetention.Knob,
 	UserHeaderTrustAny.Knob,
 	VSCodeImage.Knob,
+	Webhooks.Knob,
+	WebhookFanoutLimit.Knob,
 	WebUIAccessGroup.Knob,
 	WebUIAccessGroups.Knob,
 	WebUIAccessUsers.Knob,

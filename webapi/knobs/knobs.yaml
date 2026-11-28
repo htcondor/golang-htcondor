@@ -1630,6 +1630,68 @@ knobs:
       Like the key file it must not be world-accessible.
 
 
+  # The two grants that decide where a site app bundle may come from.
+  - name: HTTP_API_SITE_APPS_UPLOAD
+    type: bool
+    default: "false"
+    scope: startup
+    see:
+      - text: Site apps
+        url: site-apps.md
+    doc: >
+      Whether an administrator may publish a bundle through the web
+      interface. Off unless the site says otherwise: an uploaded app is
+      served same-origin and can do anything its visitor can, so this
+      is a grant separate from administering the server. Has no effect
+      without HTTP_API_SITE_APPS_DIR.
+
+  - name: HTTP_API_SITE_APPS_GITHUB
+    type: bool
+    default: "true"
+    scope: startup
+    see:
+      - text: Site apps
+        url: site-apps.md
+    doc: >
+      Whether a bundle may be fetched from a GitHub release instead of
+      attached. On by default: it publishes nothing the upload grant
+      above does not already allow. The reason to turn it off is an
+      access point with no egress, where the alternative is a button
+      that only ever times out.
+
+  # Outbound webhooks. On by default: a destination is restricted to a
+  # routable public https address and a user may only subscribe to
+  # their own jobs, so the feature is safe to offer. The switch exists
+  # for the access point that permits no egress at all, where the
+  # alternative is a page whose every delivery times out.
+  - name: HTTP_API_WEBHOOKS
+    type: bool
+    default: "true"
+    scope: startup
+    see:
+      - text: Outbound webhooks
+        url: webhooks.md
+    doc: >
+      Whether this access point offers outbound webhooks at all. On by
+      default. Set false where the deployment permits no egress: the
+      endpoints then answer 503 and neither the evaluator nor the
+      delivery worker runs.
+
+  - name: HTTP_API_WEBHOOK_FANOUT_LIMIT
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset caps the fan-out at 500 jobs.
+    doc: >
+      Most jobs one webhook subscription may deliver for in a single
+      pass. Past the cap it sends one summary a day and withholds the
+      per-job deliveries until the selection drops back under it.
+      Unset, or any value that is not positive, leaves the evaluator's
+      own default of 500 -- deliberately well above a normal batch and
+      well below a large cluster. A bad value is reported and ignored
+      rather than refusing to start, because it costs a noisier page
+      and not a wrong answer.
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

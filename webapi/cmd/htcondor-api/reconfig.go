@@ -699,6 +699,19 @@ var reconfigParams = []reconfigParam{
 	// table could not have been watching, so it is re-read whole on
 	// every reconfigure (see reconfigure).
 	{name: "HTTP_API_SITE_APPS_DIR"},
+	// The two grants that decide where a bundle may come from. Both
+	// restart-required: the upload route and the GitHub client are
+	// built once. Before these entries a change to either was neither
+	// applied nor reported.
+	fromKnob(knobs.SiteAppsUpload.Knob),
+	fromKnob(knobs.SiteAppsGitHub.Knob),
+
+	// Outbound webhooks: whether they are offered at all, and the
+	// fan-out ceiling. Restart-required -- the evaluator and the
+	// delivery worker are built once -- and listed so a change says so
+	// rather than being silently ignored.
+	fromKnob(knobs.Webhooks.Knob),
+	fromKnob(knobs.WebhookFanoutLimit.Knob),
 	{name: "HTTP_API_SITE_APPS_RELOAD_INTERVAL"},
 }
 
