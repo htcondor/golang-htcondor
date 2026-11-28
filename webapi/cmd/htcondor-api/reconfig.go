@@ -450,6 +450,18 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.IDPAccessTokenLifespan.Knob),
 	fromKnob(knobs.IDPRefreshTokenLifespan.Knob),
 
+	// Who is in front of this server, and whether it believes a header
+	// about who the user is. Restart-required: the trusted-proxy
+	// networks are parsed once when the Handler is built, and the
+	// username header is read into it there too. Listed so a change
+	// says so -- before this, adding a proxy to either list and
+	// reconfiguring was neither applied nor reported, which on the
+	// username header is a security setting silently not taking
+	// effect.
+	fromKnob(knobs.TrustedProxies.Knob),
+	fromKnob(knobs.UserHeader.Knob),
+	fromKnob(knobs.UserHeaderTrustedProxies.Knob),
+
 	// The same for the OAuth2 authorization server this one is. The
 	// lifespans are handed to the provider when it is built, so a
 	// change reaches nothing already issued and nothing issued next

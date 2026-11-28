@@ -28,6 +28,50 @@
 # elsewhere. See design_notes/DOCUMENTATION_SITE.md.
 
 knobs:
+  # Who is in front of this server, and whether it believes a header
+  # about who the user is. All three are read through each knob's
+  # Name() and keep their own parsing: the two proxy lists are split by
+  # DIFFERENT rules and converting either to the knob list type would
+  # change which values work.
+  - name: HTTP_API_TRUSTED_PROXIES
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      CIDRs, or bare addresses, whose forwarding headers this server
+      believes when recording a client's address -- a bare address
+      needs no /32, which is the common case for one ingress. Unset
+      trusts none of them and records the peer address. With it set,
+      the X-Forwarded-For chain is walked from the right, and X-Real-IP
+      is honored only as a fallback and only from a trusted peer.
+      Separated by commas OR whitespace, unlike
+      HTTP_API_USER_HEADER_TRUSTED_PROXIES below, which is comma-only.
+
+  - name: HTTP_API_USER_HEADER
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Trust this HTTP header to carry the authenticated username. For
+      demo mode and for a deployment sitting behind a proxy that
+      authenticates, and nothing else: anything that can reach this
+      server directly can then claim to be any user. Setting it
+      requires HTTP_API_USER_HEADER_TRUSTED_PROXIES, or the explicit
+      unsafe override, or the server refuses to start. A value here
+      overrides the -user-header command-line flag.
+
+  - name: HTTP_API_USER_HEADER_TRUSTED_PROXIES
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      CIDRs the username header above is accepted from, separated by
+      COMMAS ONLY -- whitespace does not separate here, though it does
+      in HTTP_API_TRUSTED_PROXIES. An entry that is not a valid CIDR
+      refuses to start, naming the value, so a list written
+      space-separated fails loudly rather than trusting nobody in
+      silence.
+
   - name: HTTP_API_TLS_CERT
     type: string
     default: ""
