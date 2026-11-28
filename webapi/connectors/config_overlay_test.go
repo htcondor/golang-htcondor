@@ -70,12 +70,14 @@ func TestConnectorScopesAcceptEitherSpelling(t *testing.T) {
 		"openid, profile, email",
 		`["openid","profile","email"]`,
 	} {
-		src := NewConfigSource(fakeParams{
+		//nolint:gosec // G101: parameter names and a path, not credentials
+		params := fakeParams{
 			"HTTP_API_CONNECTORS":                                  "builtin:gdrive",
 			"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_CLIENT_ID":          "id",
 			"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_CLIENT_SECRET_FILE": "/dev/null",
 			"HTTP_API_CONNECTOR_BUILTIN_GDRIVE_SCOPES":             raw,
-		})
+		}
+		src := NewConfigSource(params)
 		d, ok := src.Definition(ID{Namespace: "builtin", Name: "gdrive"})
 		if !ok {
 			t.Fatalf("%q: no definition", raw)
