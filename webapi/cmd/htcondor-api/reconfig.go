@@ -461,6 +461,19 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.ReservationEPConstraint.Knob),
 	fromKnob(knobs.ReservationStampBudget.Knob),
 
+	// How an MCP client registers and connects. All restart-required:
+	// the transport is chosen when /mcp is routed, and the two
+	// registration mechanisms are decided when the OAuth2 server is
+	// built. Listed so a change says so -- before this a change to any
+	// of them was neither applied nor reported, and an operator who
+	// turned dynamic client registration off and reconfigured was told
+	// nothing while clients kept registering.
+	fromKnob(knobs.MCPCIMD.Knob),
+	fromKnob(knobs.MCPCIMDAllowedHosts.Knob),
+	fromKnob(knobs.MCPDCR.Knob),
+	fromKnob(knobs.MCPTokenExchangeIssuers.Knob),
+	fromKnob(knobs.MCPTransport.Knob),
+
 	// The same for the OAuth2 authorization server this one is. The
 	// lifespans are handed to the provider when it is built, so a
 	// change reaches nothing already issued and nothing issued next
