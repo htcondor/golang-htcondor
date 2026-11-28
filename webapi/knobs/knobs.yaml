@@ -1630,6 +1630,78 @@ knobs:
       Like the key file it must not be world-accessible.
 
 
+  # Reaching daemons behind CCB. Both read through each knob's Name()
+  # and fatal on a bad value: an operator who set either was working
+  # around a reachability problem, and ignoring a typo would put them
+  # back where they started with no clue why.
+  - name: HTTP_API_CCB_STREAMING
+    type: bool
+    default: "false"
+    scope: startup
+    default_doc: >
+      Unset streams when this server runs standalone and does not when
+      condor_master started it.
+    see:
+      - text: Reaching jobs behind CCB
+        url: networking.md
+    doc: >
+      Allow asking the broker to relay a CCB connection instead of
+      being dialed back. Unset follows how the server was started --
+      on standalone, off under condor_master -- which is the right
+      answer for both; set it only to work around a reachability
+      problem the default gets wrong. With HTTP_API_SHARED_PORT set,
+      relaying is the FALLBACK rather than the first choice. A
+      non-boolean refuses to start.
+
+  - name: HTTP_API_CCB_LEARNED_TTL
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset keeps a learned route for 15 minutes.
+    see:
+      - text: Reaching jobs behind CCB
+        url: networking.md
+    doc: >
+      How long what this server learned about a broker -- whether
+      execute nodes can reach it, whether it can relay -- is reused
+      before being rechecked. A value that is not a POSITIVE duration
+      refuses to start: a bare number is ambiguous by a factor of
+      sixty, and zero would mean rechecking on every dial.
+
+  # Runtime estimates: how often the model is refreshed, and how much
+  # history it is built from.
+  - name: HTTP_API_RUNTIME_ESTIMATE_INTERVAL
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset refreshes every 5 minutes.
+    see:
+      - text: Runtime estimates
+        url: estimates.md#runtime-estimates
+    doc: >
+      How often runtime estimates read newly completed jobs from the
+      htcondordb mirror. A literal 0 turns runtime estimates off
+      entirely, and is the one value exempt from the unit rule since
+      there is no ambiguity in zero; anything else malformed refuses to
+      start, as HTTP_API_PING_INTERVAL does. WITHOUT A MIRROR THEY ARE
+      OFF whatever this says, so setting it on a deployment that has
+      none changes nothing.
+
+  - name: HTTP_API_RUNTIME_ESTIMATE_BACKFILL
+    type: duration
+    default: 0s
+    scope: startup
+    default_doc: Unset reads a week of history.
+    see:
+      - text: Runtime estimates
+        url: estimates.md#runtime-estimates
+    doc: >
+      How much job history runtime estimates read at startup, and how
+      long a group of similar jobs is remembered without a new
+      completion. At most 500,000 of the newest records are read
+      however far back this reaches; the log says when that cap is hit.
+      A malformed value refuses to start, as above.
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

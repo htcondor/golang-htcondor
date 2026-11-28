@@ -131,6 +131,29 @@ var BuildRequirements = config.DefineString("HTTP_API_BUILD_REQUIREMENTS", "", c
 var BuildStagingBase = config.DefineString("HTTP_API_BUILD_STAGING_BASE", "", config.Startup,
 	"Where built images are published when the caller gives a bare name. Unset means every call has to name its own destination. It may be a template: {user} expands to the authenticated caller and {initial} to the first letter of that name, so a per-user staging area can be written osdf:///chtc/staging/{initial}/{user}. A base with no placeholder is used verbatim.")
 
+// CCBLearnedTTL is HTTP_API_CCB_LEARNED_TTL.
+//
+// How long what this server learned about a broker -- whether execute
+// nodes can reach it, whether it can relay -- is reused before being
+// rechecked. A value that is not a POSITIVE duration refuses to start:
+// a bare number is ambiguous by a factor of sixty, and zero would mean
+// rechecking on every dial. See "Reaching jobs behind CCB" in the
+// operator guide.
+var CCBLearnedTTL = config.DefineDuration("HTTP_API_CCB_LEARNED_TTL", time.Duration(0) /* 0s */, config.Startup,
+	"How long what this server learned about a broker -- whether execute nodes can reach it, whether it can relay -- is reused before being rechecked. A value that is not a POSITIVE duration refuses to start: a bare number is ambiguous by a factor of sixty, and zero would mean rechecking on every dial. See \"Reaching jobs behind CCB\" in the operator guide.")
+
+// CCBStreaming is HTTP_API_CCB_STREAMING.
+//
+// Allow asking the broker to relay a CCB connection instead of being
+// dialed back. Unset follows how the server was started -- on
+// standalone, off under condor_master -- which is the right answer for
+// both; set it only to work around a reachability problem the default
+// gets wrong. With HTTP_API_SHARED_PORT set, relaying is the FALLBACK
+// rather than the first choice. A non-boolean refuses to start. See
+// "Reaching jobs behind CCB" in the operator guide.
+var CCBStreaming = config.DefineBool("HTTP_API_CCB_STREAMING", false, config.Startup,
+	"Allow asking the broker to relay a CCB connection instead of being dialed back. Unset follows how the server was started -- on standalone, off under condor_master -- which is the right answer for both; set it only to work around a reachability problem the default gets wrong. With HTTP_API_SHARED_PORT set, relaying is the FALLBACK rather than the first choice. A non-boolean refuses to start. See \"Reaching jobs behind CCB\" in the operator guide.")
+
 // ConnectorOutputSweepInterval is HTTP_API_CONNECTOR_OUTPUT_SWEEP_INTERVAL.
 //
 // How often finished jobs are swept for output to deliver to a
@@ -979,6 +1002,29 @@ var ReservationEPConstraint = config.DefineString("HTTP_API_RESERVATION_EP_CONST
 var ReservationStampBudget = config.DefineInt("HTTP_API_RESERVATION_STAMP_BUDGET", 0, config.Startup,
 	"How many cluster ads one stamping pass writes. The write is per cluster rather than per job, so the default covers an idle queue far larger than most access points have; this exists for a queue that is pathological rather than merely large. A value that is not a non-negative whole number refuses to start.")
 
+// RuntimeEstimateBackfill is HTTP_API_RUNTIME_ESTIMATE_BACKFILL.
+//
+// How much job history runtime estimates read at startup, and how long
+// a group of similar jobs is remembered without a new completion. At
+// most 500,000 of the newest records are read however far back this
+// reaches; the log says when that cap is hit. A malformed value
+// refuses to start, as above. See "Runtime estimates" in the operator
+// guide.
+var RuntimeEstimateBackfill = config.DefineDuration("HTTP_API_RUNTIME_ESTIMATE_BACKFILL", time.Duration(0) /* 0s */, config.Startup,
+	"How much job history runtime estimates read at startup, and how long a group of similar jobs is remembered without a new completion. At most 500,000 of the newest records are read however far back this reaches; the log says when that cap is hit. A malformed value refuses to start, as above. See \"Runtime estimates\" in the operator guide.")
+
+// RuntimeEstimateInterval is HTTP_API_RUNTIME_ESTIMATE_INTERVAL.
+//
+// How often runtime estimates read newly completed jobs from the
+// htcondordb mirror. A literal 0 turns runtime estimates off entirely,
+// and is the one value exempt from the unit rule since there is no
+// ambiguity in zero; anything else malformed refuses to start, as
+// HTTP_API_PING_INTERVAL does. WITHOUT A MIRROR THEY ARE OFF whatever
+// this says, so setting it on a deployment that has none changes
+// nothing. See "Runtime estimates" in the operator guide.
+var RuntimeEstimateInterval = config.DefineDuration("HTTP_API_RUNTIME_ESTIMATE_INTERVAL", time.Duration(0) /* 0s */, config.Startup,
+	"How often runtime estimates read newly completed jobs from the htcondordb mirror. A literal 0 turns runtime estimates off entirely, and is the one value exempt from the unit rule since there is no ambiguity in zero; anything else malformed refuses to start, as HTTP_API_PING_INTERVAL does. WITHOUT A MIRROR THEY ARE OFF whatever this says, so setting it on a deployment that has none changes nothing. See \"Runtime estimates\" in the operator guide.")
+
 // SandboxCacheDir is HTTP_API_SANDBOX_CACHE_DIR.
 //
 // Where the +jobs file service keeps sandbox output it has already
@@ -1552,6 +1598,8 @@ var All = []config.Knob{
 	BuildMaxMemoryMB.Knob,
 	BuildRequirements.Knob,
 	BuildStagingBase.Knob,
+	CCBLearnedTTL.Knob,
+	CCBStreaming.Knob,
 	ConnectorOutputSweepInterval.Knob,
 	ConnectorPrefix.Knob,
 	EnableIDP.Knob,
@@ -1636,6 +1684,8 @@ var All = []config.Knob{
 	ReservationClaims.Knob,
 	ReservationEPConstraint.Knob,
 	ReservationStampBudget.Knob,
+	RuntimeEstimateBackfill.Knob,
+	RuntimeEstimateInterval.Knob,
 	SandboxCacheDir.Knob,
 	SandboxCacheMB.Knob,
 	SandboxMaxGB.Knob,

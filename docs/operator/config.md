@@ -154,6 +154,31 @@ the first letter of that name, so a per-user staging area can be
 written osdf:///chtc/staging/{initial}/{user}. A base with no
 placeholder is used verbatim.
 
+### `HTTP_API_CCB_LEARNED_TTL`
+
+**Duration.** Unset keeps a learned route for 15 minutes. Changing it needs a restart.
+
+How long what this server learned about a broker -- whether execute
+nodes can reach it, whether it can relay -- is reused before being
+rechecked. A value that is not a POSITIVE duration refuses to start: a
+bare number is ambiguous by a factor of sixty, and zero would mean
+rechecking on every dial.
+
+See [Reaching jobs behind CCB](networking.md).
+
+### `HTTP_API_CCB_STREAMING`
+
+**Boolean.** Unset streams when this server runs standalone and does not when condor_master started it. Changing it needs a restart.
+
+Allow asking the broker to relay a CCB connection instead of being
+dialed back. Unset follows how the server was started -- on
+standalone, off under condor_master -- which is the right answer for
+both; set it only to work around a reachability problem the default
+gets wrong. With `HTTP_API_SHARED_PORT` set, relaying is the FALLBACK
+rather than the first choice. A non-boolean refuses to start.
+
+See [Reaching jobs behind CCB](networking.md).
+
 ### `HTTP_API_CONNECTORS`
 
 **Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
@@ -1091,6 +1116,32 @@ larger than most access points have; this exists for a queue that is
 pathological rather than merely large. A value that is not a
 non-negative whole number refuses to start.
 
+### `HTTP_API_RUNTIME_ESTIMATE_BACKFILL`
+
+**Duration.** Unset reads a week of history. Changing it needs a restart.
+
+How much job history runtime estimates read at startup, and how long a
+group of similar jobs is remembered without a new completion. At most
+500,000 of the newest records are read however far back this reaches;
+the log says when that cap is hit. A malformed value refuses to start,
+as above.
+
+See [Runtime estimates](estimates.md#runtime-estimates).
+
+### `HTTP_API_RUNTIME_ESTIMATE_INTERVAL`
+
+**Duration.** Unset refreshes every 5 minutes. Changing it needs a restart.
+
+How often runtime estimates read newly completed jobs from the
+htcondordb mirror. A literal 0 turns runtime estimates off entirely,
+and is the one value exempt from the unit rule since there is no
+ambiguity in zero; anything else malformed refuses to start, as
+`HTTP_API_PING_INTERVAL` does. WITHOUT A MIRROR THEY ARE OFF whatever
+this says, so setting it on a deployment that has none changes
+nothing.
+
+See [Runtime estimates](estimates.md#runtime-estimates).
+
 ### `HTTP_API_SANDBOX_CACHE_DIR`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -1484,8 +1535,6 @@ each one.
 | `HTTP_API_TOOL_STATS_FLUSH_INTERVAL` | How often the usage counters are written to the application database (e.g. `5m`). Default `5m`; they are also written at shutdown. Governs both kinds. See [Usage statistics](metrics.md#usage-statistics). |
 | `HTTP_API_TOOL_STATS_MAX_LABEL_VALUES` | Cap on distinct values per `/metrics` label for usage statistics. Default `1000`; past it the quietest values render as `other`, while the database keeps them all. |
 | `HTTP_API_UTILIZATION_MAX_JOBS` | Most finished jobs one Utilization analysis (`GET /api/v1/utilization`) may read; a larger `limit` is clamped to it. Default `1000000`. An analysis holds about 250 bytes per job while it runs, so the default is about a quarter of a gigabyte at peak; the cached result is the answer, not the jobs. Read at startup. |
-| `HTTP_API_RUNTIME_ESTIMATE_INTERVAL` | How often [runtime estimates](estimates.md#runtime-estimates) read newly completed jobs from the htcondordb mirror (a duration, e.g. `5m`). Default `5m`; `0` turns runtime estimates off entirely. Without a mirror they are off whatever this says. Read at startup. |
-| `HTTP_API_RUNTIME_ESTIMATE_BACKFILL` | How much job history runtime estimates read at startup, and how long a group of similar jobs is remembered without a new completion. Default `168h`. At most 500,000 of the newest records are read; the log says when that cap is hit. Read at startup. |
 | `HTTP_API_TOOL_STATS_MAX_SERIES` | Cap on distinct call combinations held in memory and in the database, per kind. Default `10000`; past it new combinations fold into `other`. This is what bounds memory and disk. |
 | `HTTP_API_REST_STATS` | `false` turns off the counting of REST API requests, keeping the MCP counting. Default on. See [REST API requests](metrics.md#rest-api-requests). |
 | `HTTP_API_TOOL_STATS_OMIT_USER` | `true` renders every `/metrics` user label as `omitted`, for a site that does not want account names on a scrapeable endpoint. The database still records them. See [Usernames on /metrics](metrics.md#usernames-on-metrics). |
@@ -1524,8 +1573,6 @@ each one.
 | `HOST_ALIAS` | The host name a client verifies this server's SSL certificate against, published as `alias=` on the advertised address. Defaults to `$(FULL_HOSTNAME)`, as in C++. Behind a shared port the address itself carries only the shared-port server's IP, and HTCondor host certificates have no IP SANs, so without the alias SSL authentication from another host fails the certificate check. Set it only when the certificate names something else — a load balancer, a CNAME. |
 | `HTTP_API_SHARED_PORT` | Open an inbound HTCondor port (a port or `host:port`, e.g. `9618`) so this server can be reached by execute nodes behind a Condor Connection Broker. Off by default. See [Reaching jobs behind CCB](networking.md). |
 | `HTTP_API_SHARED_PORT_ADDRESS` | The `host` or `host:port` execute nodes should dial to reach that port, when it differs from what this process binds — behind NAT, a container port map, or a Kubernetes Service. Defaults to `TCP_FORWARDING_HOST`, else `FULL_HOSTNAME`, paired with the listen port. |
-| `HTTP_API_CCB_STREAMING` | Allow asking the broker to relay a CCB connection instead of being dialed back. Default: on unless running under `condor_master`. With `HTTP_API_SHARED_PORT` set this is the fallback, not the first choice. |
-| `HTTP_API_CCB_LEARNED_TTL` | How long what this server learned about a broker (whether execute nodes can reach it, whether the broker can relay) is reused before being rechecked. Default `15m`. |
 
 ## Rate limiting
 
