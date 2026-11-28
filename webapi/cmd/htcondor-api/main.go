@@ -2798,14 +2798,18 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		ReservationStampBudget:   reservationStampBudget(cfg),
 		WebUIEnabled:             webUIEnabled,
 		// DBPath is the canonical name; OAuth2DBPath kept for back-compat.
-		DBPath:                     mcpCfg.oauth2DBPath,
-		KEKFilePath:                loadKEKFilePath(cfg, logger),
-		OAuth2DBPath:               mcpCfg.oauth2DBPath,
-		OAuth2Issuer:               mcpCfg.oauth2Issuer,
-		MCPCIMDEnabled:             mcpCIMDEnabled(cfg),
-		MCPCIMDAllowedHosts:        config.SplitConfigList(firstConfigValue(cfg, "HTTP_API_MCP_CIMD_ALLOWED_HOSTS")),
+		DBPath:         mcpCfg.oauth2DBPath,
+		KEKFilePath:    loadKEKFilePath(cfg, logger),
+		OAuth2DBPath:   mcpCfg.oauth2DBPath,
+		OAuth2Issuer:   mcpCfg.oauth2Issuer,
+		MCPCIMDEnabled: mcpCIMDEnabled(cfg),
+		// SplitConfigList, not the knob's own list type: it splits on
+		// whitespace as well as commas, and config.ParseList does not.
+		// An operator who wrote this list space-separated would see it
+		// collapse into one bogus host name, which matches nothing.
+		MCPCIMDAllowedHosts:        config.SplitConfigList(firstConfigValue(cfg, knobs.MCPCIMDAllowedHosts.Name())),
 		MCPDCRDisabled:             !mcpDCREnabled(cfg),
-		MCPTokenExchangeIssuers:    firstConfigValue(cfg, "HTTP_API_MCP_TOKEN_EXCHANGE_ISSUERS"),
+		MCPTokenExchangeIssuers:    knobs.MCPTokenExchangeIssuers.Get(cfg),
 		OAuth2ClientID:             mcpCfg.oauth2ClientID,
 		OAuth2ClientSecret:         mcpCfg.oauth2ClientSecret,
 		OAuth2AuthURL:              mcpCfg.oauth2AuthURL,
@@ -4058,13 +4062,14 @@ func httpAPIAdvertiseEnabled(cfg *config.Config) bool {
 // optional HTTP_API_MCP_CIMD_ALLOWED_HOSTS narrows it); HTTP_API_MCP_CIMD=false
 // turns it off entirely.
 func mcpCIMDEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_CIMD")
+	key := knobs.MCPCIMD.Name()
+	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return true
 	}
 	v, err := strconv.ParseBool(strings.TrimSpace(raw))
 	if err != nil {
-		log.Fatalf("invalid HTTP_API_MCP_CIMD=%q: must be a boolean", raw)
+		log.Fatalf("invalid %s=%q: must be a boolean", key, raw)
 	}
 	return v
 }
@@ -4151,13 +4156,14 @@ func mcpRedactSecretsEnabled(cfg *config.Config) bool {
 // on. Default true; HTTP_API_MCP_DCR=false refuses it, for a deployment
 // whose clients are all seeded, operator-provisioned or CIMD.
 func mcpDCREnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_DCR")
+	key := knobs.MCPDCR.Name()
+	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return true
 	}
 	v, err := strconv.ParseBool(strings.TrimSpace(raw))
 	if err != nil {
-		log.Fatalf("invalid HTTP_API_MCP_DCR=%q: must be a boolean", raw)
+		log.Fatalf("invalid %s=%q: must be a boolean", key, raw)
 	}
 	return v
 }
@@ -4470,7 +4476,8 @@ func loadRequiredCredentials(cfg *config.Config, logger *logging.Logger) []strin
 // transport is serving decides what a client must send, so guessing it would
 // be found out by a client, not by an operator.
 func loadMCPUseSDKTransport(cfg *config.Config, logger *logging.Logger) bool {
-	raw, ok := cfg.Get("HTTP_API_MCP_TRANSPORT")
+	key := knobs.MCPTransport.Name()
+	raw, ok := cfg.Get(key)
 	if !ok {
 		return false
 	}
@@ -4480,9 +4487,9 @@ func loadMCPUseSDKTransport(cfg *config.Config, logger *logging.Logger) bool {
 	case "sdk":
 		return true
 	default:
-		logger.Error(logging.DestinationHTTP, "Invalid HTTP_API_MCP_TRANSPORT: refusing to start",
-			"value", raw, "expected", "builtin or sdk")
-		log.Fatalf("invalid HTTP_API_MCP_TRANSPORT=%q: expected builtin or sdk", raw)
+		logger.Error(logging.DestinationHTTP, "Invalid MCP transport: refusing to start",
+			"key", key, "value", raw, "expected", "builtin or sdk")
+		log.Fatalf("invalid %s=%q: expected builtin or sdk", key, raw)
 		return false
 	}
 }

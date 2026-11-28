@@ -518,6 +518,9 @@ var initialisms = map[string]string{
 	"API": "API", "CA": "CA", "DB": "DB", "ID": "ID", "IDP": "IDP",
 	"GB": "GB", "LLM": "LLM", "MB": "MB", "MCP": "MCP", "OAUTH2": "OAuth2", "SSH": "SSH", "TLS": "TLS",
 	"UI": "UI", "URL": "URL", "VSCODE": "VSCode", "AP": "AP", "KEK": "KEK", "CPUS": "CPUs",
+	// EP is HTCondor's word for an execute point; CIMD and DCR are the
+	// two OAuth2 client-registration mechanisms /mcp offers.
+	"EP": "EP", "CIMD": "CIMD", "DCR": "DCR",
 	// Not initialisms: two words the configuration spells as one.
 	// Without these the identifiers read as Webui and Anyuser.
 	"WEBUI": "WebUI", "ANYUSER": "AnyUser",
