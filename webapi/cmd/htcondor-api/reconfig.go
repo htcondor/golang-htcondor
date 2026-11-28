@@ -652,6 +652,11 @@ var reconfigParams = []reconfigParam{
 	// into the MCP server it builds, both at startup.
 	fromKnob(knobs.SpoolMaxUploadBytes.Knob),
 
+	// The inbound HTCondor port. Restart-required: the listener is
+	// bound once, and the advertised address is computed from it then.
+	fromKnob(knobs.SharedPort.Knob),
+	fromKnob(knobs.SharedPortAddress.Knob),
+
 	// Placement onboarding, read when the handler is built.
 	{name: "HTTP_API_PLACEMENT_IDENTITY_CLAIMS"},
 	{name: "HTTP_API_PLACEMENT_DISPLAY_NAME_CLAIMS"},

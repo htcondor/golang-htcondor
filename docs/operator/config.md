@@ -1117,6 +1117,28 @@ The largest job sandbox the +jobs file service will serve, in GiB. A
 negative number means no limit. Refused the same way as above when it
 is not a whole number.
 
+### `HTTP_API_SHARED_PORT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Open an inbound HTCondor port, as a port or host:port, so this server
+can be reached by execute nodes behind a Condor Connection Broker. Off
+by default. With it set, relaying through the broker becomes the
+fallback rather than the first choice.
+
+See [Reaching jobs behind CCB](networking.md).
+
+### `HTTP_API_SHARED_PORT_ADDRESS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+The host or host:port execute nodes should dial to reach that port,
+for when it differs from what this process binds -- behind NAT, a
+container port map, or a Kubernetes Service. Unset uses
+TCP_FORWARDING_HOST, else FULL_HOSTNAME, paired with the listen port.
+
+See [Reaching jobs behind CCB](networking.md).
+
 ### `HTTP_API_SITE_APP_<instance>_*`
 
 A lab's own web interface, published to the people it belongs to. Each
@@ -1522,8 +1544,6 @@ each one.
 | `HTTP_API_TRUSTED_PROXIES` | Comma-separated CIDRs (or bare addresses) whose `X-Forwarded-For` / `X-Real-IP` are honored when recording a client address. Unset means none are, and the peer address is logged. |
 | `PRIVATE_NETWORK_NAME` | This host's private network name. When it equals a daemon's advertised `PrivNet`, that daemon is dialed directly instead of through its CCB broker. Defaults to `$(FULL_HOSTNAME)`, as in C++. See [Reaching jobs behind CCB](networking.md). |
 | `HOST_ALIAS` | The host name a client verifies this server's SSL certificate against, published as `alias=` on the advertised address. Defaults to `$(FULL_HOSTNAME)`, as in C++. Behind a shared port the address itself carries only the shared-port server's IP, and HTCondor host certificates have no IP SANs, so without the alias SSL authentication from another host fails the certificate check. Set it only when the certificate names something else — a load balancer, a CNAME. |
-| `HTTP_API_SHARED_PORT` | Open an inbound HTCondor port (a port or `host:port`, e.g. `9618`) so this server can be reached by execute nodes behind a Condor Connection Broker. Off by default. See [Reaching jobs behind CCB](networking.md). |
-| `HTTP_API_SHARED_PORT_ADDRESS` | The `host` or `host:port` execute nodes should dial to reach that port, when it differs from what this process binds — behind NAT, a container port map, or a Kubernetes Service. Defaults to `TCP_FORWARDING_HOST`, else `FULL_HOSTNAME`, paired with the listen port. |
 | `HTTP_API_CCB_STREAMING` | Allow asking the broker to relay a CCB connection instead of being dialed back. Default: on unless running under `condor_master`. With `HTTP_API_SHARED_PORT` set this is the fallback, not the first choice. |
 | `HTTP_API_CCB_LEARNED_TTL` | How long what this server learned about a broker (whether execute nodes can reach it, whether the broker can relay) is reused before being rechecked. Default `15m`. |
 
