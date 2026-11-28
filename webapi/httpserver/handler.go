@@ -362,16 +362,22 @@ type Handler struct {
 	// the system rather than from the token. Nil unless the deployment
 	// configures it; see identity_local.go.
 	localIdentity *localIdentity
-	// Authorization group lists. Each accepts a comma-separated list and
-	// admits a user holding ANY of them; an empty list requires nothing.
-	// They are groupSets rather than strings because a reconfigure
-	// replaces them while requests are reading.
-	mcpAccessGroups *groupSet // Required for MCP access
+	// Authorization principal sets. Each is a group list and a user
+	// list; a caller passes by holding ANY named group or by BEING a
+	// named user. They are sets rather than strings because a
+	// reconfigure replaces them while requests are reading.
+	//
+	// All four here are OPT-IN restrictions, built with
+	// newOptInPrincipalSet: naming nobody requires nothing, so an
+	// unconfigured one admits everybody. That is the opposite of
+	// anyUserRead/anyUserWrite below, and it is not a detail of the
+	// call sites -- see principalSet's type comment.
+	mcpAccessGroups *principalSet // Required for MCP access
 	// webuiAccessGroups gates logging in to the web interface, separately
 	// from MCP. Unset, it falls back to mcpAccessGroups so that a
 	// deployment which relied on the MCP group to gate the browser is not
 	// silently opened by this becoming its own knob.
-	webuiAccessGroups *groupSet
+	webuiAccessGroups *principalSet
 	// creddAddress is HTTP_API_CREDD_ADDRESS: an operator's statement of
 	// which credd this schedd uses, which wins over discovery.
 	creddAddress string
@@ -387,8 +393,8 @@ type Handler struct {
 	// mcpWriteWindow overrides how far ahead each extension moves the write
 	// deadline. Zero uses mcpWriteWindow; set only by tests.
 	mcpWriteWindow time.Duration
-	mcpReadGroups  *groupSet // Required for read access
-	mcpWriteGroups *groupSet // Required for write access
+	mcpReadGroups  *principalSet // Required for read access
+	mcpWriteGroups *principalSet // Required for write access
 	// anyUserRead names who may request the anyuser:read entitlement
 	// (and its older spelling mcp:admin): reading every user's jobs on
 	// this access point. anyUserWrite names who may request
@@ -1320,9 +1326,20 @@ type HandlerConfig struct {
 	// SuperuserArmTTL is how long superuser mode stays on before disarming
 	// itself. Zero selects defaultSuperuserArmTTL.
 	SuperuserArmTTL time.Duration
-	MCPAccessGroup  string // Group required for any MCP access (empty = all authenticated)
-	MCPReadGroup    string // Group required for read operations (empty = all have read)
-	MCPWriteGroup   string // Group required for write operations (empty = all have write)
+	// Who may reach /mcp, and who may read or write through it. Each is
+	// a group list and a user list: HTTP_API_MCP_ACCESS_GROUPS and
+	// HTTP_API_MCP_ACCESS_USERS, and so on.
+	//
+	// All six are opt-in restrictions. Naming NOBODY requires nothing,
+	// so an unconfigured gate admits every authenticated caller -- the
+	// opposite of the AnyUser pairs below, where naming nobody means
+	// nobody. Most deployments configure none of these.
+	MCPAccessGroups string
+	MCPAccessUsers  string
+	MCPReadGroups   string
+	MCPReadUsers    string
+	MCPWriteGroups  string
+	MCPWriteUsers   string
 	// AnyUserReadGroups and AnyUserReadUsers name who may REQUEST the
 	// anyuser:read entitlement -- reading every user's jobs on this
 	// access point -- by group membership and by identity respectively.
@@ -1435,10 +1452,13 @@ type HandlerConfig struct {
 	PoolQueryPolicy *poolpolicy.Policy
 	WebUIAdminGroup string // Group(s) required for Web UI admin pages (empty disables admin UI). Comma-separated; HTTP_API_WEBUI_ADMIN_GROUP.
 
-	// WebUIAccessGroup gates logging in to the web interface, separately
-	// from MCP. Comma-separated; HTTP_API_WEBUI_ACCESS_GROUP. Empty falls
-	// back to MCPAccessGroup.
-	WebUIAccessGroup string
+	// WebUIAccessGroups and WebUIAccessUsers gate logging in to the web
+	// interface, separately from MCP. HTTP_API_WEBUI_ACCESS_GROUPS and
+	// HTTP_API_WEBUI_ACCESS_USERS. Naming nobody at all falls back to
+	// the MCP access gate, which is what gated the browser before these
+	// were separate settings.
+	WebUIAccessGroups string
+	WebUIAccessUsers  string
 
 	// Web UI branding. All optional; unset leaves the pages exactly as
 	// they ship. See branding.go and HTTP_API_WEBUI_SITE_NAME and
@@ -2379,9 +2399,13 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	// them runs whenever the internal IDP is configured, not only when MCP
 	// is enabled, and leaving them empty there would admit every
 	// authenticated user to a deployment that had asked for a group.
-	h.mcpAccessGroups = newGroupSet(cfg.MCPAccessGroup)
-	h.mcpReadGroups = newGroupSet(cfg.MCPReadGroup)
-	h.mcpWriteGroups = newGroupSet(cfg.MCPWriteGroup)
+	// newOptInPrincipalSet, not newPrincipalSet: an unconfigured gate
+	// here admits everybody. Building these the other way would refuse
+	// every user on every deployment that configured no groups, which
+	// is most of them. See principalSet's type comment.
+	h.mcpAccessGroups = newOptInPrincipalSet(cfg.MCPAccessGroups, cfg.MCPAccessUsers)
+	h.mcpReadGroups = newOptInPrincipalSet(cfg.MCPReadGroups, cfg.MCPReadUsers)
+	h.mcpWriteGroups = newOptInPrincipalSet(cfg.MCPWriteGroups, cfg.MCPWriteUsers)
 	h.anyUserRead = newPrincipalSet(cfg.AnyUserReadGroups, cfg.AnyUserReadUsers)
 	h.anyUserWrite = newPrincipalSet(cfg.AnyUserWriteGroups, cfg.AnyUserWriteUsers)
 
@@ -2408,7 +2432,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 			"admin_users", len(cfg.MCPAdminUsers))
 	}
 	h.webuiAdminGroups = newGroupSet(cfg.WebUIAdminGroup)
-	h.webuiAccessGroups = newGroupSet(cfg.WebUIAccessGroup)
+	h.webuiAccessGroups = newOptInPrincipalSet(cfg.WebUIAccessGroups, cfg.WebUIAccessUsers)
 
 	// Built here rather than in Start because setupRoutes decides
 	// whether to register /site/ on whether this is non-nil, and that
@@ -2592,13 +2616,13 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		h.mcpAdminUsers = cfg.MCPAdminUsers
 
 		if h.mcpAccessGroups.configured() {
-			logger.Info(logging.DestinationHTTP, "MCP access control enabled", "access_groups", h.mcpAccessGroups.String())
+			logger.Info(logging.DestinationHTTP, "MCP access control enabled", "access_principals", h.mcpAccessGroups.String())
 		}
 		if h.mcpReadGroups.configured() {
-			logger.Info(logging.DestinationHTTP, "MCP read access control enabled", "read_groups", h.mcpReadGroups.String())
+			logger.Info(logging.DestinationHTTP, "MCP read access control enabled", "read_principals", h.mcpReadGroups.String())
 		}
 		if h.mcpWriteGroups.configured() {
-			logger.Info(logging.DestinationHTTP, "MCP write access control enabled", "write_groups", h.mcpWriteGroups.String())
+			logger.Info(logging.DestinationHTTP, "MCP write access control enabled", "write_principals", h.mcpWriteGroups.String())
 		}
 	}
 
@@ -3321,14 +3345,17 @@ func (h *Handler) isUserHeaderTrustedSource(r *http.Request) bool {
 //     empty footer and a console message. Only those origins, and only
 //     for images.
 //
-//   - connect-src is widened by api.github.com where this server
-//     offers installing a site app from a GitHub release. There is no
-//     connect-src here otherwise, so it falls back to default-src
-//     'self' and the page may not call anything off this origin --
-//     which is what the site apps admin page needs to do, and the only
-//     thing it needs to do, to list a repository's releases and to
-//     notice that an installed app's repository has published a new
-//     one. Metadata only: the release ASSET is fetched by this server,
+//   - connect-src is always stated, as 'self', and widened by
+//     api.github.com where this server offers installing a site app
+//     from a GitHub release. (This said there was no connect-src
+//     otherwise and that the page fell back to default-src. The effect
+//     is the same -- same-origin only -- but the directive is emitted
+//     unconditionally below, and a reader deciding whether some page
+//     needs connect-src added should not have to discover that from
+//     the code.) Listing a repository's releases, and noticing that an
+//     installed app's repository has published a new one, is what the
+//     site apps admin page needs the widening for, and the only thing
+//     it needs it for. Metadata only: the release ASSET is fetched by this server,
 //     because GitHub does not serve it cross-origin at all.
 //
 //     Named rather than left open because a policy that permits any

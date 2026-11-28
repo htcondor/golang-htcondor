@@ -10,7 +10,7 @@ import (
 // consent page, and never again -- and the user would have been told
 // they were given something they were not.
 func TestReadOnlyMCPDoesNotGrantWriteScope(t *testing.T) {
-	h := &Handler{}
+	h := withOpenGates(&Handler{})
 	h.mcpReadOnly.Store(true)
 
 	granted := h.getScopesForGroups("", nil, []string{"mcp:read", "mcp:write"})
@@ -29,7 +29,7 @@ func TestReadOnlyMCPDoesNotGrantWriteScope(t *testing.T) {
 // other direction too: with MCP read-only off, the old behaviour is
 // untouched.
 func TestWriteScopeStillGrantedWhenNotReadOnly(t *testing.T) {
-	h := &Handler{}
+	h := withOpenGates(&Handler{})
 	granted := h.getScopesForGroups("", nil, []string{"mcp:read", "mcp:write"})
 	if !slices.Contains(granted, "mcp:write") {
 		t.Errorf("mcp:write was refused on an ordinary server; granted = %v", granted)

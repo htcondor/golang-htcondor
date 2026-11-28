@@ -28,13 +28,17 @@ func (f *fakeTarget) record(knob, v string) {
 }
 
 func (f *fakeTarget) SetMCPAccessGroups(v string)    { f.record("mcp_access", v) }
+func (f *fakeTarget) SetMCPAccessUsers(v string)     { f.record("mcp_access_users", v) }
 func (f *fakeTarget) SetMCPReadGroups(v string)      { f.record("mcp_read", v) }
+func (f *fakeTarget) SetMCPReadUsers(v string)       { f.record("mcp_read_users", v) }
 func (f *fakeTarget) SetMCPWriteGroups(v string)     { f.record("mcp_write", v) }
+func (f *fakeTarget) SetMCPWriteUsers(v string)      { f.record("mcp_write_users", v) }
 func (f *fakeTarget) SetAnyUserReadGroups(v string)  { f.record("anyuser_read_groups", v) }
 func (f *fakeTarget) SetAnyUserReadUsers(v string)   { f.record("anyuser_read_users", v) }
 func (f *fakeTarget) SetAnyUserWriteGroups(v string) { f.record("anyuser_write_groups", v) }
 func (f *fakeTarget) SetAnyUserWriteUsers(v string)  { f.record("anyuser_write_users", v) }
 func (f *fakeTarget) SetWebUIAccessGroups(v string)  { f.record("webui_access", v) }
+func (f *fakeTarget) SetWebUIAccessUsers(v string)   { f.record("webui_access_users", v) }
 func (f *fakeTarget) SetWebUIAdminGroups(v string)   { f.record("webui_admin", v) }
 func (f *fakeTarget) SetWebUIAppOnlyGroups(v string) { f.record("webui_app_only", v) }
 func (f *fakeTarget) SetWebUISiteName(v string)      { f.record("webui_site_name", v) }
@@ -211,7 +215,10 @@ func TestReconfigAppliesAccessGroups(t *testing.T) {
 
 	applied, needRestart := w.diff(configFrom(t, after))
 
-	want := []string{"HTTP_API_MCP_ACCESS_GROUP", "HTTP_API_WEBUI_ACCESS_GROUP"}
+	// Reported under the names that superseded the two the file is
+	// written with, which is the only place an operator still running
+	// the old spelling meets the new one.
+	want := []string{"HTTP_API_MCP_ACCESS_GROUPS", "HTTP_API_WEBUI_ACCESS_GROUPS"}
 	sort.Strings(applied)
 	sort.Strings(want)
 	if !reflect.DeepEqual(applied, want) {
@@ -450,5 +457,94 @@ func TestReconfigAppliesTheUserHalves(t *testing.T) {
 	}
 	if got := target.groups["anyuser_write_users"]; !reflect.DeepEqual(got, []string{"bob@example.org"}) {
 		t.Errorf("server received write users %v", got)
+	}
+}
+
+// Each access gate's superseded spelling still reaches the running
+// server on SIGHUP, under the name that replaced it.
+//
+// The startup half is TestStartupResolvesSupersededAccessSettings. The
+// two have to agree: a daemon that reloaded its configuration must not
+// end up running a different policy from one restarted on the same
+// file.
+func TestReconfigAppliesTheSupersededAccessSettings(t *testing.T) {
+	for _, tc := range []struct {
+		old, current, record string
+	}{
+		{"HTTP_API_MCP_ACCESS_GROUP", "HTTP_API_MCP_ACCESS_GROUPS", "mcp_access"},
+		{"HTTP_API_MCP_READ_GROUP", "HTTP_API_MCP_READ_GROUPS", "mcp_read"},
+		{"HTTP_API_MCP_WRITE_GROUP", "HTTP_API_MCP_WRITE_GROUPS", "mcp_write"},
+		{"HTTP_API_WEBUI_ACCESS_GROUP", "HTTP_API_WEBUI_ACCESS_GROUPS", "webui_access"},
+	} {
+		t.Run(tc.old, func(t *testing.T) {
+			target := &fakeTarget{}
+			w := newReconfigWatcher(configFrom(t, tc.old+" = before\n"), target, nil)
+
+			applied, needRestart := w.diff(configFrom(t, tc.old+" = before, after\n"))
+
+			if want := []string{tc.current}; !reflect.DeepEqual(applied, want) {
+				t.Errorf("applied = %v, want %v -- a change to %s is reported under the name that replaced it",
+					applied, want, tc.old)
+			}
+			if len(needRestart) != 0 {
+				t.Errorf("needRestart = %v; %s is still dynamic", needRestart, tc.old)
+			}
+			if got := target.groups[tc.record]; !reflect.DeepEqual(got, []string{"before, after"}) {
+				t.Errorf("server received %v", got)
+			}
+		})
+	}
+}
+
+// The current spelling outranks the superseded one on reconfigure, as
+// it does at startup. Without this an operator who narrowed a gate with
+// the new setting would have the old one widen it back on the next
+// SIGHUP -- silently, since nothing reports a change.
+func TestCurrentAccessSettingOutranksTheSupersededOne(t *testing.T) {
+	target := &fakeTarget{}
+	const both = "HTTP_API_MCP_ACCESS_GROUP = everyone\n" +
+		"HTTP_API_MCP_ACCESS_GROUPS = a-few\n"
+	w := newReconfigWatcher(configFrom(t, "HTTP_API_MCP_ACCESS_GROUP = everyone\n"), target, nil)
+
+	applied, _ := w.diff(configFrom(t, both))
+
+	if want := []string{"HTTP_API_MCP_ACCESS_GROUPS"}; !reflect.DeepEqual(applied, want) {
+		t.Errorf("applied = %v, want %v", applied, want)
+	}
+	if got := target.groups["mcp_access"]; !reflect.DeepEqual(got, []string{"a-few"}) {
+		t.Errorf("server received %v, want the current setting's value", got)
+	}
+}
+
+// The access gates' user halves have no superseded spelling and must
+// reach the server on their own.
+func TestReconfigAppliesTheAccessUserHalves(t *testing.T) {
+	target := &fakeTarget{}
+	w := newReconfigWatcher(configFrom(t, ""), target, nil)
+
+	applied, _ := w.diff(configFrom(t,
+		"HTTP_API_MCP_ACCESS_USERS = alice@example.org\n"+
+			"HTTP_API_MCP_READ_USERS = bob@example.org\n"+
+			"HTTP_API_MCP_WRITE_USERS = carol@example.org\n"+
+			"HTTP_API_WEBUI_ACCESS_USERS = dave@example.org\n"))
+
+	want := []string{
+		"HTTP_API_MCP_ACCESS_USERS", "HTTP_API_MCP_READ_USERS",
+		"HTTP_API_MCP_WRITE_USERS", "HTTP_API_WEBUI_ACCESS_USERS",
+	}
+	sort.Strings(applied)
+	sort.Strings(want)
+	if !reflect.DeepEqual(applied, want) {
+		t.Errorf("applied = %v, want %v", applied, want)
+	}
+	for record, user := range map[string]string{
+		"mcp_access_users":   "alice@example.org",
+		"mcp_read_users":     "bob@example.org",
+		"mcp_write_users":    "carol@example.org",
+		"webui_access_users": "dave@example.org",
+	} {
+		if got := target.groups[record]; !reflect.DeepEqual(got, []string{user}) {
+			t.Errorf("server received %s = %v", record, got)
+		}
 	}
 }

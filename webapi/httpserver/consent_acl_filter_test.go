@@ -33,7 +33,7 @@ func aclTestHandler(t *testing.T, oracles ...RevocationOracle) *Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Handler{logger: logger, revocationOracles: oracles}
+	return withOpenGates(&Handler{logger: logger, revocationOracles: oracles})
 }
 
 // The consistency this exists for: the refresh path already strips scopes

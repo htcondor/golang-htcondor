@@ -123,23 +123,23 @@ func TestGroupSetIsSafeUnderConcurrentReload(t *testing.T) {
 // granting somebody the browser necessarily granted them MCP.
 func TestWebUIAccessIsSeparateFromMCP(t *testing.T) {
 	h := &Handler{
-		mcpAccessGroups:   newGroupSet("ap2001-login"),
-		webuiAccessGroups: newGroupSet("chtc_staff"),
+		mcpAccessGroups:   newOptInPrincipalSet("ap2001-login", ""),
+		webuiAccessGroups: newOptInPrincipalSet("chtc_staff", ""),
 	}
 
 	staff := []string{"chtc_staff"}
-	if err := h.validateWebUIAccess(staff); err != nil {
+	if err := h.validateWebUIAccess("alice@example.org", staff); err != nil {
 		t.Errorf("web UI refused a member of its own group: %v", err)
 	}
-	if err := h.validateGroupAccess(staff); err == nil {
+	if err := h.validateGroupAccess("alice@example.org", staff); err == nil {
 		t.Error("MCP admitted somebody who is only in the web UI group")
 	}
 
 	login := []string{"ap2001-login"}
-	if err := h.validateGroupAccess(login); err != nil {
+	if err := h.validateGroupAccess("alice@example.org", login); err != nil {
 		t.Errorf("MCP refused a member of its own group: %v", err)
 	}
-	if err := h.validateWebUIAccess(login); err == nil {
+	if err := h.validateWebUIAccess("alice@example.org", login); err == nil {
 		t.Error("web UI admitted somebody who is only in the MCP group")
 	}
 }
@@ -148,14 +148,14 @@ func TestWebUIAccessIsSeparateFromMCP(t *testing.T) {
 // group to gate the browser -- which is what that knob did before.
 func TestWebUIFallsBackToTheMCPGroup(t *testing.T) {
 	h := &Handler{
-		mcpAccessGroups:   newGroupSet("ap2001-login"),
-		webuiAccessGroups: newGroupSet(""),
+		mcpAccessGroups:   newOptInPrincipalSet("ap2001-login", ""),
+		webuiAccessGroups: newOptInPrincipalSet("", ""),
 	}
 
-	if err := h.validateWebUIAccess([]string{"ap2001-login"}); err != nil {
+	if err := h.validateWebUIAccess("alice@example.org", []string{"ap2001-login"}); err != nil {
 		t.Errorf("fallback refused a member of the MCP group: %v", err)
 	}
-	if err := h.validateWebUIAccess([]string{"someone-else"}); err == nil {
+	if err := h.validateWebUIAccess("alice@example.org", []string{"someone-else"}); err == nil {
 		t.Error("with no web UI group configured the browser was left ungated")
 	}
 }
@@ -167,7 +167,7 @@ func TestBrowserDenialRendersAPage(t *testing.T) {
 	h := &Handler{logger: testLogger(t)}
 	rec := httptest.NewRecorder()
 
-	h.renderAccessDeniedPage(rec, newGroupSet("ap2001-login, chtc_staff"))
+	h.renderAccessDeniedPage(rec, newOptInPrincipalSet("ap2001-login, chtc_staff", ""))
 
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403", rec.Code)
@@ -191,7 +191,7 @@ func TestBrowserDenialRendersAPage(t *testing.T) {
 func TestBrowserDenialWithNoGroupsConfigured(t *testing.T) {
 	h := &Handler{logger: testLogger(t)}
 	rec := httptest.NewRecorder()
-	h.renderAccessDeniedPage(rec, newGroupSet(""))
+	h.renderAccessDeniedPage(rec, newOptInPrincipalSet("", ""))
 	if !strings.Contains(rec.Body.String(), "administrator") {
 		t.Error("page gives the user nothing to do next")
 	}
@@ -206,14 +206,14 @@ func TestBrowserDenialWithNoGroupsConfigured(t *testing.T) {
 func TestAccessGroupsApplyWithoutMCP(t *testing.T) {
 	h := newClaimTestHandler(t, HandlerConfig{
 		EnableMCP:       false,
-		MCPAccessGroup:  "ap2001-login",
+		MCPAccessGroups: "ap2001-login",
 		WebUIAdminGroup: "chtc_staff",
 	})
 
 	if !h.mcpAccessGroups.configured() {
 		t.Error("access group was dropped because MCP is disabled; the login path would admit everyone")
 	}
-	if err := h.validateGroupAccess([]string{"nobody-in-particular"}); err == nil {
+	if err := h.validateGroupAccess("alice@example.org", []string{"nobody-in-particular"}); err == nil {
 		t.Error("a user outside the configured group was admitted")
 	}
 	if !h.webuiAdminGroups.configured() {
@@ -225,36 +225,36 @@ func TestAccessGroupsApplyWithoutMCP(t *testing.T) {
 func TestReconfigureSettersTakeEffect(t *testing.T) {
 	h := &Handler{
 		logger:            testLogger(t),
-		mcpAccessGroups:   newGroupSet("old-group"),
-		webuiAccessGroups: newGroupSet(""),
+		mcpAccessGroups:   newOptInPrincipalSet("old-group", ""),
+		webuiAccessGroups: newOptInPrincipalSet("", ""),
 		webuiAdminGroups:  newGroupSet("old-admins"),
 		superuserGroups:   newGroupSet(""),
 	}
 
-	if err := h.validateGroupAccess([]string{"new-group"}); err == nil {
+	if err := h.validateGroupAccess("alice@example.org", []string{"new-group"}); err == nil {
 		t.Fatal("precondition: new-group should not be admitted yet")
 	}
 
 	h.SetMCPAccessGroups("new-group, another")
-	if err := h.validateGroupAccess([]string{"another"}); err != nil {
+	if err := h.validateGroupAccess("alice@example.org", []string{"another"}); err != nil {
 		t.Errorf("reconfigured MCP group did not take effect: %v", err)
 	}
-	if err := h.validateGroupAccess([]string{"old-group"}); err == nil {
+	if err := h.validateGroupAccess("alice@example.org", []string{"old-group"}); err == nil {
 		t.Error("the replaced group still admits; the list was appended to rather than replaced")
 	}
 
 	// Web UI was falling back to MCP; giving it its own list must detach it.
 	h.SetWebUIAccessGroups("web-only")
-	if err := h.validateWebUIAccess([]string{"web-only"}); err != nil {
+	if err := h.validateWebUIAccess("alice@example.org", []string{"web-only"}); err != nil {
 		t.Errorf("reconfigured web UI group did not take effect: %v", err)
 	}
-	if err := h.validateWebUIAccess([]string{"another"}); err == nil {
+	if err := h.validateWebUIAccess("alice@example.org", []string{"another"}); err == nil {
 		t.Error("web UI still honours the MCP list after being given its own")
 	}
 
 	// Emptying it restores the fallback.
 	h.SetWebUIAccessGroups("")
-	if err := h.validateWebUIAccess([]string{"another"}); err != nil {
+	if err := h.validateWebUIAccess("alice@example.org", []string{"another"}); err != nil {
 		t.Errorf("emptying the web UI group did not restore the MCP fallback: %v", err)
 	}
 

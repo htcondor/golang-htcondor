@@ -29,8 +29,8 @@ import (
 // This closes the gap reauthorizeRefreshGrant documents: the groups
 // stored with a grant are the membership as of consent, so re-running
 // the policy against them catches POLICY drift -- an operator changing
-// MCP_WRITE_GROUP -- but not MEMBERSHIP drift. A user removed from a
-// group upstream still carried it in the session and still passed.
+// HTTP_API_MCP_WRITE_GROUPS -- but not MEMBERSHIP drift. A user removed
+// from a group upstream still carried it in the session and still passed.
 //
 // The reason that gap existed was that reading live membership meant
 // holding a live credential to the identity provider, which this server
@@ -48,7 +48,7 @@ type systemGroupOracle struct {
 	// validate re-runs the deployment's group policy, and scopesFor
 	// recomputes the scopes a membership earns. Both are the Handler's,
 	// so the oracle cannot drift from the policy applied at login.
-	validate  func(groups []string) error
+	validate  func(actor string, groups []string) error
 	scopesFor func(actor string, groups, requested []string) []string
 	logger    *logging.Logger
 
@@ -122,7 +122,7 @@ func (o *systemGroupOracle) Check(ctx context.Context, username string, scopes [
 	}
 
 	// Lost access to the service altogether.
-	if err := o.validate(groups); err != nil {
+	if err := o.validate(username, groups); err != nil {
 		return ReauthDecision{
 			Status: UserStatusRevoked,
 			Reason: fmt.Sprintf("group membership no longer grants access: %v", err),

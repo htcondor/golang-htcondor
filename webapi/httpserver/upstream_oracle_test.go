@@ -36,7 +36,7 @@ func upstreamOracleFor(t *testing.T, refresh tokenRefresher, info userInfoFetche
 		issuer:   func() string { return upstreamTestIssuer },
 		refresh:  refresh,
 		userInfo: info,
-		validate: func(groups []string) error {
+		validate: func(_ string, groups []string) error {
 			if required == "" {
 				return nil
 			}

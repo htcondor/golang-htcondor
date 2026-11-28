@@ -20,6 +20,15 @@ WORKDIR /build/frontend
 COPY webapi/frontend/package.json webapi/frontend/package-lock.json* ./
 RUN npm ci || npm install
 
+# The documentation tree the /docs route renders. It is docs/ at the
+# repository root, outside this stage's working directory, so it has to
+# be copied in explicitly and pointed at: the build reads it, prerenders
+# every page in it, and the export carries the result into the binary.
+# Without it the build fails rather than exporting a site whose
+# documentation 404s (see src/lib/docsContent.ts).
+COPY docs /build/docs
+ENV DOCS_ROOT=/build/docs
+
 # Copy frontend sources and produce the static export at /build/frontend/out.
 COPY webapi/frontend/. ./
 RUN NODE_ENV=production npm run build

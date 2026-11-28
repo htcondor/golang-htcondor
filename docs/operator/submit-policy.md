@@ -114,5 +114,6 @@ Both are read at startup, so a change needs a restart.
 
 ## Where to go next
 
+- [Container builds](container-builds.md) — `HTTP_API_BUILD_EXTRA_SUBMIT`, the same hook for build jobs
 - [Interactive sessions and apps](interactive.md) — `HTTP_API_INTERACTIVE_EXTRA_SUBMIT`, the same hook for interactive jobs
 - [Configuration reference](config.md) — the full text of each setting

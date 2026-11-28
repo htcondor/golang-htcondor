@@ -29,8 +29,8 @@ stdio. The tool catalogue is in
 [mcpserver/README.md](../../webapi/mcpserver/README.md).
 
 Who may drive the access point through MCP is
-`HTTP_API_MCP_ACCESS_GROUP`, narrowed by `HTTP_API_MCP_READ_GROUP` and
-`HTTP_API_MCP_WRITE_GROUP`; see
+`HTTP_API_MCP_ACCESS_GROUPS`, narrowed by `HTTP_API_MCP_READ_GROUPS` and
+`HTTP_API_MCP_WRITE_GROUPS`; see
 [Authorization groups](auth.md#authorization-groups).
 
 ## What to hand a user
@@ -111,8 +111,8 @@ that hold are the ones enforced on this side:
   that cannot present the question proceeds without one — so it belongs
   beside the others rather than instead of them. Both are off by
   default.
-- `HTTP_API_MCP_ACCESS_GROUP`, narrowed by `HTTP_API_MCP_READ_GROUP` and
-  `HTTP_API_MCP_WRITE_GROUP`, decides who may drive the access point and
+- `HTTP_API_MCP_ACCESS_GROUPS`, narrowed by `HTTP_API_MCP_READ_GROUPS` and
+  `HTTP_API_MCP_WRITE_GROUPS`, decides who may drive the access point and
   whether they may change anything or only look. A read-only grant is a
   real reduction and is worth being the default for most people. It is
   the caller's authorization rather than the server's policy, so it does
@@ -150,7 +150,7 @@ output, the documentation and skills tools, and the watches, which
 record nothing outside this server's own bookkeeping.
 
 This is the server's decision and not the caller's, which is the reason
-it exists alongside `HTTP_API_MCP_WRITE_GROUP`. A write group is checked
+it exists alongside `HTTP_API_MCP_WRITE_GROUPS`. A write group is checked
 when a scope is granted, so it binds OAuth2 callers and nobody else: a
 forwarded HTCondor IDTOKEN carries no scopes by design — HTCondor gates
 it instead — and a token granted `mcp:write` before the policy changed

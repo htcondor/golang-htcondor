@@ -797,17 +797,28 @@ SCHEDD_HOST = submit@ap1.example.edu
 # Group-Based Access Control (optional)
 # Control access to MCP endpoints and scope granting based on group membership
 
-# Required group for any MCP access (if not set, all authenticated users can access)
-# Users without this group will receive an "access_denied" error
-HTTP_API_MCP_ACCESS_GROUP = mcp-users
+# Each gate below is a pair: a group list and a user list. A caller passes
+# by holding ANY named group or by BEING a named user. The user half is the
+# only one that decides anything where HTTP_API_GROUP_SOURCE is token and
+# the token carries no groups.
 
-# Required group for mcp:read scope (if not set, no users get read access by default)
-# Users in this group will receive the mcp:read scope
-HTTP_API_MCP_READ_GROUP = mcp-read
+# Who may reach /mcp at all. Naming nobody in either half requires nothing,
+# so every authenticated caller reaches it; naming anybody refuses everyone
+# else with an "access_denied" error.
+HTTP_API_MCP_ACCESS_GROUPS = mcp-users
+HTTP_API_MCP_ACCESS_USERS  = alice@example.org
 
-# Required group for mcp:write scope (if not set, no users get write access by default)
-# Users in this group will receive both mcp:read and mcp:write scopes
-HTTP_API_MCP_WRITE_GROUP = mcp-write
+# Who is granted the mcp:read scope. Naming nobody in either half leaves it
+# to the access gate above -- whoever may reach /mcp may read through it --
+# NOT to nobody.
+HTTP_API_MCP_READ_GROUPS = mcp-read
+HTTP_API_MCP_READ_USERS  = alice@example.org
+
+# Who is granted mcp:write, and condor:/WRITE with it: both mint the same
+# authorization, so they follow one policy. Naming nobody in either half
+# leaves it to the access gate, as above. mcp:write does not imply mcp:read.
+HTTP_API_MCP_WRITE_GROUPS = mcp-write
+HTTP_API_MCP_WRITE_USERS  = alice@example.org
 
 # Required group for the mcp:admin scope -- reading every user's jobs.
 # This is how an OAuth caller becomes an admin. Entitlement comes from the

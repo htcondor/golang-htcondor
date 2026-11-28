@@ -36,7 +36,7 @@ func TestOAuth2SettingsAreReadWithTheWebUIOrMCP(t *testing.T) {
 					"issuer":       got.oauth2Issuer == "https://ap.example.edu",
 					"client id":    got.oauth2ClientID == "upstream-client",
 					"auth url":     got.oauth2AuthURL == "https://idp.example.edu/authorize",
-					"access group": got.mcpAccessGroup == "chtc_staff",
+					"access group": got.mcpAccessGroups == "chtc_staff",
 					"identity map": len(got.identityMapStrategies) == 1,
 				} {
 					if read != oauth {
