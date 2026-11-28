@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -179,22 +182,29 @@ func coveredByDocument(pattern string, documented map[string]bool) bool {
 	return false
 }
 
-// undocumentedAPIRoutes is an inventory, not a set of approvals.
+// The /api/v1/ routes the server registers and the OpenAPI document
+// does not declare, split by whether anything ELSE documents them.
 //
-// These are the /api/v1/ routes the server registers and the OpenAPI
-// document does not declare: about a third of the surface under that
-// prefix. Most of them serve the web console rather than a published
-// API -- the admin pages, the dashboard, the chat assistant, the submit
-// templates, the file choosers -- and several are streaming endpoints
-// that the document has no shape for. Whether the document is meant to
-// describe them at all is a decision nobody has recorded, so this list
-// records the question instead of answering it.
+// This was one flat list called undocumentedAPIRoutes, whose comment
+// said most of these "serve the web console rather than a published
+// API". Cross-referencing it against docs/ says otherwise: 29 of the
+// 41 are described in the documentation tree, several of them at
+// length -- /api/v1/ping has a full paragraph in developer/api.md.
+// They are not undocumented. They are missing from the SPEC while the
+// prose tells people to use them, which is a different problem with a
+// different fix, and the single name hid that.
 //
-// What it buys in the meantime is the thing the contract is for: the
-// set is frozen. A route added under /api/v1/ without a path in the
-// document fails TestEveryRoutedAPIPathIsDocumented, and so does one
-// that gets documented without being struck from here.
-var undocumentedAPIRoutes = []string{
+// Neither list is a set of approvals. Both are frozen, so a route
+// added under /api/v1/ without a path in the document fails
+// TestEveryRoutedAPIPathIsDocumented, and one that gets documented
+// without being struck from here fails too.
+
+// routesDescribedInProseOnly: documented in docs/, absent from
+// openapi.json. A client generated from the document cannot call an
+// endpoint the documentation tells its reader to use -- so each of
+// these is either a path to add to openapi.json or a paragraph to
+// stop promising.
+var routesDescribedInProseOnly = []string{
 	"/api/v1/admin/api-keys",
 	"/api/v1/admin/api-keys/",
 	"/api/v1/admin/condor-config",
@@ -203,30 +213,19 @@ var undocumentedAPIRoutes = []string{
 	"/api/v1/admin/logs",
 	"/api/v1/admin/oauth2/revoke",
 	"/api/v1/admin/oauth2/tokens",
-	"/api/v1/admin/oauth2/tokens/revoke",
-	"/api/v1/admin/oauth2/tokens/scopes",
 	"/api/v1/admin/reservations",
 	"/api/v1/admin/reservations/",
-	"/api/v1/admin/reservations/health",
 	"/api/v1/admin/reservations/windows",
-	"/api/v1/admin/site-apps",
-	"/api/v1/admin/site-apps/",
-	"/api/v1/admin/superuser",
 	"/api/v1/admin/usage",
-	"/api/v1/auth/logout",
-	"/api/v1/calendar",
 	"/api/v1/chat",
 	"/api/v1/chat/info",
 	"/api/v1/chat/scope",
 	"/api/v1/collector/pool-summary",
 	"/api/v1/collector/watch",
 	"/api/v1/dashboard",
-	"/api/v1/dashboard/activity",
-	"/api/v1/dashboard/activity/stream",
 	"/api/v1/interactive/terminal",
 	"/api/v1/issues",
 	"/api/v1/jobs/watch",
-	"/api/v1/pickers",
 	"/api/v1/ping",
 	"/api/v1/schedd/ping",
 	"/api/v1/share/input",
@@ -234,6 +233,122 @@ var undocumentedAPIRoutes = []string{
 	"/api/v1/share/watch",
 	"/api/v1/templates",
 	"/api/v1/templates/",
-	"/api/v1/watches/",
 	"/api/v1/webui/branding",
+}
+
+// routesWithNoDocumentation: nothing in docs/ names these. Most look
+// like the web console's own surface -- the activity stream, the
+// calendar, the file-chooser list, logout -- plus four admin
+// endpoints that the admin pages call and no page explains.
+//
+// This is the list where "is the document meant to describe them?" is
+// still an open question, and it is twelve routes rather than
+// forty-one.
+var routesWithNoDocumentation = []string{
+	"/api/v1/admin/oauth2/tokens/revoke",
+	"/api/v1/admin/oauth2/tokens/scopes",
+	"/api/v1/admin/reservations/health",
+	"/api/v1/admin/site-apps",
+	"/api/v1/admin/site-apps/",
+	"/api/v1/admin/superuser",
+	"/api/v1/auth/logout",
+	"/api/v1/calendar",
+	"/api/v1/dashboard/activity",
+	"/api/v1/dashboard/activity/stream",
+	"/api/v1/pickers",
+	"/api/v1/watches/",
+}
+
+// undocumentedAPIRoutes is the two lists together, which is what the
+// contract check above compares against.
+var undocumentedAPIRoutes = append(append([]string{},
+	routesDescribedInProseOnly...), routesWithNoDocumentation...)
+
+// The split above is only worth having if it stays true. A route that
+// somebody documents has to move lists, and one whose paragraph is
+// deleted has to move back -- otherwise this becomes the flat list it
+// replaced, with two names.
+//
+// It matches on the route followed by a non-path character, not on a
+// substring. /api/v1/dashboard is a prefix of /api/v1/dashboard/activity,
+// and a plain substring search reports the activity stream as documented
+// because a page mentions the dashboard. That misclassified one route on
+// the first pass; it is the same prefix trap as HTTP_API_LISTEN inside
+// HTTP_API_LISTEN_ADDR.
+func TestRouteInventoryClassificationIsAccurate(t *testing.T) {
+	tree := docsTreeText(t)
+	if len(tree) == 0 {
+		t.Fatal("read no documentation; this check would pass vacuously")
+	}
+
+	for _, route := range routesDescribedInProseOnly {
+		if where := pagesNaming(tree, route); len(where) == 0 {
+			t.Errorf("%s is in routesDescribedInProseOnly and no page under docs/ names it. "+
+				"If its documentation was removed, move it to routesWithNoDocumentation.", route)
+		}
+	}
+	for _, route := range routesWithNoDocumentation {
+		if where := pagesNaming(tree, route); len(where) > 0 {
+			sort.Strings(where)
+			t.Errorf("%s is in routesWithNoDocumentation but %s names it. Move it to "+
+				"routesDescribedInProseOnly -- or, better, add it to openapi.json and "+
+				"strike it from both.", route, strings.Join(where, ", "))
+		}
+	}
+}
+
+// docsTreeText reads every Markdown page in the documentation tree,
+// keyed by a path for error messages.
+func docsTreeText(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	root := filepath.Join("..", "..", "docs")
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		b, err := os.ReadFile(path) //nolint:gosec // G304: path comes from walking docs/
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
+		out[rel] = string(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading the documentation tree: %v", err)
+	}
+	return out
+}
+
+// pagesNaming returns the pages that name this route as a whole route
+// rather than as the prefix of a longer one.
+func pagesNaming(tree map[string]string, route string) []string {
+	needle := strings.TrimSuffix(route, "/")
+	var out []string
+	for page, text := range tree {
+		for i := 0; ; {
+			j := strings.Index(text[i:], needle)
+			if j < 0 {
+				break
+			}
+			end := i + j + len(needle)
+			i = end
+			if end < len(text) {
+				c := text[end]
+				// Another path segment, or a longer name: not this route.
+				if c == '/' || c == '-' || c == '_' ||
+					(c >= '0' && c <= '9') ||
+					(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					continue
+				}
+			}
+			out = append(out, page)
+			break
+		}
+	}
+	return out
 }
