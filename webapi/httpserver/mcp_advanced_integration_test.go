@@ -669,9 +669,9 @@ func setupTestServerWithSSOAndGroups(t *testing.T, ssoBaseURL, accessGroup, read
 		OAuth2RedirectURL:  placeholderBaseURL + "/mcp/oauth2/callback",
 		OAuth2UserInfoURL:  userInfoURL,
 		OAuth2GroupsClaim:  "groups",
-		MCPAccessGroup:     accessGroup,
-		MCPReadGroup:       readGroup,
-		MCPWriteGroup:      writeGroup,
+		MCPAccessGroups:    accessGroup,
+		MCPReadGroups:      readGroup,
+		MCPWriteGroups:     writeGroup,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
@@ -800,8 +800,8 @@ func setupTestServerWithSSO(t *testing.T, ssoBaseURL string) (string, *Server, s
 		OAuth2UserInfoURL:  userInfoURL,
 		OAuth2GroupsClaim:  "groups",
 		// Grant read and write scopes to users in "mcp-users" group
-		MCPReadGroup:  "mcp-users",
-		MCPWriteGroup: "mcp-users",
+		MCPReadGroups:  "mcp-users",
+		MCPWriteGroups: "mcp-users",
 	})
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)

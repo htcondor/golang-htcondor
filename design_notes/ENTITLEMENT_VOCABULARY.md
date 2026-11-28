@@ -9,13 +9,14 @@ line between them is drawn here rather than left to be inferred:
 | Landed | Proposed |
 | --- | --- |
 | `anyuser:read` and `anyuser:write` exist, mintable on an API key and grantable through OAuth2 | the remaining renames below |
-| Both are advertised, consent-unchecked, and gated on their own settings | the `*_GROUPS` / `*_USERS` pairs for everything *except* the two `anyuser:*` entitlements |
+| Both are advertised, consent-unchecked, and gated on their own settings | the `*_GROUPS` / `*_USERS` pairs for `SERVICE_ADMIN` and `IMPERSONATION`, which are step 6 |
 | Both are honoured on REST and MCP alike, and named by `whoami` | |
 | `mcp:admin` and `mcp:superuser` are requestable but no longer advertised or shown; each power is offered once, under its `anyuser:*` name | |
 | Entitlements are granted at mint and re-verified on use (service keys) | splitting `HTTP_API_WEBUI_ADMIN_GROUP` |
 | `MCP_ADMIN_USERS` keeps its behaviour | deprecating it in earnest |
 | `principalSet`, and `HTTP_API_ANYUSER_{READ,WRITE}_{GROUPS,USERS}` as the configuration for the two cross-user entitlements | both MCP scope-challenge fixes |
 | `HTTP_API_MCP_ADMIN_GROUP` / `HTTP_API_MCP_SUPERUSER_GROUP` read as superseded spellings, undocumented, naming their replacement at startup | |
+| `HTTP_API_MCP_{ACCESS,READ,WRITE}_{GROUPS,USERS}` and `HTTP_API_WEBUI_ACCESS_{GROUPS,USERS}`, with the four singular spellings superseded on the same terms | |
 
 Nothing landed changes a power anyone holds today. The two new scopes
 add a name, not a privilege; the four new settings add a second way to
@@ -147,7 +148,22 @@ request it**. Never who holds it.
 | reach the web UI at all | `HTTP_API_WEBUI_ACCESS_GROUPS` | `HTTP_API_WEBUI_ACCESS_USERS` |
 | administer this service | `HTTP_API_SERVICE_ADMIN_GROUPS` | `HTTP_API_SERVICE_ADMIN_USERS` |
 | act as another user | `HTTP_API_IMPERSONATION_GROUPS` | `HTTP_API_IMPERSONATION_USERS` |
-| lead a project | `HTTP_API_PROJECT_LEADS_GROUPS` | `HTTP_API_PROJECT_LEADS_USERS` |
+
+**Project leads are not in the table, and should not be.** The row that
+used to read `HTTP_API_PROJECT_LEADS_GROUPS` /
+`HTTP_API_PROJECT_LEADS_USERS` was written by analogy and does not
+survive contact with what those settings are. Leading a project is not
+one gate: it is a mapping from a caller to *which* projects they lead,
+and the two sources already say so.
+`HTTP_API_PROJECT_LEADS_GROUP` is a **pattern** containing `{project}`,
+so that a member of `<P>-leads` leads project P — a list of such
+patterns is a different and larger idea than a list of group names, and
+`principalSet`, which answers yes or no, cannot express it.
+`HTTP_API_PROJECT_LEADS_FILE` is the user half already, and a better
+one: it names leads *per project*, users and groups alike. A flat
+`HTTP_API_PROJECT_LEADS_USERS` would have to mean "leads every project",
+which is a new global power and not a pluralisation — exactly the kind
+of change step 6 is kept separate for.
 
 Three rules, and they are the point of the table:
 
@@ -461,12 +477,24 @@ can change what anybody can do.
    page, so the startup log line is the only place an operator still
    running one meets its replacement; that is why the line names it.
 
-   **Not done for the rest of the table** — `MCP_READ`, `MCP_WRITE`,
-   `MCP_ACCESS`, `WEBUI_ACCESS`, `SERVICE_ADMIN`, `IMPERSONATION`,
-   `PROJECT_LEADS`. Each is a pluralisation plus a user half, on the
-   pattern now established, and none is urgent: unlike the two above,
-   they were never the only configuration source for a scope the server
-   advertises.
+   **Also done for the four opt-in access gates** — `MCP_ACCESS`,
+   `MCP_READ`, `MCP_WRITE` and `WEBUI_ACCESS` — on the same pattern,
+   with one difference that is the whole of the risk in that change:
+   for these, an empty setting means **everybody**, not nobody. They
+   are restrictions an operator opts into, and most deployments
+   configure none of them, so a set that answered "nobody" would lock
+   every user out of `/mcp` and the web interface on upgrade. The
+   answer is therefore a property of the set, fixed by the constructor
+   that builds it (`newOptInPrincipalSet` beside `newPrincipalSet`),
+   rather than a second method a call site could reach for by mistake —
+   `allows()` reads identically at every call site and must not mean
+   opposite things at two of them. `TestUnconfiguredGatePolarity`
+   names each gate and the direction it must answer in.
+
+   **Not done for `SERVICE_ADMIN` or `IMPERSONATION`,** which are
+   `HTTP_API_WEBUI_ADMIN_GROUP` and `HTTP_API_SUPERUSER_GROUP` and
+   belong to step 6, and **not for `PROJECT_LEADS`,** which does not fit
+   the scheme at all — see the note under *Configuration*.
 4. **Move internal call sites and documentation** to the new names.
 5. **Deprecate `MCP_ADMIN_USERS` in earnest**: keep the behaviour, name
    the replacement at startup, and give the removal a release.

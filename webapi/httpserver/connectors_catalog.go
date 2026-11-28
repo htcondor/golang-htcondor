@@ -34,8 +34,9 @@ import (
 //     "Saved".
 //
 // Discovery runs HERE and not in the browser. Two reasons, either enough:
-// the page's Content-Security-Policy has no connect-src and so inherits
-// default-src, which stops a cross-origin fetch dead; and it is this
+// the page's Content-Security-Policy states connect-src 'self', widened
+// only for GitHub and a connector's own picker, which stops a
+// cross-origin fetch to a provider dead; and it is this
 // server, not the operator's laptop, that has to be able to reach the
 // provider for the connector to work at all. A discovery that succeeds in
 // the browser and fails in the daemon is worse than no discovery.

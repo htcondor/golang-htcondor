@@ -228,9 +228,12 @@ type mcpConfig struct {
 	sshSessionCpus     int
 	sshSessionMemMB    int
 	sshSessionDiskMB   int
-	mcpAccessGroup     string
-	mcpReadGroup       string
-	mcpWriteGroup      string
+	mcpAccessGroups    string
+	mcpAccessUsers     string
+	mcpReadGroups      string
+	mcpReadUsers       string
+	mcpWriteGroups     string
+	mcpWriteUsers      string
 	anyUserReadGroups  string
 	anyUserReadUsers   string
 	anyUserWriteGroups string
@@ -1359,18 +1362,32 @@ func loadTokenLifespan(cfg *config.Config, k config.DurationKnob, logger *loggin
 
 // loadAccessControlGroups loads MCP access control group settings
 func loadAccessControlGroups(cfg *config.Config, config *mcpConfig, logger *logging.Logger) {
-	if accessGroup, ok := cfg.Get("HTTP_API_MCP_ACCESS_GROUP"); ok && accessGroup != "" {
-		config.mcpAccessGroup = accessGroup
-		logger.Info(logging.DestinationHTTP, "MCP access group", "group", accessGroup)
-	}
-	if readGroup, ok := cfg.Get("HTTP_API_MCP_READ_GROUP"); ok && readGroup != "" {
-		config.mcpReadGroup = readGroup
-		logger.Info(logging.DestinationHTTP, "MCP read group", "group", readGroup)
-	}
-	if writeGroup, ok := cfg.Get("HTTP_API_MCP_WRITE_GROUP"); ok && writeGroup != "" {
-		config.mcpWriteGroup = writeGroup
-		logger.Info(logging.DestinationHTTP, "MCP write group", "group", writeGroup)
-	}
+	// Who may reach /mcp, and who may read or write through it. Each is
+	// a group half that supersedes a singular older spelling, and a
+	// user half that is new and so has nothing to fall back to.
+	//
+	// These are opt-in restrictions: unset leaves the surface open to
+	// every authenticated caller. The empty case is decided once, where
+	// the set is built (newOptInPrincipalSet), not here.
+	config.mcpAccessGroups = supersededGroupSetting(cfg, logger,
+		knobs.MCPAccessGroups,
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		knobs.MCPAccessGroup,
+		"members may reach /mcp")
+	config.mcpAccessUsers = userHalf(cfg, logger, knobs.MCPAccessUsers, "may reach /mcp")
+	config.mcpReadGroups = supersededGroupSetting(cfg, logger,
+		knobs.MCPReadGroups,
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		knobs.MCPReadGroup,
+		"members are granted mcp:read")
+	config.mcpReadUsers = userHalf(cfg, logger, knobs.MCPReadUsers, "are granted mcp:read")
+	config.mcpWriteGroups = supersededGroupSetting(cfg, logger,
+		knobs.MCPWriteGroups,
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		knobs.MCPWriteGroup,
+		"members are granted mcp:write and condor:/WRITE")
+	config.mcpWriteUsers = userHalf(cfg, logger, knobs.MCPWriteUsers,
+		"are granted mcp:write and condor:/WRITE")
 	// The two cross-user privileges. Logged at the same level as the
 	// others, because "who can see and change everyone's jobs" is
 	// exactly what an operator wants to find in the startup log.
@@ -1379,23 +1396,38 @@ func loadAccessControlGroups(cfg *config.Config, config *mcpConfig, logger *logg
 		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
 		knobs.MCPAdminGroup,
 		"members may READ every user's jobs")
-	config.anyUserReadUsers = knobs.AnyUserReadUsers.Get(cfg)
-	if config.anyUserReadUsers != "" {
-		logger.Info(logging.DestinationHTTP,
-			"Named users may request anyuser:read: they may READ every user's jobs",
-			"setting", knobs.AnyUserReadUsers.Name(), "users", config.anyUserReadUsers)
-	}
+	config.anyUserReadUsers = userHalf(cfg, logger, knobs.AnyUserReadUsers,
+		"may request anyuser:read: they may READ every user's jobs")
 	config.anyUserWriteGroups = supersededGroupSetting(cfg, logger,
 		knobs.AnyUserWriteGroups,
 		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
 		knobs.MCPSuperuserGroup,
 		"members may CHANGE any user's jobs")
-	config.anyUserWriteUsers = knobs.AnyUserWriteUsers.Get(cfg)
-	if config.anyUserWriteUsers != "" {
-		logger.Info(logging.DestinationHTTP,
-			"Named users may request anyuser:write: they may CHANGE any user's jobs",
-			"setting", knobs.AnyUserWriteUsers.Name(), "users", config.anyUserWriteUsers)
-	}
+	config.anyUserWriteUsers = userHalf(cfg, logger, knobs.AnyUserWriteUsers,
+		"may request anyuser:write: they may CHANGE any user's jobs")
+}
+
+// loadWebUIAccessSettings resolves who may log in to the web interface.
+//
+// Separate from loadAccessControlGroups because it is read on a
+// different path -- the web interface is served whether or not MCP is
+// enabled -- but resolved identically: a group half that supersedes the
+// singular spelling, and a user half that is new.
+//
+// Naming nobody in either half leaves the gate unconfigured, and the
+// web interface then answers to the MCP access gate, which is what
+// gated the browser before these were separate settings. That fallback
+// lives in the handler, not here, so that a reconfigure of either one
+// takes effect without restarting.
+func loadWebUIAccessSettings(cfg *config.Config, logger *logging.Logger) (groups, users string) {
+	groups = supersededGroupSetting(cfg, logger,
+		knobs.WebUIAccessGroups,
+		//nolint:staticcheck // SA1019: honoring a setting an operator may still have set
+		knobs.WebUIAccessGroup,
+		"members may log in to the web interface")
+	users = userHalf(cfg, logger, knobs.WebUIAccessUsers,
+		"may log in to the web interface")
+	return groups, users
 }
 
 // supersededGroupSetting reads current, falling back to the obsolete
@@ -1415,7 +1447,7 @@ func supersededGroupSetting(cfg *config.Config, logger *logging.Logger,
 	current, old config.StringKnob, grants string,
 ) string {
 	if v := current.Get(cfg); v != "" {
-		logger.Info(logging.DestinationHTTP, "Cross-user entitlement group: "+grants,
+		logger.Info(logging.DestinationHTTP, "Authorization group: "+grants,
 			"setting", current.Name(), "group", v)
 		return v
 	}
@@ -1424,9 +1456,29 @@ func supersededGroupSetting(cfg *config.Config, logger *logging.Logger,
 		return ""
 	}
 	logger.Warn(logging.DestinationHTTP,
-		"Cross-user entitlement group read from a superseded setting: "+grants+
+		"Authorization group read from a superseded setting: "+grants+
 			". It still works; set the replacement instead.",
 		"setting", old.Name(), "superseded_by", current.Name(), "group", v)
+	return v
+}
+
+// userHalf reads a _USERS list and says so in the log.
+//
+// No fallback, unlike the group halves: every one of these settings is
+// new, and inventing an older spelling for it would be reading a
+// privilege out of a setting that never meant one.
+//
+// Logged at Info for the same reason the group halves are: who may
+// reach a surface, and who may act beyond their own jobs, is what an
+// operator wants to find in the startup log rather than reconstruct
+// from a configuration file they may not be looking at.
+func userHalf(cfg *config.Config, logger *logging.Logger, k config.StringKnob, grants string) string {
+	v := k.Get(cfg)
+	if v == "" {
+		return ""
+	}
+	logger.Info(logging.DestinationHTTP, "Named users "+grants,
+		"setting", k.Name(), "users", v)
 	return v
 }
 
@@ -2460,10 +2512,6 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 
 	// Web UI admin group (empty disables admin pages — see PR (c)).
 	webuiAdminGroup, _ := cfg.Get("HTTP_API_WEBUI_ADMIN_GROUP")
-	// Who may log in to the web interface. Empty falls back to
-	// HTTP_API_MCP_ACCESS_GROUP, which is what gated the browser before
-	// these were separate knobs.
-	webuiAccessGroup, _ := cfg.Get("HTTP_API_WEBUI_ACCESS_GROUP")
 
 	// Site apps: a directory of <id>.zip bundles, each with an
 	// <id>.yaml policy file beside it naming the groups that may see
@@ -2533,6 +2581,12 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	// is otherwise silent, which is the whole reason it says so.
 	siteApps := loadSiteAppsConfig(cfg, logger)
 	webhookCfg := loadWebhookSettings(cfg, logger)
+
+	// Who may log in to the web interface. Read here, below the other
+	// configuration, for the reason site apps are: it reports what it
+	// found, including an operator's setting being superseded, and the
+	// logger does not exist until now.
+	webuiAccessGroups, webuiAccessUsers := loadWebUIAccessSettings(cfg, logger)
 
 	// Create collector
 	collector := setupCollector(cfg, logger)
@@ -2791,9 +2845,12 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		OAuth2RefreshTokenLifespan: mcpCfg.oauth2RefreshTokenLifespan,
 		OAuth2MaxGrantLifetime:     mcpCfg.oauth2MaxGrantLifetime,
 		OAuth2RevocationOracles:    mcpCfg.oauth2RevocationOracles,
-		MCPAccessGroup:             mcpCfg.mcpAccessGroup,
-		MCPReadGroup:               mcpCfg.mcpReadGroup,
-		MCPWriteGroup:              mcpCfg.mcpWriteGroup,
+		MCPAccessGroups:            mcpCfg.mcpAccessGroups,
+		MCPAccessUsers:             mcpCfg.mcpAccessUsers,
+		MCPReadGroups:              mcpCfg.mcpReadGroups,
+		MCPReadUsers:               mcpCfg.mcpReadUsers,
+		MCPWriteGroups:             mcpCfg.mcpWriteGroups,
+		MCPWriteUsers:              mcpCfg.mcpWriteUsers,
 		AnyUserReadGroups:          mcpCfg.anyUserReadGroups,
 		AnyUserReadUsers:           mcpCfg.anyUserReadUsers,
 		AnyUserWriteGroups:         mcpCfg.anyUserWriteGroups,
@@ -2810,7 +2867,8 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		MCPAdminUsers:              mcpCfg.adminUsers,
 		PoolQueryPolicy:            poolpolicy.New(mcpCfg.poolQueryMode, mcpCfg.poolQueryExtraAttrs),
 		WebUIAdminGroup:            webuiAdminGroup,
-		WebUIAccessGroup:           webuiAccessGroup,
+		WebUIAccessGroups:          webuiAccessGroups,
+		WebUIAccessUsers:           webuiAccessUsers,
 		WebUIAppOnlyGroup:          webuiAppOnlyGroup,
 		SiteAppsDir:                siteApps.Dir,
 		SiteAppsReloadInterval:     siteApps.Reload,

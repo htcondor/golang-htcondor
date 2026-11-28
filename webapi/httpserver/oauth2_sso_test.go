@@ -39,7 +39,7 @@ func TestOpenIDIsGrantedOnlyWhenRequested(t *testing.T) {
 // stored as [] rather than JSON null; and a member still gets what they
 // asked for.
 func TestRefusedGrantIsEmptyNotNil(t *testing.T) {
-	h := &Handler{mcpAccessGroups: newGroupSet("ap2001-login")}
+	h := &Handler{mcpAccessGroups: newOptInPrincipalSet("ap2001-login", "")}
 	requested := []string{"mcp:read", "mcp:write"}
 
 	granted := h.getScopesForGroups("", []string{"someone-else"}, requested)

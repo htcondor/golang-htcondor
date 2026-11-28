@@ -13,15 +13,65 @@ OpenAPI document at `/openapi.json`. Part of the
 
 
 **Jobs** (authenticated, owner-scoped)
-- `POST /api/v1/jobs` — submit a job
+
+Owner-scoped means another user's job answers 404, not 403: these
+endpoints do not report whether a job they will not show you exists. A
+session with superuser mode armed reaches past that; the action is
+re-authenticated as the job's owner and audited.
+
+A submission may carry an `Idempotency-Key` header so a retry after a
+dropped connection cannot queue the work twice. A reused key answers
+**409** naming the job the first attempt created, which is a success
+from the client's point of view, not a failure. See
+[Idempotent submission](../operator/idempotency.md).
+
+Submitting and the sandbox:
+- `POST /api/v1/jobs` — submit a job. Input spooling is always on, so a
+  job with anything to receive is submitted **held** and runs once its
+  sandbox arrives. The sandbox is `transfer_input_files` (minus URLs,
+  which the execute node fetches itself), plus the executable by
+  basename unless `transfer_executable` is false or it is a system path
+  such as `/bin/sleep`, plus the stdin file if one is named. A job with
+  nothing to receive is released at submit. **The schedd accepts only
+  those names and silently drops anything else in the tar.**
+- `PUT /api/v1/jobs/{id}/input` — upload the sandbox as a tar. A bare
+  cluster id spools every proc of the cluster still waiting.
+- `POST /api/v1/jobs/{id}/input/multipart` — the same as form-data.
+- `POST /api/v1/jobs/dag` — submit a DAGMan workflow. Its sandbox is
+  written once, so everything the workflow will ever need goes in this
+  one call.
+
+Reading:
 - `GET /api/v1/jobs` — list with `constraint` / `projection`
-- `GET /api/v1/jobs/{id}` — retrieve one
-- `PUT /api/v1/jobs/{id}/input` — upload input tarball
-- `GET /api/v1/jobs/{id}/output` — download output tarball
+- `GET /api/v1/jobs/{id}` — retrieve one. Expression-valued attributes
+  arrive as `/Expr(...)/`; an `evaluated` member carries the numbers
+  `RequestCpus`, `RequestMemory`, `RequestDisk` and `RequestGPUs`
+  evaluate to, so a request written as an expression can be read
+  without a ClassAd evaluator.
+- `GET /api/v1/jobs/{id}/stdout`, `/stderr` — the job's streams
+- `GET /api/v1/jobs/{id}/output` — download the output sandbox as a tar
+- `GET /api/v1/jobs/{id}/files/{filename}` — one file out of it
+- `GET /api/v1/jobs/{id}/dag` — a workflow's structure and node states
+- `GET /api/v1/batches/{batchId}/jobs` — a batch's jobs, queued and finished
+- `GET /api/v1/jobs/archive`, `/jobs/epochs`, `/jobs/transfers` — history
+
+Acting:
+- `DELETE /api/v1/jobs/{id}` — remove, as `condor_rm` does
+- `PATCH /api/v1/jobs/{id}` — set attributes, as `condor_qedit` does. A
+  bare JSON string value is taken as a **pre-encoded ClassAd
+  expression**; send `{"type": "string", "value": "..."}` to have a
+  value quoted for you. Protected and immutable attributes are refused.
+- `POST /api/v1/jobs/{id}/hold`, `/release` — one job
+- `POST /api/v1/jobs/hold`, `/jobs/release` — by constraint
+- `GET /api/v1/jobs/{id}/ssh` — a session inside a running job; see
+  [Shell access over SSH](../user/ssh.md)
+
+Estimating:
 - `GET /api/v1/jobs/{id}/runtime-estimate` — how long the job is likely
   to run; see [Runtime estimates](../operator/estimates.md#runtime-estimates)
 - `POST /api/v1/jobs/runtime-estimates` — the same for up to 5000 jobs at
   once; see [Runtime estimates](../operator/estimates.md#runtime-estimates)
+- `GET /api/v1/jobs/{id}/similar` — the finished jobs behind an estimate
 
 **Pool** (authenticated; every signed-in user)
 - `GET /api/v1/pool/drain-estimates` — when each execute node would be

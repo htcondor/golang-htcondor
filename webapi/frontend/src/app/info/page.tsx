@@ -64,6 +64,12 @@ export default function InfoPage() {
           with your current session.
         </p>
         <p className="mt-3">
+          {/* /docs exactly is the server's Swagger UI. It predates the
+              guides the app serves at /docs/<audience>/..., and it is not
+              a page of this app: the rule below sees the /docs/[...slug]
+              route and reads this as an internal link, but a <Link> would
+              client-route to a page that does not exist. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a
             href="/docs"
             className="text-brand-700 hover:text-brand-900 underline"

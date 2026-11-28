@@ -3011,7 +3011,7 @@
       },
       "post": {
         "summary": "Submit a job",
-        "description": "Submit a new job to the schedd using SubmitRemote. Jobs are submitted with input file spooling enabled and start in HELD status until input files are uploaded via PUT /jobs/{jobId}/input. After uploading input files, poll GET /jobs/{jobId} to check job status (JobStatus: 1=Idle, 2=Running, 3=Removed, 4=Completed, 5=Held).",
+        "description": "Submit a new job to the schedd with input spooling enabled. A job whose sandbox has anything to receive is submitted HELD, with the spooling hold code, and runs once the sandbox arrives via PUT /jobs/{jobId}/input. That sandbox is the job's transfer_input_files, plus the executable by basename when transfer_executable is true (the default) and the executable is not a system path such as /bin/sleep, plus the stdin file when one is named. A URL in transfer_input_files is fetched by the execute node and is NOT part of the sandbox. A job with nothing to receive - a system executable, no input files, no stdin file - is released at submit and never waits for an upload. The schedd accepts only the names in that set and silently drops anything else in the tar, so an input file the submit file did not declare will not be there at run time and nothing reports it. Then poll GET /jobs/{jobId} for JobStatus: 1=Idle, 2=Running, 3=Removed, 4=Completed, 5=Held, 6=Transferring Output, 7=Suspended.",
         "operationId": "submitJob",
         "parameters": [
           {
@@ -3353,7 +3353,7 @@
       },
       "delete": {
         "summary": "Remove a job",
-        "description": "Remove a job from the schedd (NOT YET IMPLEMENTED)",
+        "description": "Remove a job from the queue, as condor_rm does. Confined to the caller's own jobs: another user's job answers 404 rather than 403, so the endpoint does not report whether it exists. A session with superuser mode armed may remove another user's job; the action is re-authenticated as that job's owner and written to the audit trail. The schedd, not this server, decides the outcome and answers per job: 404 when nothing matched, and 400 naming the reason when the job matched but was not removed (permission denied, or a status removal does not apply to).",
         "operationId": "deleteJob",
         "parameters": [
           {
@@ -3367,21 +3367,17 @@
           }
         ],
         "responses": {
-          "501": {
-            "description": "Not implemented",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
+          "200": {"description": "Job removed", "content": {"application/json": {"schema": {"type": "object", "properties": {"message": {"type": "string"}, "job_id": {"type": "string", "description": "The job id, qualified with its access point in multi-AP mode."}, "results": {"type": "object", "description": "What the schedd reported for the matched jobs.", "properties": {"total": {"type": "integer"}, "success": {"type": "integer"}}}}}}}},
+          "400": {"description": "Malformed job id, or the schedd matched the job and refused to remove it", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Authentication failed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "Superuser mode is not armed for this caller", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such job, or it is not the caller's", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "Removal failed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       },
       "patch": {
         "summary": "Edit a job",
-        "description": "Edit job attributes (NOT YET IMPLEMENTED)",
+        "description": "Set attributes on a queued job, as condor_qedit does. Confined to the caller's own jobs. Each value may be a bare JSON value or a typed object. A bare string is taken as a PRE-ENCODED ClassAd expression and passed through, which is the historical behaviour and means a literal string has to arrive already quoted; numbers, booleans and null are encoded as themselves. To send a value without knowing ClassAd quoting, use the typed form {\"type\": \"string\", \"value\": \"a, b\"}, which is quoted for you. Protected and immutable attributes are refused: this endpoint never sets AllowProtectedAttrs.",
         "operationId": "editJob",
         "parameters": [
           {
@@ -3400,22 +3396,21 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "description": "Job attributes to update"
+                "required": ["attributes"],
+                "properties": {
+                  "attributes": {"type": "object", "description": "Attribute name to value. At least one is required; an empty object is a 400.", "additionalProperties": {"description": "A bare JSON value (a string is a pre-encoded ClassAd expression), or {\"type\": \"string\"|\"integer\"|\"real\"|\"boolean\", \"value\": ...} to have the value encoded for you."}}
+                }
               }
             }
           }
         },
         "responses": {
-          "501": {
-            "description": "Not implemented",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
+          "200": {"description": "Attributes set", "content": {"application/json": {"schema": {"type": "object", "properties": {"message": {"type": "string"}, "job_id": {"type": "string"}, "edited": {"type": "integer", "description": "How many jobs the schedd changed."}}}}}},
+          "400": {"description": "Malformed job id, no attributes, or a value that could not be encoded", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "401": {"description": "Authentication failed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "403": {"description": "An immutable or protected attribute, or the schedd denied permission", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "No such job, or it is not the caller's", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "500": {"description": "Edit failed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

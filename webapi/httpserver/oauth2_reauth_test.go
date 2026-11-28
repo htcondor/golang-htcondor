@@ -271,7 +271,7 @@ func hasScope(scope, want string) bool {
 // user who loses write entitlement must stop receiving mcp:write on refresh,
 // while keeping the rest of their grant.
 func TestRefreshNarrowsScopesWhenGroupPolicyChanges(t *testing.T) {
-	f := newReauthFixture(t, Config{MCPWriteGroup: "condor-writers"})
+	f := newReauthFixture(t, Config{MCPWriteGroups: "condor-writers"})
 
 	_, refreshToken, scope := f.grant(t, "alice", []string{"condor-writers"})
 	if !hasScope(scope, "mcp:write") {
@@ -279,7 +279,7 @@ func TestRefreshNarrowsScopesWhenGroupPolicyChanges(t *testing.T) {
 	}
 
 	// alice loses write entitlement.
-	f.server.mcpWriteGroups = newGroupSet("condor-writers-v2")
+	f.server.mcpWriteGroups = newOptInPrincipalSet("condor-writers-v2", "")
 
 	status, body := f.refresh(t, refreshToken)
 	if status != http.StatusOK {
@@ -312,11 +312,11 @@ func TestRefreshNarrowsScopesWhenGroupPolicyChanges(t *testing.T) {
 // TestRefreshRevokedWhenAccessGroupLost covers the harder denial: losing the
 // blanket access group kills the grant outright rather than narrowing it.
 func TestRefreshRevokedWhenAccessGroupLost(t *testing.T) {
-	f := newReauthFixture(t, Config{MCPAccessGroup: "condor-users"})
+	f := newReauthFixture(t, Config{MCPAccessGroups: "condor-users"})
 
 	_, refreshToken, _ := f.grant(t, "alice", []string{"condor-users"})
 
-	f.server.mcpAccessGroups = newGroupSet("condor-users-v2")
+	f.server.mcpAccessGroups = newOptInPrincipalSet("condor-users-v2", "")
 
 	status, body := f.refresh(t, refreshToken)
 	if status == http.StatusOK {

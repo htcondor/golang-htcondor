@@ -78,3 +78,28 @@ describe('AppShell for a placement-only session', () => {
     expect(screen.queryByRole('link', { name: 'Placement token' })).not.toBeInTheDocument();
   });
 });
+
+// Documentation is public. Without that the shell bounces a reader with
+// no session to the identity provider, and -- less visibly -- the
+// exported page carries no content at all, because the shell renders
+// nothing until it knows whether anybody is signed in.
+describe('AppShell on a documentation page', () => {
+  beforeEach(() => {
+    me.mockReset();
+    replace.mockReset();
+  });
+
+  it('renders the page for a reader with no session', async () => {
+    pathname = '/docs/user/jobs';
+    me.mockResolvedValue({ authenticated: false });
+    await renderShell();
+    expect(await screen.findByText('page body')).toBeInTheDocument();
+  });
+
+  it('still keeps an unauthenticated reader off the rest of the console', async () => {
+    pathname = '/jobs';
+    me.mockResolvedValue({ authenticated: false });
+    await renderShell();
+    await waitFor(() => expect(screen.queryByText('page body')).not.toBeInTheDocument());
+  });
+});

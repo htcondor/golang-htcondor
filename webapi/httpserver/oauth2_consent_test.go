@@ -485,9 +485,9 @@ func TestGetScopesForGroups(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := &Handler{
-				mcpAccessGroups: newGroupSet(tt.accessGroup),
-				mcpReadGroups:   newGroupSet(tt.readGroup),
-				mcpWriteGroups:  newGroupSet(tt.writeGroup),
+				mcpAccessGroups: newOptInPrincipalSet(tt.accessGroup, ""),
+				mcpReadGroups:   newOptInPrincipalSet(tt.readGroup, ""),
+				mcpWriteGroups:  newOptInPrincipalSet(tt.writeGroup, ""),
 			}
 			got := h.getScopesForGroups("", tt.userGroups, requested)
 			if len(got) != len(tt.expectedScopes) {
@@ -544,9 +544,9 @@ func TestOAuth2ConsentPage_ScopeFiltering(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Configure group settings on the server handler
-			server.mcpAccessGroups = newGroupSet(tt.accessGroup)
-			server.mcpReadGroups = newGroupSet(tt.readGroup)
-			server.mcpWriteGroups = newGroupSet(tt.writeGroup)
+			server.mcpAccessGroups = newOptInPrincipalSet(tt.accessGroup, "")
+			server.mcpReadGroups = newOptInPrincipalSet(tt.readGroup, "")
+			server.mcpWriteGroups = newOptInPrincipalSet(tt.writeGroup, "")
 
 			// Create a mock authorize request
 			authorizeReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/mcp/oauth2/authorize", nil)
@@ -611,9 +611,9 @@ func TestOAuth2ConsentPage_ScopeFiltering(t *testing.T) {
 	}
 
 	// Reset
-	server.mcpAccessGroups = newGroupSet("")
-	server.mcpReadGroups = newGroupSet("")
-	server.mcpWriteGroups = newGroupSet("")
+	server.mcpAccessGroups = newOptInPrincipalSet("", "")
+	server.mcpReadGroups = newOptInPrincipalSet("", "")
+	server.mcpWriteGroups = newOptInPrincipalSet("", "")
 }
 
 func TestOAuth2ConsentPage_SessionGroupsPassedToStateStore(t *testing.T) {

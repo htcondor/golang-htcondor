@@ -422,6 +422,66 @@ One known trap: static export plus a dynamic route needs
 works, but the params generator has to be written and will be the first
 thing that breaks if the content tree moves.
 
+#### As built
+
+The route is `webapi/frontend/src/app/docs/[...slug]`, rendering the
+repository's own `docs/` tree. Four things this note did not predict.
+
+**`/docs` was already taken.** The server has served its Swagger UI at
+exactly `/docs` since long before this note, and registers
+`/docs/oauth2-redirect` with every OAuth2 client it creates. Both are
+exact ServeMux patterns, so `/docs/<audience>/<page>` falls past them to
+the SPA and the guides work -- but there is no documentation landing
+page, because `/docs` is not available for one. The catch-all is
+`[...slug]`, not `[[...slug]]`, so the app does not claim the URL; the
+sidebar's "Documentation" entry points at `/docs/user`, and the Info
+page's link to the Swagger UI carries a comment saying why it is an
+`<a>` and not a `<Link>`. Moving the Swagger UI is the only way to get a
+landing page, and it is a user-visible, client-registration-visible
+change that should be decided on its own.
+
+**The manifest is enough, and it has to be.** `generateStaticParams`
+reads `docs/nav.json` and nothing else, so adding a page is
+`make docs-nav` and no edit here. What the generator cannot carry is the
+two things that are file paths on disk and URLs in a browser: a relative
+link between pages, and a heading anchor. Both are mapped in
+`src/lib/docs.ts`, with the page-to-URL direction resolved against the
+manifest rather than recomputed, and an unresolvable link throwing
+rather than rendering -- which fails the build instead of shipping a
+link to the dashboard.
+
+*Links out of the tree are a case this note missed.* The developer pages
+link to `../../design_notes/`, `../../metricsd/README.md`,
+`../../examples/`. They resolve on disk, so `docs-check` passes them,
+and there is no page in the app to serve them; they rewrite to the
+repository on GitHub.
+
+**Documentation had to be made public.** `AppShell` redirects any path
+but `/` to the identity provider when there is no session, which would
+have put the guides behind a login. It also renders nothing at all until
+the session query answers, so a page that is not public exports as an
+empty document.
+
+**"Prerendered" is less than it sounds, for every page in this app.**
+The Markdown is parsed and the React tree built at build time, and it
+ships inside the document -- no fetch, nothing for a CSP to refuse. But
+it ships as the flight payload, not as markup: `AppShell` calls
+`useSearchParams`, which makes Next bail the whole Suspense boundary to
+client rendering in a static export. Removing that one call was measured
+to restore real server-rendered HTML for every page, documentation
+included. Worth doing before the public site, which wants markup a
+crawler can read; not worth doing inside a documentation change.
+
+Two claims in the repository turned out to be wrong rather than just
+incomplete. `ChatPanel` says react-markdown "trips Next.js static
+export's prerender" if imported eagerly and loads it with
+`dynamic(..., { ssr: false })`; imported directly into a server
+component it builds and prerenders without complaint. And the Web UI's
+CSP does have a `connect-src` -- `'self'`, widened for the GitHub API
+and the connector pickers -- so the constraint is not a missing
+directive but a same-origin one, which build-time rendering sidesteps
+entirely.
+
 ### Always-latest, with `since:` front matter
 
 This repo is pre-1.0 and moving fast, and official-looking documentation
@@ -608,10 +668,36 @@ OpenAPI-shaped, every internal `$ref` resolves, and the OAuth2 flow
 object is where `setOpenAPIOAuth2URLs` walks to find it, that last one
 being a silent no-op if any of those keys move.
 
-Still to do here: validating against the OpenAPI schema itself, a
-rendered reference page, and the check that the paths it declares are
-routes the server registers -- the one that would catch an endpoint
-added without documentation.
+**The route check landed** and this paragraph said otherwise for a
+while: `openapi_routes_test.go` asks the server's own mux whether each
+documented path is routed, and checks the other direction against a
+frozen inventory of 41 `/api/v1/` routes in no OpenAPI path, mostly
+web-console endpoints. Whether the document is meant to describe those
+is a product question, not a documentation one; freezing the set is
+what stops it growing while nobody decides.
+
+**Structural validation landed too, and not as a meta-schema
+validation.** Five classes, each one a thing that breaks a generated
+client: operationIds present and unique, every `{placeholder}` in a
+path template declared, every response described, every `required`
+property defined, no orphan component schema. The meta-schema was
+rejected deliberately -- it has to be vendored, it reports failures in
+schema language rather than in terms of this document, and it would
+miss the sharpest of the five, since two operations sharing an
+operationId is spec-valid and still makes one endpoint uncallable.
+
+All five passed on the document as it stood: 128 operations, zero
+defects. They are a ratchet, like the undeclared-settings inventory,
+and their value is in what they refuse next.
+
+Still to do here: a rendered reference page, which is stage 6's
+business rather than this one's.
+
+**What the document was actually wrong about was its prose, not its
+structure** -- see the openapi.json entry under "What the conversion
+keeps finding in shipped artifacts" below. Worth stating because it
+sets where to look next: the shapes are checkable and now checked, and
+the sentences are not.
 
 **4. The user guide.** *Started.* The genuinely missing audience.
 Everything before this exists to make writing it, and keeping it
@@ -637,6 +723,14 @@ actually registers, and every limit against a setting a site really
 has.
 
 **5. Screenshots.**
+
+**6. In-product rendering.** *Done.* The `/docs/[...slug]` route,
+prerendered from `docs/nav.json` at build time and shipped inside the
+binary with the rest of the static export. What it found is under
+"Rendering: in-product first, public site second" above; the short
+version is that `/docs` was already the Swagger UI, that the links out
+of the tree needed somewhere to go, and that the guides had to be made
+public before they would render at all.
 
 ## The largest remaining gap: connectors
 

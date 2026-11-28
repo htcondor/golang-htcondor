@@ -130,6 +130,13 @@
           "order": 77
         },
         {
+          "path": "operator/container-builds.md",
+          "url": "/docs/operator/container-builds",
+          "title": "Container builds",
+          "audience": "operator",
+          "order": 78
+        },
+        {
           "path": "operator/site-apps.md",
           "url": "/docs/operator/site-apps",
           "title": "Site apps",

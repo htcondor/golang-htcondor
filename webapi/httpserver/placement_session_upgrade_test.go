@@ -229,13 +229,13 @@ func TestPlacementOnlySessionStaysWithoutJobLevels(t *testing.T) {
 // The web UI's access group applies to an upgrade exactly as to a login.
 func TestPlacementOnlySessionUpgradeNeedsTheWebUIAccessGroup(t *testing.T) {
 	s, c := newbieServer(t, nil)
-	s.webuiAccessGroups = newGroupSet("ap-users")
+	s.webuiAccessGroups = newOptInPrincipalSet("ap-users", "")
 	s.onboard()
 	requireStillPlacementOnly(t, s, c)
 
 	// In the group, the same onboarding upgrades.
 	s, c = newbieServer(t, map[string]any{"sub": newbieSubject, "eppn": newbieIdentity, "groups": []string{"ap-users"}})
-	s.webuiAccessGroups = newGroupSet("ap-users")
+	s.webuiAccessGroups = newOptInPrincipalSet("ap-users", "")
 	s.onboard()
 	if resp, _ := s.me(t, c); resp.PlacementOnly || resp.Username != newbieAcct {
 		t.Errorf("a member of the access group was not upgraded: %+v", resp)
