@@ -2962,6 +2962,12 @@ func (sf *SubmitFile) setGridParams(ad *classad.ClassAd) error {
 	if arcResources, ok := sf.submitCommandAlt("arc_resources", "ArcResources"); ok {
 		_ = ad.Set("ArcResources", arcResources)
 	}
+	if arcApplication, ok := sf.submitCommandAlt("arc_application", "ArcApplication"); ok {
+		_ = ad.Set("ArcApplication", arcApplication)
+	}
+	if arcDataStaging, ok := sf.submitCommandAlt("arc_data_staging", "ArcDataStaging"); ok {
+		_ = ad.Set("ArcDataStaging", arcDataStaging)
+	}
 
 	// Batch system parameters (PBS, LSF, SGE, Slurm, etc.)
 	if batchExtraArgs, ok := sf.submitCommandAlt("batch_extra_submit_args", "BatchExtraSubmitArgs"); ok {
