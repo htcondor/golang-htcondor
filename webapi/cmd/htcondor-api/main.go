@@ -4208,7 +4208,7 @@ func loadCCBStreaming(cfg *config.Config, logger *logging.Logger) bool {
 //	                              behind NAT, a container port map, or a
 //	                              Kubernetes Service
 func startCCBSharedPortRouter(cfg *config.Config, logger *logging.Logger) *sharedportrouter.Router {
-	listen := strings.TrimSpace(firstConfigValue(cfg, "HTTP_API_SHARED_PORT"))
+	listen := strings.TrimSpace(firstConfigValue(cfg, knobs.SharedPort.Name()))
 	if listen == "" || isConfigDisabled(listen) {
 		return nil
 	}
@@ -4278,7 +4278,7 @@ func advertisedSharedPortAddr(cfg *config.Config, listen string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if explicit := strings.TrimSpace(firstConfigValue(cfg, "HTTP_API_SHARED_PORT_ADDRESS")); explicit != "" {
+	if explicit := strings.TrimSpace(firstConfigValue(cfg, knobs.SharedPortAddress.Name())); explicit != "" {
 		if _, _, err := net.SplitHostPort(explicit); err == nil {
 			return explicit, nil
 		}

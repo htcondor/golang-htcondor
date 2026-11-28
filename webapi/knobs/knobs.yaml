@@ -1630,6 +1630,36 @@ knobs:
       Like the key file it must not be world-accessible.
 
 
+  # The inbound HTCondor port, for execute nodes behind a broker.
+  # Beside the CCB settings above, which are the other half of being
+  # reachable. Both read through each knob's Name().
+  - name: HTTP_API_SHARED_PORT
+    type: string
+    default: ""
+    scope: startup
+    see:
+      - text: Reaching jobs behind CCB
+        url: networking.md
+    doc: >
+      Open an inbound HTCondor port, as a port or host:port, so this
+      server can be reached by execute nodes behind a Condor
+      Connection Broker. Off by default. With it set, relaying through
+      the broker becomes the fallback rather than the first choice.
+
+  - name: HTTP_API_SHARED_PORT_ADDRESS
+    type: string
+    default: ""
+    scope: startup
+    see:
+      - text: Reaching jobs behind CCB
+        url: networking.md
+    doc: >
+      The host or host:port execute nodes should dial to reach that
+      port, for when it differs from what this process binds -- behind
+      NAT, a container port map, or a Kubernetes Service. Unset uses
+      TCP_FORWARDING_HOST, else FULL_HOSTNAME, paired with the listen
+      port.
+
 # Families: one group of parameters per named instance, with the name
 # folded into the middle of the parameter. The generator emits a
 # constructor taking the instance name and one accessor per setting, so

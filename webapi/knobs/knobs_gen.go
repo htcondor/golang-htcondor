@@ -1005,6 +1005,26 @@ var SandboxCacheMB = config.DefineInt("HTTP_API_SANDBOX_CACHE_MB", 0, config.Sta
 var SandboxMaxGB = config.DefineInt("HTTP_API_SANDBOX_MAX_GB", 0, config.Startup,
 	"The largest job sandbox the +jobs file service will serve, in GiB. A negative number means no limit. Refused the same way as above when it is not a whole number.")
 
+// SharedPort is HTTP_API_SHARED_PORT.
+//
+// Open an inbound HTCondor port, as a port or host:port, so this
+// server can be reached by execute nodes behind a Condor Connection
+// Broker. Off by default. With it set, relaying through the broker
+// becomes the fallback rather than the first choice. See "Reaching
+// jobs behind CCB" in the operator guide.
+var SharedPort = config.DefineString("HTTP_API_SHARED_PORT", "", config.Startup,
+	"Open an inbound HTCondor port, as a port or host:port, so this server can be reached by execute nodes behind a Condor Connection Broker. Off by default. With it set, relaying through the broker becomes the fallback rather than the first choice. See \"Reaching jobs behind CCB\" in the operator guide.")
+
+// SharedPortAddress is HTTP_API_SHARED_PORT_ADDRESS.
+//
+// The host or host:port execute nodes should dial to reach that port,
+// for when it differs from what this process binds -- behind NAT, a
+// container port map, or a Kubernetes Service. Unset uses
+// TCP_FORWARDING_HOST, else FULL_HOSTNAME, paired with the listen
+// port. See "Reaching jobs behind CCB" in the operator guide.
+var SharedPortAddress = config.DefineString("HTTP_API_SHARED_PORT_ADDRESS", "", config.Startup,
+	"The host or host:port execute nodes should dial to reach that port, for when it differs from what this process binds -- behind NAT, a container port map, or a Kubernetes Service. Unset uses TCP_FORWARDING_HOST, else FULL_HOSTNAME, paired with the listen port. See \"Reaching jobs behind CCB\" in the operator guide.")
+
 // SpoolBufferDir is HTTP_API_SPOOL_BUFFER_DIR.
 //
 // Where an archive dropped in the SSH gateway's /submit/, or posted to
@@ -1639,6 +1659,8 @@ var All = []config.Knob{
 	SandboxCacheDir.Knob,
 	SandboxCacheMB.Knob,
 	SandboxMaxGB.Knob,
+	SharedPort.Knob,
+	SharedPortAddress.Knob,
 	SpoolBufferDir.Knob,
 	SpoolMaxUploadBytes.Knob,
 	SSHCAKeyFile.Knob,
