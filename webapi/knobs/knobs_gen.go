@@ -1307,7 +1307,7 @@ func Connector(instance string) ConnectorSettings {
 }
 
 // ConnectorInstances is the parameter naming every Connector that exists.
-var ConnectorInstances = config.DefineList("HTTP_API_CONNECTORS", nil, config.Reconfig,
+var ConnectorInstances = config.DefineCommaList("HTTP_API_CONNECTORS", nil, config.Reconfig,
 	"Names the external accounts this access point offers to connect. Each is then configured by the HTTP_API_CONNECTOR_<instance>_* settings.")
 
 // Kind is HTTP_API_CONNECTOR_<instance>_KIND.
@@ -1362,10 +1362,13 @@ func (s ConnectorSettings) TokenURL() config.StringKnob {
 
 // Scopes is HTTP_API_CONNECTOR_<instance>_SCOPES.
 //
-// The scopes requested when a user connects this account.
+// The scopes requested when a user connects this account, separated by
+// spaces as RFC 6749 delimits them -- the spelling a provider's own
+// documentation uses, so it can be pasted. HTTP_API_OAUTH2_SCOPES is
+// read the same way.
 func (s ConnectorSettings) Scopes() config.ListKnob {
 	return config.DefineList("HTTP_API_CONNECTOR_"+s.id+"_SCOPES", nil, config.Reconfig,
-		"The scopes requested when a user connects this account.")
+		"The scopes requested when a user connects this account, separated by spaces as RFC 6749 delimits them -- the spelling a provider's own documentation uses, so it can be pasted. HTTP_API_OAUTH2_SCOPES is read the same way.")
 }
 
 // Groups is HTTP_API_CONNECTOR_<instance>_GROUPS.
@@ -1377,8 +1380,8 @@ func (s ConnectorSettings) Scopes() config.ListKnob {
 // Membership is re-read on each use rather than recorded when the
 // account was connected, so removing somebody from the group takes
 // their access away.
-func (s ConnectorSettings) Groups() config.ListKnob {
-	return config.DefineList("HTTP_API_CONNECTOR_"+s.id+"_GROUPS", nil, config.Reconfig,
+func (s ConnectorSettings) Groups() config.CommaListKnob {
+	return config.DefineCommaList("HTTP_API_CONNECTOR_"+s.id+"_GROUPS", nil, config.Reconfig,
 		"Group(s) whose members may connect this account. A connector with none may be connected by NOBODY, the same way a site app with no groups is not published: an empty value is far more often a mistake than a deliberate \"nobody\". Write \"*\" for every signed-in user. Membership is re-read on each use rather than recorded when the account was connected, so removing somebody from the group takes their access away.")
 }
 
@@ -1417,7 +1420,7 @@ func Picker(instance string) PickerSettings {
 }
 
 // PickerInstances is the parameter naming every Picker that exists.
-var PickerInstances = config.DefineList("HTTP_API_PICKERS", nil, config.Reconfig,
+var PickerInstances = config.DefineCommaList("HTTP_API_PICKERS", nil, config.Reconfig,
 	"Names the file choosers this access point offers. Each is then configured by the HTTP_API_PICKER_<instance>_* settings.")
 
 // Provider is HTTP_API_PICKER_<instance>_PROVIDER.
@@ -1486,8 +1489,8 @@ func SiteApp(instance string) SiteAppSettings {
 // Group(s) whose members this app is published to. An app with none is
 // not published at all -- an empty value is far more often a mistake
 // than a deliberate "nobody".
-func (s SiteAppSettings) Groups() config.ListKnob {
-	return config.DefineList("HTTP_API_SITE_APP_"+s.id+"_GROUPS", nil, config.Reconfig,
+func (s SiteAppSettings) Groups() config.CommaListKnob {
+	return config.DefineCommaList("HTTP_API_SITE_APP_"+s.id+"_GROUPS", nil, config.Reconfig,
 		"Group(s) whose members this app is published to. An app with none is not published at all -- an empty value is far more often a mistake than a deliberate \"nobody\".")
 }
 

@@ -286,7 +286,10 @@ func renderFamily(b *bytes.Buffer, f family) error {
 			enumScope = "config.Reconfig"
 		}
 		fmt.Fprintf(b, "// %sInstances is the parameter naming every %s that exists.\n"+
-			"var %sInstances = config.DefineList(%q, nil, %s,\n\t%q)\n\n",
+			// DefineCommaList, not DefineList: an instance NAME may
+			// contain a space, so whitespace cannot separate here even
+			// though ListKnob is the default kind elsewhere.
+			"var %sInstances = config.DefineCommaList(%q, nil, %s,\n\t%q)\n\n",
 			f.Family, f.Family, f.Family, f.EnumeratedBy, enumScope, enumDoc(f))
 	}
 
@@ -473,19 +476,23 @@ func literal(k knob) (def, ctor string, err error) {
 			q = append(q, fmt.Sprintf("%q", w))
 		}
 		return "[]string{" + strings.Join(q, ", ") + "}", "DefineWords", nil
-	case "list":
-		items, perr := config.ParseList(k.Default)
+	case "list", "comma_list":
+		parse, define := config.ParseList, "DefineList"
+		if k.Type == "comma_list" {
+			parse, define = config.ParseCommaList, "DefineCommaList"
+		}
+		items, perr := parse(k.Default)
 		if perr != nil {
 			return "", "", fmt.Errorf("%s: %q is not a list: %w", k.Name, k.Default, perr)
 		}
 		if len(items) == 0 {
-			return "nil", "DefineList", nil
+			return "nil", define, nil
 		}
 		var q []string
 		for _, s := range items {
 			q = append(q, fmt.Sprintf("%q", s))
 		}
-		return "[]string{" + strings.Join(q, ", ") + "}", "DefineList", nil
+		return "[]string{" + strings.Join(q, ", ") + "}", define, nil
 	}
 	return "", "", fmt.Errorf("%s: unknown type %q", k.Name, k.Type)
 }
@@ -506,6 +513,8 @@ func knobType(kind string) string {
 		return "BytesKnob"
 	case "list":
 		return "ListKnob"
+	case "comma_list":
+		return "CommaListKnob"
 	case "words":
 		return "WordsKnob"
 	}
@@ -633,8 +642,12 @@ func RenderDocs(knobs []knob, families []family) (string, error) {
 		}
 		if f.EnumeratedBy != "" {
 			entries = append(entries, docEntry{f.EnumeratedBy, docKnob("###", f.EnumeratedBy, knob{
-				Name:  f.EnumeratedBy,
-				Type:  "list",
+				Name: f.EnumeratedBy,
+				// comma_list, not list: an instance NAME may contain a
+				// space -- TestPickerListSplitsOnCommasOnly names a
+				// chooser "my picker" -- so whitespace cannot be a
+				// separator here even though it is the default kind.
+				Type:  "comma_list",
 				Scope: f.EnumeratedScope,
 				Doc:   enumDoc(f),
 			})})
@@ -737,6 +750,8 @@ func docType(kind string) string {
 	case "bytes":
 		return "Size"
 	case "list":
+		return "List, separated by commas or spaces"
+	case "comma_list":
 		return "Comma-separated list"
 	case "words":
 		return "Space-separated list"

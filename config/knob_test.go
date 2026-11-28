@@ -63,13 +63,44 @@ func TestKnobReadsConfiguredValues(t *testing.T) {
 	}
 }
 
-// Whitespace is not a separator: these settings are documented as
-// comma-separated, and a name may contain a space.
-func TestListKnobDoesNotSplitOnSpaces(t *testing.T) {
-	c := knobConfig(t, map[string]string{"L": "my picker, other"})
-	got := DefineList("L", nil, Startup, "").Get(c)
-	if len(got) != 2 || got[0] != "my picker" {
-		t.Errorf("list = %q", got)
+// ListKnob splits the way HTCondor's split() does, on commas OR
+// whitespace, because that is upstream's default and an operator who
+// knows condor lists is right about these too.
+//
+// This test asserted the opposite until 2026-11-28. The old reading
+// was comma-only, which is upstream's EXCEPTION rather than its rule,
+// and it made "a b" one entry on settings whose values cannot contain
+// a space -- a connector id, a picker name.
+func TestListKnobSplitsOnCommasOrWhitespace(t *testing.T) {
+	for _, raw := range []string{"a, b, c", "a b c", "a,b c", " a , b\tc "} {
+		c := knobConfig(t, map[string]string{"L": raw})
+		got := DefineList("L", nil, Startup, "").Get(c)
+		if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+			t.Errorf("%q -> %q, want [a b c]", raw, got)
+		}
+	}
+}
+
+// CommaListKnob is the exception, for values that may contain a space.
+// A group list is what it exists for: splitting "smith lab, jones lab"
+// on whitespace yields four groups that match nothing, silently,
+// because a group nobody is in looks the same as one that does not
+// exist.
+func TestCommaListKnobDoesNotSplitOnSpaces(t *testing.T) {
+	c := knobConfig(t, map[string]string{"L": "smith lab, jones lab"})
+	got := DefineCommaList("L", nil, Startup, "").Get(c)
+	if len(got) != 2 || got[0] != "smith lab" || got[1] != "jones lab" {
+		t.Errorf("list = %q, want [\"smith lab\" \"jones lab\"]", got)
+	}
+}
+
+// Both kinds take the JSON spelling, which is the only way to write a
+// value containing the separator each one uses.
+func TestCommaListKnobJSONSpelling(t *testing.T) {
+	c := knobConfig(t, map[string]string{"L": `["one, with comma", "two"]`})
+	got := DefineCommaList("L", nil, Startup, "").Get(c)
+	if len(got) != 2 || got[0] != "one, with comma" {
+		t.Errorf("list = %v", got)
 	}
 }
 
