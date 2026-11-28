@@ -271,6 +271,21 @@ itself instead of sending them to an external one. Off by default. The
 provider shares the unified application database; the separate
 `HTTP_API_IDP_DB_PATH` it once had is no longer read.
 
+### `HTTP_API_GROUP_SOURCE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Where group membership comes from, as a comma-separated list: token
+(or oidc) keeps the groups the token carried, system (or unix) reads
+the account database, and file:<path> reads a groups file. Local
+sources are unioned, but token may NOT be mixed with one: groups come
+either from the token or from this machine, and a list naming both
+refuses to start rather than picking. Unset means token, which is the
+default and the only option in a container, where there is no account
+database to read. Independent of `HTTP_API_IDENTITY_MAP`.
+
+See [Local identity mapping](auth.md#local-identity-mapping).
+
 ### `HTTP_API_IDEMPOTENCY_KEY_CHECK`
 
 **String.** Unset is AUTO. Changing it needs a restart.
@@ -312,6 +327,47 @@ How long, in whole seconds, the queue and history lookups get between
 them. A keyed submission waits on them, so this is also the longest
 the check can delay one. Reported and defaulted the same way as above
 when it is not a non-negative whole number.
+
+### `HTTP_API_IDENTITY_MAP`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Ordered strategies for turning a token subject into a local account,
+separated by commas; the first to answer wins. gecos matches the
+subject against accounts' GECOS names, username treats it as a login
+name, and placementd asks condor_placementd. Unset does no mapping. An
+unparseable list refuses to start rather than falling back to an
+unmapped identity, which would own no jobs.
+
+See [Local identity mapping](auth.md#local-identity-mapping).
+
+### `HTTP_API_IDENTITY_MAP_PASSWD_FILE`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Read accounts from this file instead of /etc/passwd. Both the index
+and the re-check use it, so the two cannot disagree. Read only when
+subject mapping or a local group source is configured.
+
+### `HTTP_API_IDENTITY_MAP_STRIP_DOMAIN`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Also try the local part of a scoped subject, so bockelman@wisc.edu
+matches a GECOS of bockelman. The full subject is tried first, so this
+only ever adds a fallback. Which providers may issue such a token is
+decided by `HTTP_API_OAUTH2_REQUIREMENTS`, not here. Refuses to start
+on a non-boolean.
+
+### `HTTP_API_IDENTITY_MAP_TTL`
+
+**Duration.** Default `5m`. Changing it needs a restart.
+
+How long the account index and group answers are reused. The index is
+rebuilt lazily on the first login after it expires. A value that is
+not a positive duration is reported and the default kept, rather than
+refusing to start: a stale index is a performance question, not a
+correctness one.
 
 ### `HTTP_API_IDLE_TIMEOUT`
 
@@ -1459,12 +1515,7 @@ each one.
 | `HTTP_API_AP_ASSIGNMENT_REST_TOKEN_FILE` | File whose contents are sent as `Authorization: Bearer` to the assignment service. Re-read when it changes. Unset = no header. |
 | `HTTP_API_AP_ASSIGNMENT_STALE_SECONDS` | How long a user's last known good assignment is used while a backend is failing. Default 3600; `0` never uses one. |
 | `HTTP_API_DBMIRROR_TOKEN_SUBJECT` | Identity the token this server presents to the mirror asserts. Default `condor@<trust domain>`. Set it when the mirror authorizes a different name. |
-| `HTTP_API_IDENTITY_MAP` | Map the token subject to a local account (`gecos,username`). See [Local identity mapping](auth.md#local-identity-mapping). |
-| `HTTP_API_IDENTITY_MAP_PASSWD_FILE` | Account file backing the mapping index. Default `/etc/passwd`. |
-| `HTTP_API_IDENTITY_MAP_TTL` | How long the account index and group answers are reused. Default `5m`. |
-| `HTTP_API_GROUP_SOURCE` | Comma-separated: `token` (default), `system`, and/or `file:<path>`. Local sources are unioned; `token` may not be mixed with them. See [Local identity mapping](auth.md#local-identity-mapping). |
 | `HTTP_API_UPSTREAM_REFRESH` | `auto` (default), `on` or `off`. Whether to ask the provider for `offline_access` and keep the refresh token it returns, which is what lets group membership be re-checked between logins where groups come from the token. `on` is `auto` plus a warning per login when the provider returns no refresh token. `off` neither asks nor stores. |
-| `HTTP_API_IDENTITY_MAP_STRIP_DOMAIN` | `true` to also match the local part of a scoped subject. Pair with `HTTP_API_OAUTH2_REQUIREMENTS`. |
 | `HTTP_API_DAGMAN_PATH` | Absolute path to `condor_dagman` on the **access point**, for the `submit_dag` tool. **Normally unnecessary — discovered from the schedd's `BIN`; set it only if that discovery is refused.** The server asks the schedd for `BIN` once (a READ-level `condor_config_val` query) and uses `$(BIN)/condor_dagman`; this knob overrides that, and `/usr/bin/condor_dagman` is the fallback when neither is available. `condor_submit_dag` normally finds the binary with `which` on the submitting machine, which is no help here: this server submits to a schedd it shares no filesystem with. |
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |

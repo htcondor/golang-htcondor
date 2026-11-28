@@ -572,7 +572,17 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.OAuth2UsernameClaim.Knob),
 	fromKnob(knobs.OAuth2GroupsClaim.Knob),
 	fromKnob(knobs.OAuth2Requirements.Knob),
-	{name: "HTTP_API_IDENTITY_MAP_STRIP_DOMAIN"},
+	fromKnob(knobs.IdentityMapStripDomain.Knob),
+
+	// The rest of the identity-mapping cluster. Restart-required: the
+	// strategies, the account index and the group lookup are all built
+	// once when the Handler is. Listed so a change says so -- before
+	// this, changing where groups come from, or which passwd file backs
+	// the index, was neither applied nor reported.
+	fromKnob(knobs.IdentityMap.Knob),
+	fromKnob(knobs.IdentityMapPasswdFile.Knob),
+	fromKnob(knobs.IdentityMapTTL.Knob),
+	fromKnob(knobs.GroupSource.Knob),
 
 	// The skills poll's ticker is started once, when the MCP server is
 	// built. Changing how often it fires needs a restart; changing what it

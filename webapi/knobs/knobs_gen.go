@@ -161,6 +161,20 @@ var ConnectorPrefix = config.DefineString("HTTP_API_CONNECTOR_PREFIX", "webapi",
 var EnableIDP = config.DefineBool("HTTP_API_ENABLE_IDP", false, config.Startup,
 	"Run the built-in identity provider, so this server signs users in itself instead of sending them to an external one. Off by default. The provider shares the unified application database; the separate HTTP_API_IDP_DB_PATH it once had is no longer read.")
 
+// GroupSource is HTTP_API_GROUP_SOURCE.
+//
+// Where group membership comes from, as a comma-separated list: token
+// (or oidc) keeps the groups the token carried, system (or unix) reads
+// the account database, and file:<path> reads a groups file. Local
+// sources are unioned, but token may NOT be mixed with one: groups
+// come either from the token or from this machine, and a list naming
+// both refuses to start rather than picking. Unset means token, which
+// is the default and the only option in a container, where there is no
+// account database to read. Independent of HTTP_API_IDENTITY_MAP. See
+// "Local identity mapping" in the operator guide.
+var GroupSource = config.DefineString("HTTP_API_GROUP_SOURCE", "", config.Startup,
+	"Where group membership comes from, as a comma-separated list: token (or oidc) keeps the groups the token carried, system (or unix) reads the account database, and file:<path> reads a groups file. Local sources are unioned, but token may NOT be mixed with one: groups come either from the token or from this machine, and a list naming both refuses to start rather than picking. Unset means token, which is the default and the only option in a container, where there is no account database to read. Independent of HTTP_API_IDENTITY_MAP. See \"Local identity mapping\" in the operator guide.")
+
 // IdempotencyKeyCheck is HTTP_API_IDEMPOTENCY_KEY_CHECK.
 //
 // How much of the idempotency-key guarantee this access point
@@ -202,6 +216,46 @@ var IdempotencyKeyRetention = config.DefineInt("HTTP_API_IDEMPOTENCY_KEY_RETENTI
 // as above when it is not a non-negative whole number.
 var IdempotencyKeyTimeout = config.DefineInt("HTTP_API_IDEMPOTENCY_KEY_TIMEOUT", 0, config.Startup,
 	"How long, in whole seconds, the queue and history lookups get between them. A keyed submission waits on them, so this is also the longest the check can delay one. Reported and defaulted the same way as above when it is not a non-negative whole number.")
+
+// IdentityMap is HTTP_API_IDENTITY_MAP.
+//
+// Ordered strategies for turning a token subject into a local account,
+// separated by commas; the first to answer wins. gecos matches the
+// subject against accounts' GECOS names, username treats it as a login
+// name, and placementd asks condor_placementd. Unset does no mapping.
+// An unparseable list refuses to start rather than falling back to an
+// unmapped identity, which would own no jobs. See "Local identity
+// mapping" in the operator guide.
+var IdentityMap = config.DefineString("HTTP_API_IDENTITY_MAP", "", config.Startup,
+	"Ordered strategies for turning a token subject into a local account, separated by commas; the first to answer wins. gecos matches the subject against accounts' GECOS names, username treats it as a login name, and placementd asks condor_placementd. Unset does no mapping. An unparseable list refuses to start rather than falling back to an unmapped identity, which would own no jobs. See \"Local identity mapping\" in the operator guide.")
+
+// IdentityMapPasswdFile is HTTP_API_IDENTITY_MAP_PASSWD_FILE.
+//
+// Read accounts from this file instead of /etc/passwd. Both the index
+// and the re-check use it, so the two cannot disagree. Read only when
+// subject mapping or a local group source is configured.
+var IdentityMapPasswdFile = config.DefineString("HTTP_API_IDENTITY_MAP_PASSWD_FILE", "", config.Startup,
+	"Read accounts from this file instead of /etc/passwd. Both the index and the re-check use it, so the two cannot disagree. Read only when subject mapping or a local group source is configured.")
+
+// IdentityMapStripDomain is HTTP_API_IDENTITY_MAP_STRIP_DOMAIN.
+//
+// Also try the local part of a scoped subject, so bockelman@wisc.edu
+// matches a GECOS of bockelman. The full subject is tried first, so
+// this only ever adds a fallback. Which providers may issue such a
+// token is decided by HTTP_API_OAUTH2_REQUIREMENTS, not here. Refuses
+// to start on a non-boolean.
+var IdentityMapStripDomain = config.DefineBool("HTTP_API_IDENTITY_MAP_STRIP_DOMAIN", false, config.Startup,
+	"Also try the local part of a scoped subject, so bockelman@wisc.edu matches a GECOS of bockelman. The full subject is tried first, so this only ever adds a fallback. Which providers may issue such a token is decided by HTTP_API_OAUTH2_REQUIREMENTS, not here. Refuses to start on a non-boolean.")
+
+// IdentityMapTTL is HTTP_API_IDENTITY_MAP_TTL.
+//
+// How long the account index and group answers are reused. The index
+// is rebuilt lazily on the first login after it expires. A value that
+// is not a positive duration is reported and the default kept, rather
+// than refusing to start: a stale index is a performance question, not
+// a correctness one.
+var IdentityMapTTL = config.DefineDuration("HTTP_API_IDENTITY_MAP_TTL", time.Duration(300000000000) /* 5m */, config.Startup,
+	"How long the account index and group answers are reused. The index is rebuilt lazily on the first login after it expires. A value that is not a positive duration is reported and the default kept, rather than refusing to start: a stale index is a performance question, not a correctness one.")
 
 // IdleTimeout is HTTP_API_IDLE_TIMEOUT.
 //
@@ -1501,10 +1555,15 @@ var All = []config.Knob{
 	ConnectorOutputSweepInterval.Knob,
 	ConnectorPrefix.Knob,
 	EnableIDP.Knob,
+	GroupSource.Knob,
 	IdempotencyKeyCheck.Knob,
 	IdempotencyKeyHistoryWindow.Knob,
 	IdempotencyKeyRetention.Knob,
 	IdempotencyKeyTimeout.Knob,
+	IdentityMap.Knob,
+	IdentityMapPasswdFile.Knob,
+	IdentityMapStripDomain.Knob,
+	IdentityMapTTL.Knob,
 	IdleTimeout.Knob,
 	IDPAccessTokenLifespan.Knob,
 	IDPIssuer.Knob,
