@@ -53,6 +53,14 @@ var nonTableKeywords = []oracle.Keyword{
 	// table, which is how it went unexercised when organized output was
 	// implemented.
 	{Key: "organized_output_pattern", Opts: oracle.KeyAsString},
+
+	// shell replaces the executable and the arguments both: SetExecutable
+	// writes /bin/sh and clears the transfer flag, SetArguments builds
+	// -c <value>. It is seeded last because it only became safe to
+	// generate once the Go side did the same -- before that it would have
+	// needed a divergence entry on Cmd and Arguments, which would have
+	// excused every other difference in them across the sweep.
+	{Key: "shell", Opts: oracle.KeyAsString},
 }
 
 // nonTableSkipped are the remaining non-table commands, and why each is left

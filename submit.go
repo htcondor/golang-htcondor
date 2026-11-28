@@ -849,6 +849,16 @@ func (sf *SubmitFile) finishJobAd(ad *classad.ClassAd) (*classad.ClassAd, error)
 // would produce and what would make the attribute depend on where the
 // submitter happened to be standing.
 func (sf *SubmitFile) setExecutable(ad *classad.ClassAd) error {
+	// shell runs the command under /bin/sh, so there is no executable to
+	// resolve and nothing to send: SetExecutable writes the shell, clears
+	// the transfer flag and returns before it reads the executable
+	// keyword at all. A file naming both gets the shell.
+	if _, ok := sf.submitCommand("shell"); ok {
+		_ = ad.Set("Cmd", "/bin/sh")
+		_ = ad.Set("TransferExecutable", false)
+		return nil
+	}
+
 	exec, ok := sf.submitCommand("executable")
 	if !ok {
 		// An executable the ad already carries -- from a base ad, say --
@@ -1063,6 +1073,15 @@ func (sf *SubmitFile) setArgsAttr(ad *classad.ClassAd, proc int, attr, value str
 // empty list, and an attribute name that disagrees with condor_submit's is
 // the kind of difference that only shows up on the execute node.
 func (sf *SubmitFile) setArguments(ad *classad.ClassAd, proc int) error {
+	// The shell command line, which SetArguments builds before it looks at
+	// arguments or arguments2 and returns without reading either -- so a
+	// file naming shell AND both spellings of arguments is not the error
+	// that naming both spellings alone would be.
+	if shell, ok := sf.submitCommand("shell"); ok {
+		sf.setArgsAttr(ad, proc, "Arguments", joinArgsV2([]string{"-c", shell}))
+		return sf.requireJavaClass(ad)
+	}
+
 	args1, hasArgs1 := sf.submitCommandAlt("arguments", "args")
 	// No alternate name for arguments2: ATTR_JOB_ARGUMENTS2 is the same
 	// attribute as ATTR_JOB_ARGUMENTS1's alternate, which would make the
