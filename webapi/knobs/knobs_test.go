@@ -350,6 +350,16 @@ func settingLiterals(t *testing.T) map[string][]string {
 			return err
 		}
 		for _, m := range name.FindAllStringSubmatch(string(b), -1) {
+			// A trailing underscore means a family PREFIX, not a
+			// setting: connectors build their names from
+			// "HTTP_API_CONNECTOR_"+id+"_KIND", and pickers and site
+			// apps do the same, so the constant holding the prefix is
+			// spelled in Go and no setting by that name exists. Counting one as an
+			// undeclared setting puts a line in the inventory that can
+			// never be struck, because there is nothing to declare.
+			if strings.HasSuffix(m[1], "_") {
+				continue
+			}
 			if !slices.Contains(out[m[1]], path) {
 				out[m[1]] = append(out[m[1]], path)
 			}

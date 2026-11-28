@@ -1,0 +1,102 @@
+name: Nightly HTCondor docs
+
+# The MCP doc tools serve HTCondor's own RST, staged out of a clone of
+# htcondor/htcondor at build time (make stage-condor-docs). Nothing is
+# vendored, so nothing goes stale -- but the staging copies specific
+# upstream paths, and upstream is free to move them.
+#
+# CI already stages the docs on every pull request and runs the
+# TestEmbedded_* assertions with a no-skip gate, so a rename that
+# emptied the config glob would be caught. The problem is WHO it is
+# caught by: both CI and the release clone upstream main at HEAD, so the
+# breakage lands on whoever happens to push next, on an unrelated
+# change, looking like their fault.
+#
+# This is the same argument the nightly fuzz run is built on --
+# "divergences introduced upstream show up here rather than at the next
+# release bump" -- applied to the docs staging. A failure opens or
+# comments on an issue; see .github/scripts/nightly-condor-docs-issue.sh
+# for the dedup rule.
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+on:
+  # 07:23 UTC: off the hour, where scheduled runs queue behind everyone
+  # else's cron, and before the US working day as the fuzz run is.
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'HTCondor ref to stage from (default: main)'
+        required: false
+        type: string
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          check-latest: true
+          go-version-file: .go-version
+          cache: true
+          cache-dependency-path: webapi/go.sum
+
+      # Resolved before staging so a failure can name the commit it was
+      # staging from, and so the summary can say whether main has moved
+      # ahead of the latest release -- the embedded docs track main while
+      # the vendored param defaults track releases/latest, and a reader
+      # of either should be able to see that.
+      - name: Resolve the upstream refs
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          ref="${INPUT_REF:-main}"
+          sha=$(git ls-remote https://github.com/htcondor/htcondor.git "refs/heads/${ref}" | cut -f1)
+          if [ -z "$sha" ]; then
+            sha=$(git ls-remote https://github.com/htcondor/htcondor.git "refs/tags/${ref}" | cut -f1)
+          fi
+          # The release, not the tag list: upstream carries moving junk
+          # tags (ztest, zlatest) that sort above real ones. Same reason
+          # refresh-param-defaults reads releases/latest.
+          latest=$(gh api repos/htcondor/htcondor/releases/latest --jq .tag_name || echo unknown)
+          {
+            echo "ref=${ref}"
+            echo "sha=${sha:-unknown}"
+            echo "latest=${latest}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Staging from ${ref} (${sha:0:12}); upstream latest release is ${latest}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # The same script CI runs on every pull request. Reused rather than
+      # reimplemented: a nightly that staged differently from CI would be
+      # testing something nobody ships.
+      - name: Stage the docs and run the embedded assertions
+        id: check
+        env:
+          HTCONDOR_GIT_REF: ${{ steps.upstream.outputs.ref }}
+        run: bash .github/scripts/embedded-assets-tests.sh 2>&1 | tee /tmp/condor-docs.log
+
+      - name: Open or update the failure issue
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HTCONDOR_REF: ${{ steps.upstream.outputs.ref }}
+          HTCONDOR_SHA: ${{ steps.upstream.outputs.sha }}
+          HTCONDOR_LATEST: ${{ steps.upstream.outputs.latest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DOCS_LOG: /tmp/condor-docs.log
+        run: .github/scripts/nightly-condor-docs-issue.sh

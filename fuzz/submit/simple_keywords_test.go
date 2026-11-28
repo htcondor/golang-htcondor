@@ -70,6 +70,14 @@ func TestSimpleKeywordTableMatchesOracle(t *testing.T) {
 			t.Logf("%s (%s, opts %#x): this oracle predates %s", key, g.attr, g.opts, ticket)
 			continue
 		}
+		// The other direction: upstream moved the keyword out of the
+		// table-driven pass and this parser still writes it there; see
+		// keywordsSpecialInOracle. The allowance applies only while the
+		// oracle HAS the change.
+		if ticket, moved := keywordsSpecialInOracle[key]; moved && oracleHas[ticket] {
+			t.Logf("%s (%s, opts %#x): %s made this f_special and the row is still written here", key, g.attr, g.opts, ticket)
+			continue
+		}
 		t.Errorf("%s is in the Go table (%s, opts %#x) and is not a non-special keyword of HTCondor's", key, g.attr, g.opts)
 	}
 }
