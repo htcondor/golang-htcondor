@@ -106,15 +106,6 @@ var excluded = map[string]string{
 	// SubmitHash opens and parses the proxy, so the result depends on what is
 	// on the fuzzing host rather than on the submit file.
 	"x509userproxy": "reads and validates an X.509 proxy file off the host",
-	// shell has no table row either, so it is seeded by hand or not at
-	// all -- and this parser does not implement it yet. SubmitHash turns
-	// `shell = cmd` into /bin/sh -c 'cmd': it rewrites Cmd, writes
-	// Arguments and clears TransferExecutable. Generating it before the
-	// Go side does the same would need those three recorded as known
-	// divergences, and a waiver on Cmd or Arguments would excuse every
-	// other difference in them across the whole sweep. So it stays out
-	// until it is implemented, and this line is the record of that.
-	"shell": "not implemented by the Go parser; waiving it would need a divergence entry on Cmd and Arguments",
 }
 
 // The f_special group ids, masked out of a keyword's flag word.
