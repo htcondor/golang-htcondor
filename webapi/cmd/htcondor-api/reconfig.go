@@ -450,6 +450,17 @@ var reconfigParams = []reconfigParam{
 	fromKnob(knobs.IDPAccessTokenLifespan.Knob),
 	fromKnob(knobs.IDPRefreshTokenLifespan.Knob),
 
+	// The reservations subsystem. Restart-required, and listed so a
+	// change says so: the controller, the admin routes and the
+	// stamping pass are all built once at startup from these, and
+	// before this entry a change to any of them was neither applied
+	// nor reported -- an operator who turned reservations on and
+	// reconfigured was told nothing and got nothing.
+	fromKnob(knobs.Reservations.Knob),
+	fromKnob(knobs.ReservationClaims.Knob),
+	fromKnob(knobs.ReservationEPConstraint.Knob),
+	fromKnob(knobs.ReservationStampBudget.Knob),
+
 	// Who is in front of this server, and whether it believes a header
 	// about who the user is. Restart-required: the trusted-proxy
 	// networks are parsed once when the Handler is built, and the

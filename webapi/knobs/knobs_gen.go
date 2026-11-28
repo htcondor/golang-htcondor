@@ -824,6 +824,50 @@ var PingInterval = config.DefineDuration("HTTP_API_PING_INTERVAL", time.Duration
 var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(30000000000) /* 30s */, config.Startup,
 	"How long a request may take to arrive in full, as a Go duration. A value that cannot be parsed is logged and the default applies.")
 
+// Reservations is HTTP_API_RESERVATIONS.
+//
+// Run the reservations subsystem: the admin API, the admin page and
+// the controller. Off by default. With it off the endpoints answer 503
+// naming this setting and the admin page is not offered at all. A
+// value that is not a boolean refuses to start rather than being read
+// as off -- the two ways to misread it are "offered" and "not
+// offered", and a daemon that guesses should not come up.
+var Reservations = config.DefineBool("HTTP_API_RESERVATIONS", false, config.Startup,
+	"Run the reservations subsystem: the admin API, the admin page and the controller. Off by default. With it off the endpoints answer 503 naming this setting and the admin page is not offered at all. A value that is not a boolean refuses to start rather than being read as off -- the two ways to misread it are \"offered\" and \"not offered\", and a daemon that guesses should not come up.")
+
+// ReservationClaims is HTTP_API_RESERVATION_CLAIMS.
+//
+// Hold always-on reservations as persistent claims (OCUs) on this
+// access point's schedd, instead of by pushing machine attributes. Off
+// by default and separate from HTTP_API_RESERVATIONS, because it
+// changes where a running reservation's capacity comes from and needs
+// the schedd to accept the request: this access point has to be a
+// queue super user there, or be named in OCU_SUPER_USERS. Scheduled
+// reservations are unaffected. Refuses to start on a non-boolean, as
+// above.
+var ReservationClaims = config.DefineBool("HTTP_API_RESERVATION_CLAIMS", false, config.Startup,
+	"Hold always-on reservations as persistent claims (OCUs) on this access point's schedd, instead of by pushing machine attributes. Off by default and separate from HTTP_API_RESERVATIONS, because it changes where a running reservation's capacity comes from and needs the schedd to accept the request: this access point has to be a queue super user there, or be named in OCU_SUPER_USERS. Scheduled reservations are unaffected. Refuses to start on a non-boolean, as above.")
+
+// ReservationEPConstraint is HTTP_API_RESERVATION_EP_CONSTRAINT.
+//
+// ClassAd expression over the slot ad limiting which execute points
+// reservations may draw seats from. Empty means every startd the
+// collector reports, which is rarely what a site wants: a class should
+// take the teaching nodes rather than whatever the collector happens
+// to hold.
+var ReservationEPConstraint = config.DefineString("HTTP_API_RESERVATION_EP_CONSTRAINT", "", config.Startup,
+	"ClassAd expression over the slot ad limiting which execute points reservations may draw seats from. Empty means every startd the collector reports, which is rarely what a site wants: a class should take the teaching nodes rather than whatever the collector happens to hold.")
+
+// ReservationStampBudget is HTTP_API_RESERVATION_STAMP_BUDGET.
+//
+// How many cluster ads one stamping pass writes. The write is per
+// cluster rather than per job, so the default covers an idle queue far
+// larger than most access points have; this exists for a queue that is
+// pathological rather than merely large. A value that is not a
+// non-negative whole number refuses to start.
+var ReservationStampBudget = config.DefineInt("HTTP_API_RESERVATION_STAMP_BUDGET", 0, config.Startup,
+	"How many cluster ads one stamping pass writes. The write is per cluster rather than per job, so the default covers an idle queue far larger than most access points have; this exists for a queue that is pathological rather than merely large. A value that is not a non-negative whole number refuses to start.")
+
 // SandboxCacheDir is HTTP_API_SANDBOX_CACHE_DIR.
 //
 // Where the +jobs file service keeps sandbox output it has already
@@ -1502,6 +1546,10 @@ var All = []config.Knob{
 	OAuth2UsernameClaim.Knob,
 	PingInterval.Knob,
 	ReadTimeout.Knob,
+	Reservations.Knob,
+	ReservationClaims.Knob,
+	ReservationEPConstraint.Knob,
+	ReservationStampBudget.Knob,
 	SandboxCacheDir.Knob,
 	SandboxCacheMB.Knob,
 	SandboxMaxGB.Knob,

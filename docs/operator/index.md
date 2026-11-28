@@ -38,6 +38,7 @@ configured server. Each larger feature has a page of its own:
 | [Web UI branding](branding.md) | Making the pages say who runs this access point |
 | [Connected accounts](connectors.md) | Letting users grant this access point files from their Drive, Box or OneDrive |
 | [Container builds](container-builds.md) | Building Apptainer images as jobs, and bounding what one may take |
+| [Idempotent submission](idempotency.md) | Making a retried submission safe, and what bounds that |
 | [Site apps](site-apps.md) | Serving a lab's own web interface, to the people it belongs to |
 | [Outbound webhooks](webhooks.md) | Posting to a service when a user's jobs change state |
 | [Reservations](reservations.md) | Holding pool capacity for a class or other scheduled work |
