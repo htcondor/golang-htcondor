@@ -1228,6 +1228,41 @@ var TLSKey = config.DefineString("HTTP_API_TLS_KEY", "", config.Startup,
 var TokenRetention = config.DefineString("HTTP_API_TOKEN_RETENTION", "", config.Startup,
 	"How long rows for dead OAuth2 tokens are kept before being swept, as a duration with a unit, or off (equivalently 0) to keep them forever. A bare number is refused rather than read as nanoseconds, which is what parsing \"90\" would otherwise mean and is never what anybody intends; so is anything else that does not parse, and the server refuses to start rather than sweeping on a figure nobody chose. Only rows that are already dead -- revoked or expired -- are ever removed, because a live grant is somebody's session whatever its age.")
 
+// TrustedProxies is HTTP_API_TRUSTED_PROXIES.
+//
+// CIDRs, or bare addresses, whose forwarding headers this server
+// believes when recording a client's address -- a bare address needs
+// no /32, which is the common case for one ingress. Unset trusts none
+// of them and records the peer address. With it set, the
+// X-Forwarded-For chain is walked from the right, and X-Real-IP is
+// honored only as a fallback and only from a trusted peer. Separated
+// by commas OR whitespace, unlike HTTP_API_USER_HEADER_TRUSTED_PROXIES
+// below, which is comma-only.
+var TrustedProxies = config.DefineString("HTTP_API_TRUSTED_PROXIES", "", config.Startup,
+	"CIDRs, or bare addresses, whose forwarding headers this server believes when recording a client's address -- a bare address needs no /32, which is the common case for one ingress. Unset trusts none of them and records the peer address. With it set, the X-Forwarded-For chain is walked from the right, and X-Real-IP is honored only as a fallback and only from a trusted peer. Separated by commas OR whitespace, unlike HTTP_API_USER_HEADER_TRUSTED_PROXIES below, which is comma-only.")
+
+// UserHeader is HTTP_API_USER_HEADER.
+//
+// Trust this HTTP header to carry the authenticated username. For demo
+// mode and for a deployment sitting behind a proxy that authenticates,
+// and nothing else: anything that can reach this server directly can
+// then claim to be any user. Setting it requires
+// HTTP_API_USER_HEADER_TRUSTED_PROXIES, or the explicit unsafe
+// override, or the server refuses to start. A value here overrides the
+// -user-header command-line flag.
+var UserHeader = config.DefineString("HTTP_API_USER_HEADER", "", config.Startup,
+	"Trust this HTTP header to carry the authenticated username. For demo mode and for a deployment sitting behind a proxy that authenticates, and nothing else: anything that can reach this server directly can then claim to be any user. Setting it requires HTTP_API_USER_HEADER_TRUSTED_PROXIES, or the explicit unsafe override, or the server refuses to start. A value here overrides the -user-header command-line flag.")
+
+// UserHeaderTrustedProxies is HTTP_API_USER_HEADER_TRUSTED_PROXIES.
+//
+// CIDRs the username header above is accepted from, separated by
+// COMMAS ONLY -- whitespace does not separate here, though it does in
+// HTTP_API_TRUSTED_PROXIES. An entry that is not a valid CIDR refuses
+// to start, naming the value, so a list written space-separated fails
+// loudly rather than trusting nobody in silence.
+var UserHeaderTrustedProxies = config.DefineString("HTTP_API_USER_HEADER_TRUSTED_PROXIES", "", config.Startup,
+	"CIDRs the username header above is accepted from, separated by COMMAS ONLY -- whitespace does not separate here, though it does in HTTP_API_TRUSTED_PROXIES. An entry that is not a valid CIDR refuses to start, naming the value, so a list written space-separated fails loudly rather than trusting nobody in silence.")
+
 // UserHeaderTrustAny is HTTP_API_USER_HEADER_TRUST_ANY.
 //
 // Accept the user header from any source address. Written true, t, 1,
@@ -1662,6 +1697,9 @@ var All = []config.Knob{
 	TLSCert.Knob,
 	TLSKey.Knob,
 	TokenRetention.Knob,
+	TrustedProxies.Knob,
+	UserHeader.Knob,
+	UserHeaderTrustedProxies.Knob,
 	UserHeaderTrustAny.Knob,
 	VSCodeImage.Knob,
 	WebUIAccessGroup.Knob,

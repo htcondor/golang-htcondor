@@ -2362,7 +2362,7 @@ func getTimeoutConfig(cfg *config.Config) (readTimeout, writeTimeout, idleTimeou
 // getUserHeaderConfig extracts user header and domain configuration
 func getUserHeaderConfig(cfg *config.Config) (userHeaderFromConfig, uidDomain, trustDomain string) {
 	userHeaderFromConfig = *userHeader
-	if header, ok := cfg.Get("HTTP_API_USER_HEADER"); ok && header != "" {
+	if header, ok := cfg.Get(knobs.UserHeader.Name()); ok && header != "" {
 		userHeaderFromConfig = header
 		log.Printf("Using user header: %s", userHeaderFromConfig)
 	}
@@ -2381,8 +2381,15 @@ func getUserHeaderConfig(cfg *config.Config) (userHeaderFromConfig, uidDomain, t
 // the operator must configure when HTTP_API_USER_HEADER is set in
 // production. Empty when unset; the Handler will refuse to start if
 // UserHeader is set without either this list OR the unsafe override.
+//
+// Comma-only, deliberately, and NOT config.SplitConfigList, which the
+// similarly named HTTP_API_TRUSTED_PROXIES uses and which also splits
+// on whitespace. Widening this to match would change which
+// configurations are accepted; narrowing that one to match would break
+// lists already written space-separated. The difference is documented
+// at both knobs rather than quietly reconciled here.
 func loadUserHeaderTrustedProxies(cfg *config.Config) []string {
-	v, ok := cfg.Get("HTTP_API_USER_HEADER_TRUSTED_PROXIES")
+	v, ok := cfg.Get(knobs.UserHeaderTrustedProxies.Name())
 	if !ok || v == "" {
 		return nil
 	}
@@ -2780,7 +2787,10 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		ScheddHost:               scheddHostValue,
 		UserHeader:               userHeaderFromConfig,
 		UserHeaderTrustedProxies: loadUserHeaderTrustedProxies(cfg),
-		TrustedProxies:           config.SplitConfigList(firstConfigValue(cfg, "HTTP_API_TRUSTED_PROXIES")),
+		// SplitConfigList, not the knob's list type: it splits on
+		// whitespace as well as commas and config.ParseList does not,
+		// so a space-separated list would become one bogus entry.
+		TrustedProxies:           config.SplitConfigList(firstConfigValue(cfg, knobs.TrustedProxies.Name())),
 		UserHeaderTrustAnyUnsafe: loadUserHeaderTrustAnyUnsafe(cfg),
 		SigningKeyPath:           signingKeyPath,
 		HTTPBaseURL:              publicBaseURL(cfg),

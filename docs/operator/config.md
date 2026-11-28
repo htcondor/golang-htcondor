@@ -1392,6 +1392,41 @@ start rather than sweeping on a figure nobody chose. Only rows that
 are already dead -- revoked or expired -- are ever removed, because a
 live grant is somebody's session whatever its age.
 
+### `HTTP_API_TRUSTED_PROXIES`
+
+**String.** Unset by default. Changing it needs a restart.
+
+CIDRs, or bare addresses, whose forwarding headers this server
+believes when recording a client's address -- a bare address needs no
+/32, which is the common case for one ingress. Unset trusts none of
+them and records the peer address. With it set, the X-Forwarded-For
+chain is walked from the right, and X-Real-IP is honored only as a
+fallback and only from a trusted peer. Separated by commas OR
+whitespace, unlike `HTTP_API_USER_HEADER_TRUSTED_PROXIES` below, which
+is comma-only.
+
+### `HTTP_API_USER_HEADER`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Trust this HTTP header to carry the authenticated username. For demo
+mode and for a deployment sitting behind a proxy that authenticates,
+and nothing else: anything that can reach this server directly can
+then claim to be any user. Setting it requires
+`HTTP_API_USER_HEADER_TRUSTED_PROXIES`, or the explicit unsafe
+override, or the server refuses to start. A value here overrides the
+-user-header command-line flag.
+
+### `HTTP_API_USER_HEADER_TRUSTED_PROXIES`
+
+**String.** Unset by default. Changing it needs a restart.
+
+CIDRs the username header above is accepted from, separated by COMMAS
+ONLY -- whitespace does not separate here, though it does in
+`HTTP_API_TRUSTED_PROXIES`. An entry that is not a valid CIDR refuses
+to start, naming the value, so a list written space-separated fails
+loudly rather than trusting nobody in silence.
+
 ### `HTTP_API_USER_HEADER_TRUST_ANY`
 
 **Boolean.** Default `false`. Changing it needs a restart.
@@ -1519,7 +1554,6 @@ each one.
 | `HTTP_API_DAGMAN_PATH` | Absolute path to `condor_dagman` on the **access point**, for the `submit_dag` tool. **Normally unnecessary — discovered from the schedd's `BIN`; set it only if that discovery is refused.** The server asks the schedd for `BIN` once (a READ-level `condor_config_val` query) and uses `$(BIN)/condor_dagman`; this knob overrides that, and `/usr/bin/condor_dagman` is the fallback when neither is available. `condor_submit_dag` normally finds the binary with `which` on the submitting machine, which is no help here: this server submits to a schedd it shares no filesystem with. |
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |
-| `HTTP_API_TRUSTED_PROXIES` | Comma-separated CIDRs (or bare addresses) whose `X-Forwarded-For` / `X-Real-IP` are honored when recording a client address. Unset means none are, and the peer address is logged. |
 | `PRIVATE_NETWORK_NAME` | This host's private network name. When it equals a daemon's advertised `PrivNet`, that daemon is dialed directly instead of through its CCB broker. Defaults to `$(FULL_HOSTNAME)`, as in C++. See [Reaching jobs behind CCB](networking.md). |
 | `HOST_ALIAS` | The host name a client verifies this server's SSL certificate against, published as `alias=` on the advertised address. Defaults to `$(FULL_HOSTNAME)`, as in C++. Behind a shared port the address itself carries only the shared-port server's IP, and HTCondor host certificates have no IP SANs, so without the alias SSL authentication from another host fails the certificate check. Set it only when the certificate names something else — a load balancer, a CNAME. |
 | `HTTP_API_SHARED_PORT` | Open an inbound HTCondor port (a port or `host:port`, e.g. `9618`) so this server can be reached by execute nodes behind a Condor Connection Broker. Off by default. See [Reaching jobs behind CCB](networking.md). |
