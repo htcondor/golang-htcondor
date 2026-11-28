@@ -106,6 +106,15 @@ var excluded = map[string]string{
 	// SubmitHash opens and parses the proxy, so the result depends on what is
 	// on the fuzzing host rather than on the submit file.
 	"x509userproxy": "reads and validates an X.509 proxy file off the host",
+	// shell has no table row either, so it is seeded by hand or not at
+	// all -- and this parser does not implement it yet. SubmitHash turns
+	// `shell = cmd` into /bin/sh -c 'cmd': it rewrites Cmd, writes
+	// Arguments and clears TransferExecutable. Generating it before the
+	// Go side does the same would need those three recorded as known
+	// divergences, and a waiver on Cmd or Arguments would excuse every
+	// other difference in them across the whole sweep. So it stays out
+	// until it is implemented, and this line is the record of that.
+	"shell": "not implemented by the Go parser; waiving it would need a divergence entry on Cmd and Arguments",
 }
 
 // The f_special group ids, masked out of a keyword's flag word.
@@ -139,7 +148,12 @@ func NewVocab(kws []oracle.Keyword) *Vocab {
 	v := &Vocab{byUniverse: map[string][]vocabEntry{}, Skipped: map[string]string{}}
 	seen := map[string]bool{}
 	var entries []vocabEntry
-	for _, kw := range kws {
+	// The table first, then the commands that have no row in it; see
+	// nonTableKeywords. Appending to a fresh slice keeps the caller's.
+	all := make([]oracle.Keyword, 0, len(kws)+len(nonTableKeywords))
+	all = append(all, kws...)
+	all = append(all, nonTableKeywords...)
+	for _, kw := range all {
 		switch {
 		case kw.Key == "":
 			continue
@@ -416,6 +430,11 @@ var byName = map[string]func(*stream) string{
 	"kill_sig_timeout":    seconds,
 	"job_lease_duration":  seconds,
 	"job_max_vacate_time": seconds,
+
+	// --- organized output: a relative path that stays below its base,
+	// since one that climbs out is refused by both parsers and would
+	// compare only the refusal ---
+	"organized_output_pattern": enum("out/$(ProcId)", "$(ClusterId)/$(ProcId)", "a/b", "runs/$(JobId)"),
 
 	// --- grid ---
 	"grid_resource":                     gridResource,
