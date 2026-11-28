@@ -223,9 +223,12 @@ itself one.
 
 #### `HTTP_API_CONNECTOR_<instance>_SCOPES`
 
-**Comma-separated list.** Unset by default. A change is installed by `condor_reconfig`.
+**List, separated by commas or spaces.** Unset by default. A change is installed by `condor_reconfig`.
 
-The scopes requested when a user connects this account.
+The scopes requested when a user connects this account, separated by
+spaces as RFC 6749 delimits them -- the spelling a provider's own
+documentation uses, so it can be pasted. `HTTP_API_OAUTH2_SCOPES` is
+read the same way.
 
 #### `HTTP_API_CONNECTOR_<instance>_TOKEN_URL`
 

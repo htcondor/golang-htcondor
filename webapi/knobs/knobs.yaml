@@ -1603,9 +1603,13 @@ families:
         type: list
         default: ""
         scope: reconfig
-        doc: The scopes requested when a user connects this account.
+        doc: >
+          The scopes requested when a user connects this account,
+          separated by spaces as RFC 6749 delimits them -- the spelling
+          a provider's own documentation uses, so it can be pasted.
+          HTTP_API_OAUTH2_SCOPES is read the same way.
       - name: GROUPS
-        type: list
+        type: comma_list
         default: ""
         scope: reconfig
         doc: >
@@ -1645,7 +1649,7 @@ families:
       published.
     settings:
       - name: GROUPS
-        type: list
+        type: comma_list
         default: ""
         scope: reconfig
         doc: >

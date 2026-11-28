@@ -339,12 +339,18 @@ func (k IntKnob) Lookup(c Source) (int64, bool) {
 // Default is the value that applies when the setting is absent.
 func (k IntKnob) Default() int64 { return k.def }
 
-// ListKnob is a setting read as a list of names, written comma
-// separated or as a JSON array -- the latter for a name that contains a
-// comma. Whitespace is not a separator: a name may contain a space, and
-// the HTTP_API_* settings of this shape are all documented as
-// comma-separated. A setting documented as comma-or-space needs a kind
-// of its own.
+// ListKnob is a setting read the way HTCondor reads a list: separated
+// by commas OR whitespace, or written as a JSON array.
+//
+// This is the default kind for a list, because it is upstream's
+// default. HTCondor's split() takes delim=", \t\r\n"
+// (condor_utils/stl_string_utils.h), so an operator who has learned
+// that a condor list takes either separator is right about this server
+// too. Upstream narrows to commas alone by passing an explicit
+// delimiter, and so does this package: see CommaListKnob, which is for
+// the values that can contain a space.
+//
+// A JSON array is accepted for a value no separator rule can express.
 type ListKnob struct {
 	Knob
 	def []string
@@ -382,6 +388,56 @@ func (k ListKnob) Lookup(c Source) ([]string, bool) {
 
 // Default is the value that applies when the setting is absent.
 func (k ListKnob) Default() []string { return append([]string(nil), k.def...) }
+
+// CommaListKnob is a setting read as a list separated by commas only,
+// or written as a JSON array.
+//
+// The exception to ListKnob, for a list whose VALUES may contain a
+// space: a group name is the case it exists for. Reading "smith lab,
+// jones lab" with whitespace as a separator would produce four groups
+// that match nothing, and it would do it silently, because a group
+// nobody is in is indistinguishable from a group that does not exist.
+//
+// Upstream does the same thing the same way round -- split() defaults
+// to comma-or-whitespace and takes an explicit "," where a value can
+// hold a space -- so this is the narrow kind on purpose, and a new
+// list setting should reach for ListKnob first.
+type CommaListKnob struct {
+	Knob
+	def []string
+}
+
+// DefineCommaList declares a comma-separated list setting. For
+// generated knob tables.
+func DefineCommaList(name string, def []string, scope Scope, doc string) CommaListKnob {
+	return CommaListKnob{Knob{name, doc, scope}, def}
+}
+
+// Get returns the configured list, or the default when it is unset. An
+// empty list is a real answer -- "nobody" -- and is not the default.
+func (k CommaListKnob) Get(c Source) []string {
+	v, ok := k.raw(c)
+	if !ok {
+		return append([]string(nil), k.def...)
+	}
+	out, err := ParseCommaList(v)
+	if err != nil {
+		k.malformed(c, v, err)
+		return append([]string(nil), k.def...)
+	}
+	return out
+}
+
+// Lookup is Get, and also reports whether the setting was present.
+func (k CommaListKnob) Lookup(c Source) ([]string, bool) {
+	if _, found := k.raw(c); !found {
+		return append([]string(nil), k.def...), false
+	}
+	return k.Get(c), true
+}
+
+// Default is the value that applies when the setting is absent.
+func (k CommaListKnob) Default() []string { return append([]string(nil), k.def...) }
 
 // WordsKnob is a setting read as a whitespace-separated list. OAuth2
 // scopes are the case it exists for: RFC 6749 delimits them with
@@ -464,26 +520,52 @@ func ParseBytes(s string) (int64, error) {
 	return n * mult, nil
 }
 
-// ParseList reads a list written as a JSON array, or as names
-// separated by commas. Empty entries are dropped, so a trailing comma
-// is not an empty name.
+// ParseList reads a list the way HTCondor does: a JSON array, or names
+// separated by commas or whitespace. Empty entries are dropped, so a
+// trailing comma is not an empty name.
+//
+// The separator set matches upstream's split() default, which is what
+// makes "a, b" and "a b" mean the same thing here as they do in a
+// condor configuration file.
 func ParseList(s string) ([]string, error) {
 	t := strings.TrimSpace(s)
 	if t == "" {
 		return nil, nil
 	}
 	if strings.HasPrefix(t, "[") {
-		var out []string
-		if err := json.Unmarshal([]byte(t), &out); err != nil {
-			return nil, fmt.Errorf("%q is not a JSON array of strings: %w", s, err)
-		}
-		return out, nil
+		return parseJSONList(s)
+	}
+	return SplitConfigList(t), nil
+}
+
+// ParseCommaList reads a list separated by commas ONLY, or a JSON
+// array. For values that may contain a space -- a group name, a
+// display name -- where whitespace cannot be a separator.
+//
+// The narrow case, deliberately: upstream reaches for an explicit ","
+// delimiter in the same situation rather than making it the default.
+func ParseCommaList(s string) ([]string, error) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(t, "[") {
+		return parseJSONList(s)
 	}
 	var out []string
 	for _, f := range strings.Split(t, ",") {
 		if f = strings.TrimSpace(f); f != "" {
 			out = append(out, f)
 		}
+	}
+	return out, nil
+}
+
+// parseJSONList reads the JSON-array spelling both list kinds accept.
+func parseJSONList(s string) ([]string, error) {
+	var out []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &out); err != nil {
+		return nil, fmt.Errorf("%q is not a JSON array of strings: %w", s, err)
 	}
 	return out, nil
 }
