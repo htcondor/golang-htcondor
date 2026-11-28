@@ -123,6 +123,13 @@
           "order": 75
         },
         {
+          "path": "operator/idempotency.md",
+          "url": "/docs/operator/idempotency",
+          "title": "Idempotent submission",
+          "audience": "operator",
+          "order": 77
+        },
+        {
           "path": "operator/container-builds.md",
           "url": "/docs/operator/container-builds",
           "title": "Container builds",

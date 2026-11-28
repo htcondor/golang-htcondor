@@ -28,6 +28,61 @@
 # elsewhere. See design_notes/DOCUMENTATION_SITE.md.
 
 knobs:
+  # The reservations subsystem. All four are read strictly -- a
+  # malformed value refuses to start rather than falling back -- so they
+  # are read through each knob's Name() rather than through Get(), the
+  # way loadTokenLifespan reads a token lifespan. The declaration is
+  # still what documents them and what puts them in the reconfigure
+  # table.
+  - name: HTTP_API_RESERVATIONS
+    type: bool
+    default: "false"
+    scope: startup
+    doc: >
+      Run the reservations subsystem: the admin API, the admin page and
+      the controller. Off by default. With it off the endpoints answer
+      503 naming this setting and the admin page is not offered at all.
+      A value that is not a boolean refuses to start rather than being
+      read as off -- the two ways to misread it are "offered" and "not
+      offered", and a daemon that guesses should not come up.
+
+  - name: HTTP_API_RESERVATION_CLAIMS
+    type: bool
+    default: "false"
+    scope: startup
+    doc: >
+      Hold always-on reservations as persistent claims (OCUs) on this
+      access point's schedd, instead of by pushing machine attributes.
+      Off by default and separate from HTTP_API_RESERVATIONS, because it
+      changes where a running reservation's capacity comes from and
+      needs the schedd to accept the request: this access point has to
+      be a queue super user there, or be named in OCU_SUPER_USERS.
+      Scheduled reservations are unaffected. Refuses to start on a
+      non-boolean, as above.
+
+  - name: HTTP_API_RESERVATION_EP_CONSTRAINT
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      ClassAd expression over the slot ad limiting which execute points
+      reservations may draw seats from. Empty means every startd the
+      collector reports, which is rarely what a site wants: a class
+      should take the teaching nodes rather than whatever the collector
+      happens to hold.
+
+  - name: HTTP_API_RESERVATION_STAMP_BUDGET
+    type: int
+    default: "0"
+    scope: startup
+    default_doc: Unset writes at most 2000 cluster ads a pass.
+    doc: >
+      How many cluster ads one stamping pass writes. The write is per
+      cluster rather than per job, so the default covers an idle queue
+      far larger than most access points have; this exists for a queue
+      that is pathological rather than merely large. A value that is not
+      a non-negative whole number refuses to start.
+
   - name: HTTP_API_TLS_CERT
     type: string
     default: ""

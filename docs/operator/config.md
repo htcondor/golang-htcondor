@@ -992,6 +992,49 @@ that does not parse, refuses to start rather than being guessed at --
 How long a request may take to arrive in full, as a Go duration. A
 value that cannot be parsed is logged and the default applies.
 
+### `HTTP_API_RESERVATIONS`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Run the reservations subsystem: the admin API, the admin page and the
+controller. Off by default. With it off the endpoints answer 503
+naming this setting and the admin page is not offered at all. A value
+that is not a boolean refuses to start rather than being read as off
+-- the two ways to misread it are "offered" and "not offered", and a
+daemon that guesses should not come up.
+
+### `HTTP_API_RESERVATION_CLAIMS`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Hold always-on reservations as persistent claims (OCUs) on this access
+point's schedd, instead of by pushing machine attributes. Off by
+default and separate from `HTTP_API_RESERVATIONS`, because it changes
+where a running reservation's capacity comes from and needs the schedd
+to accept the request: this access point has to be a queue super user
+there, or be named in OCU_SUPER_USERS. Scheduled reservations are
+unaffected. Refuses to start on a non-boolean, as above.
+
+### `HTTP_API_RESERVATION_EP_CONSTRAINT`
+
+**String.** Unset by default. Changing it needs a restart.
+
+ClassAd expression over the slot ad limiting which execute points
+reservations may draw seats from. Empty means every startd the
+collector reports, which is rarely what a site wants: a class should
+take the teaching nodes rather than whatever the collector happens to
+hold.
+
+### `HTTP_API_RESERVATION_STAMP_BUDGET`
+
+**Whole number.** Unset writes at most 2000 cluster ads a pass. Changing it needs a restart.
+
+How many cluster ads one stamping pass writes. The write is per
+cluster rather than per job, so the default covers an idle queue far
+larger than most access points have; this exists for a queue that is
+pathological rather than merely large. A value that is not a
+non-negative whole number refuses to start.
+
 ### `HTTP_API_SANDBOX_CACHE_DIR`
 
 **String.** Unset by default. Changing it needs a restart.

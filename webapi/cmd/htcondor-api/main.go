@@ -1616,13 +1616,14 @@ func intParam(cfg *config.Config, key string) int {
 }
 
 func reservationsEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_RESERVATIONS")
+	key := knobs.Reservations.Name()
+	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
 	}
 	v, err := strconv.ParseBool(strings.TrimSpace(raw))
 	if err != nil {
-		log.Fatalf("invalid HTTP_API_RESERVATIONS=%q: must be a boolean", raw)
+		log.Fatalf("invalid %s=%q: must be a boolean", key, raw)
 	}
 	return v
 }
@@ -1661,13 +1662,14 @@ func featureOffered(cfg *config.Config, param string) bool {
 // the schedd configured to accept the request: the access point has to
 // be a queue super user there, or named in OCU_SUPER_USERS.
 func reservationClaimsEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_RESERVATION_CLAIMS")
+	key := knobs.ReservationClaims.Name()
+	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
 	}
 	v, err := strconv.ParseBool(strings.TrimSpace(raw))
 	if err != nil {
-		log.Fatalf("invalid HTTP_API_RESERVATION_CLAIMS=%q: must be a boolean", raw)
+		log.Fatalf("invalid %s=%q: must be a boolean", key, raw)
 	}
 	return v
 }
@@ -1679,7 +1681,7 @@ func reservationClaimsEnabled(cfg *config.Config) bool {
 // A site will usually want this: a class should take the teaching nodes,
 // not whatever the collector happens to report.
 func reservationEPConstraint(cfg *config.Config) string {
-	raw, _ := cfg.Get("HTTP_API_RESERVATION_EP_CONSTRAINT")
+	raw, _ := cfg.Get(knobs.ReservationEPConstraint.Name())
 	return strings.TrimSpace(raw)
 }
 
@@ -1690,13 +1692,14 @@ func reservationEPConstraint(cfg *config.Config) string {
 // queue far larger than most access points have. It exists for a queue
 // that is pathological rather than merely large.
 func reservationStampBudget(cfg *config.Config) int {
-	raw, ok := cfg.Get("HTTP_API_RESERVATION_STAMP_BUDGET")
+	key := knobs.ReservationStampBudget.Name()
+	raw, ok := cfg.Get(key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return 0
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || n < 0 {
-		log.Fatalf("invalid HTTP_API_RESERVATION_STAMP_BUDGET=%q: must be a non-negative integer", raw)
+		log.Fatalf("invalid %s=%q: must be a non-negative integer", key, raw)
 	}
 	return n
 }

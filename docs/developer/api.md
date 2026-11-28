@@ -19,6 +19,12 @@ endpoints do not report whether a job they will not show you exists. A
 session with superuser mode armed reaches past that; the action is
 re-authenticated as the job's owner and audited.
 
+A submission may carry an `Idempotency-Key` header so a retry after a
+dropped connection cannot queue the work twice. A reused key answers
+**409** naming the job the first attempt created, which is a success
+from the client's point of view, not a failure. See
+[Idempotent submission](../operator/idempotency.md).
+
 Submitting and the sandbox:
 - `POST /api/v1/jobs` — submit a job. Input spooling is always on, so a
   job with anything to receive is submitted **held** and runs once its
