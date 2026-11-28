@@ -612,7 +612,7 @@ func loadKEKFilePath(cfg *config.Config, logger *logging.Logger) string {
 // Default is LOCAL_DIR/htcondor-api.db, with the historical
 // /var/lib/condor location as a final fallback.
 func loadDBPath(cfg *config.Config, logger *logging.Logger) string {
-	dbPath, hasDBPath := cfg.Get("HTTP_API_DB_PATH")
+	dbPath, hasDBPath := cfg.Get(knobs.DBPath.Name())
 	legacy := knobs.OAuth2DBPath.Get(cfg)
 
 	if legacy != "" && (!hasDBPath || dbPath == "") && logger != nil {
@@ -760,7 +760,7 @@ func loadSpoolBufferDir(cfg *config.Config) string {
 // loadTemplateGlobalPath resolves the YAML file (if any) the operator
 // has populated with shared batch-submission templates. Empty disables.
 func loadTemplateGlobalPath(cfg *config.Config) string {
-	if p, ok := cfg.Get("HTTP_API_TEMPLATE_GLOBAL_PATH"); ok && p != "" {
+	if p, ok := cfg.Get(knobs.TemplateGlobalPath.Name()); ok && p != "" {
 		return p
 	}
 	return ""
@@ -1250,7 +1250,7 @@ func validateDurationHasUnit(s string) error {
 // names are passed through for httpserver to log and ignore, so a typo
 // degrades a defense-in-depth layer rather than stopping the daemon.
 func loadRevocationOracles(cfg *config.Config, logger *logging.Logger) []string {
-	raw, ok := cfg.Get("HTTP_API_OAUTH2_REVOCATION_ORACLES")
+	raw, ok := cfg.Get(knobs.OAuth2RevocationOracles.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -1581,7 +1581,7 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 // settings were read only with MCP, also meant nobody could log in, with
 // nothing in the log to say why.
 func mcpEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_ENABLE_MCP")
+	raw, ok := cfg.Get(knobs.EnableMCP.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
 	}
@@ -2547,7 +2547,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	superuserGroup, _ := cfg.Get("HTTP_API_SUPERUSER_GROUP")
 	// Only needed where the schedd does not run as "condor" -- see
 	// HandlerConfig.SuperuserFallbackIdentity.
-	superuserFallback, _ := cfg.Get("HTTP_API_SUPERUSER_FALLBACK_IDENTITY")
+	superuserFallback, _ := cfg.Get(knobs.SuperuserFallbackIdentity.Name())
 	if strings.TrimSpace(superuserGroup) != "" {
 		log.Printf("Superuser mode gated on group %q", strings.TrimSpace(superuserGroup))
 	}
@@ -2672,7 +2672,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	// HTTP_API_METRICS_PUBLIC=true to skip the API-key gate when the
 	// endpoint is already isolated by network ACLs.
 	metricsPublic := false
-	if v, ok := cfg.Get("HTTP_API_METRICS_PUBLIC"); ok {
+	if v, ok := cfg.Get(knobs.MetricsPublic.Name()); ok {
 		metricsPublic = strings.EqualFold(strings.TrimSpace(v), "true") ||
 			strings.TrimSpace(v) == "1"
 	}
@@ -2722,7 +2722,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	// UI polls: an operator who finds the volume not worth the rows
 	// can turn it off and keep the MCP counting.
 	restStatsEnabled := true
-	if v, ok := cfg.Get("HTTP_API_REST_STATS"); ok {
+	if v, ok := cfg.Get(knobs.RESTStats.Name()); ok {
 		t := strings.TrimSpace(v)
 		restStatsEnabled = !strings.EqualFold(t, "false") && t != "0"
 	}
@@ -2762,7 +2762,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 	mcpUseSDKTransport := loadMCPUseSDKTransport(cfg, logger)
 	requiredCredentials := loadRequiredCredentials(cfg, logger)
 	jobQueueLogPath := resolveJobQueueLog(cfg, logger)
-	creddAddress := firstConfigValue(cfg, "HTTP_API_CREDD_ADDRESS")
+	creddAddress := firstConfigValue(cfg, knobs.CreddAddress.Name())
 	if creddAddress != "" {
 		logger.Info(logging.DestinationHTTP, "HTTP_API_CREDD_ADDRESS configured", "address", creddAddress)
 	}
@@ -2926,7 +2926,7 @@ func runNormalMode(earlyBuf *logging.EarlyBuffer) (rerr error) {
 		InteractiveTerminalDisabled: !featureOffered(cfg, knobs.InteractiveTerminal.Name()),
 		VSCodeImage:                 knobs.VSCodeImage.Get(cfg),
 		Build:                       loadBuildConfig(cfg, logger),
-		DBMirrorTokenSubject:        firstConfigValue(cfg, "HTTP_API_DBMIRROR_TOKEN_SUBJECT"),
+		DBMirrorTokenSubject:        firstConfigValue(cfg, knobs.DBMirrorTokenSubject.Name()),
 		SubmitFileDefaults:          loadSubmitFileLines(cfg, knobs.SubmitFileDefaults),
 		SubmitFileOverrides:         loadSubmitFileLines(cfg, knobs.SubmitFileOverrides),
 		IdempotencyKeyCheck:         knobs.IdempotencyKeyCheck.Get(cfg),
@@ -4050,13 +4050,13 @@ func generateServerToken(tempDir, trustDomain string) (string, error) {
 // is independently a no-op when COLLECTOR_HOST is unset, so this only matters
 // when a collector IS configured but the operator does not want the ad.)
 func httpAPIAdvertiseEnabled(cfg *config.Config) bool {
-	raw, ok := cfg.Get("HTTP_API_ADVERTISE")
+	raw, ok := cfg.Get(knobs.Advertise.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return true
 	}
 	v, err := strconv.ParseBool(strings.TrimSpace(raw))
 	if err != nil {
-		log.Fatalf("invalid HTTP_API_ADVERTISE=%q: must be a boolean", raw)
+		log.Fatalf("invalid %s=%q: must be a boolean", knobs.Advertise.Name(), raw)
 	}
 	return v
 }
@@ -4429,7 +4429,7 @@ func loadRuntimeEstimateConfig(cfg *config.Config, logger *logging.Logger) (inte
 // missing, so a person using the web UI does not get a held job for a reason
 // unrelated to what they asked for.
 func loadRequiredCredentials(cfg *config.Config, logger *logging.Logger) []string {
-	raw, ok := cfg.Get("HTTP_API_REQUIRED_CREDENTIALS")
+	raw, ok := cfg.Get(knobs.RequiredCredentials.Name())
 	if !ok || strings.TrimSpace(raw) == "" {
 		return nil
 	}
@@ -4513,7 +4513,7 @@ func loadMCPUseSDKTransport(cfg *config.Config, logger *logging.Logger) bool {
 // whether a deployment re-checks its users at all, and guessing it would be
 // found out by a user who should have been cut off and was not.
 func loadUpstreamRefresh(cfg *config.Config, logger *logging.Logger) string {
-	raw, ok := cfg.Get("HTTP_API_UPSTREAM_REFRESH")
+	raw, ok := cfg.Get(knobs.UpstreamRefresh.Name())
 	if !ok {
 		return ""
 	}

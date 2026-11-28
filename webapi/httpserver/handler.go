@@ -43,6 +43,7 @@ import (
 	"github.com/htcondor/golang-htcondor/webapi/jobssh"
 	"github.com/htcondor/golang-htcondor/webapi/jobwatch"
 	"github.com/htcondor/golang-htcondor/webapi/jupytertunnel"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 	"github.com/htcondor/golang-htcondor/webapi/matchanalyzer"
 	"github.com/htcondor/golang-htcondor/webapi/mcpserver"
 	"github.com/htcondor/golang-htcondor/webapi/multiap"
@@ -2029,7 +2030,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	if h.metricsPublic {
 		logger.Warn(logging.DestinationSecurity,
 			"/metrics is served without authentication, to anyone who can reach this port",
-			"setting", "HTTP_API_METRICS_PUBLIC",
+			"setting", knobs.MetricsPublic.Name(),
 			"hint", "restrict the port by network ACL, or unset this and give the scraper an API key with the metrics scope")
 	}
 

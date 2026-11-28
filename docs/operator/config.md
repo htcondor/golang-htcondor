@@ -32,6 +32,16 @@ code uses rather than a second copy of them. Alphabetical by parameter.
 
 <!-- BEGIN GENERATED SETTINGS: edit webapi/knobs/knobs.yaml, then run `make knobs` -->
 
+### `HTTP_API_ADVERTISE`
+
+**Boolean.** Default `true`. Changing it needs a restart.
+
+Advertise this API server to the collector, as an HTCondorAPI ad
+carrying the endpoint, the schedd, mirror health and versions. On by
+default, and a no-op without COLLECTOR_HOST -- so this only matters as
+a way to opt OUT where a collector is configured. A non-boolean
+refuses to start.
+
 ### `HTTP_API_ANYUSER_READ_GROUPS`
 
 **String.** Unset by default. A change is installed by `condor_reconfig`.
@@ -262,6 +272,37 @@ The prefix of the credd service names this server stores
 connected-account credentials under. Change it only to keep two
 servers sharing one credd from seeing each other's credentials.
 
+### `HTTP_API_CREDD_ADDRESS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Pin the credd this server talks to, as a sinful address, overriding
+discovery. Single-AP mode only -- refused in multi-AP mode, where each
+access point's schedd names its own. Normally unnecessary: the credd
+is read from the schedd itself, which publishes CredDIpAddr in its ad
+and address file, the same binding DCSchedd::getCreddAddress uses. Set
+it when fronting a remote schedd that does not advertise one, since a
+credd that is not the submitting schedd's accepts credentials and
+leaves jobs held anyway.
+
+### `HTTP_API_DBMIRROR_TOKEN_SUBJECT`
+
+**String.** Unset asserts condor@<trust domain>. Changing it needs a restart.
+
+The identity the token this server presents to the htcondordb mirror
+asserts. Set it when the mirror authorizes a different name.
+
+### `HTTP_API_DB_PATH`
+
+**String.** Unset uses $(LOCAL_DIR)/htcondor-api.db. Changing it needs a restart.
+
+The unified SQLite database holding sessions, OAuth2 and IDP state,
+templates and API keys. It runs in WAL mode, so expect -wal and -shm
+files beside it: back up or copy all three together, and put it on a
+filesystem with working locking -- a local disk rather than NFS.
+
+See [The database](index.md#the-database).
+
 ### `HTTP_API_ENABLE_IDP`
 
 **Boolean.** Default `false`. Changing it needs a restart.
@@ -270,6 +311,18 @@ Run the built-in identity provider, so this server signs users in
 itself instead of sending them to an external one. Off by default. The
 provider shares the unified application database; the separate
 `HTTP_API_IDP_DB_PATH` it once had is no longer read.
+
+### `HTTP_API_ENABLE_MCP`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Serve the MCP endpoint at /mcp, the /mcp/oauth2/* spelling of the
+OAuth2 endpoints, and the mcp:read and mcp:write scopes in OAuth2
+metadata. Required by the chat assistant. OAuth2 itself is served
+whenever the web UI OR MCP is on, so a web UI with this off still logs
+people in and serves the device flow.
+
+See [Agents: MCP, site skills, chat](agents.md).
 
 ### `HTTP_API_GROUP_SOURCE`
 
@@ -824,6 +877,15 @@ through a group. Identities are compared as for
 
 See [Authorization groups](auth.md#authorization-groups).
 
+### `HTTP_API_METRICS_PUBLIC`
+
+**Boolean.** Default `false`. Changing it needs a restart.
+
+Remove the API-key gate on /metrics. Off by default, so Prometheus
+must present an API key carrying the metrics scope.
+
+See [Metrics and usage statistics](metrics.md).
+
 ### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
 
 **Duration.** Unset issues access tokens that live one hour. Changing it needs a restart.
@@ -940,6 +1002,17 @@ first login.
 
 See [Local identity mapping](auth.md#local-identity-mapping).
 
+### `HTTP_API_OAUTH2_REVOCATION_ORACLES`
+
+**String.** Unset by default. Changing it needs a restart.
+
+Which sources are consulted to decide whether a refresh grant is still
+good, as a comma-separated list -- system-groups reads this machine's
+account database, upstream-userinfo asks the identity provider. Unset
+runs whichever the deployment can support. The literal "none" disables
+all of them, and is the spelling that exists because a configuration
+file cannot otherwise express "empty" as distinct from "unset".
+
 ### `HTTP_API_OAUTH2_SCOPES`
 
 **Space-separated list.** Unset by default. Changing it needs a restart.
@@ -1048,6 +1121,21 @@ that does not parse, refuses to start rather than being guessed at --
 How long a request may take to arrive in full, as a Go duration. A
 value that cannot be parsed is logged and the default applies.
 
+### `HTTP_API_REQUIRED_CREDENTIALS`
+
+**String.** Unset by default. Changing it needs a restart.
+
+OAuth service credentials that must exist before a job may be
+submitted, separated by commas or whitespace. Some access points hold
+every job submitted without them, whatever the job actually uses. Each
+submit path checks the caller's credentials first and stores a
+placeholder for any that is missing, so somebody using the web UI does
+not get a held job for a reason unrelated to what they asked for; a
+real credential obtained later through the OAuth flow replaces the
+placeholder. Presence is cached per user for five minutes. Best
+effort: if the credd is unavailable or refuses, the submit still
+proceeds and the reason is logged. Unset requires nothing.
+
 ### `HTTP_API_RESERVATIONS`
 
 **Boolean.** Default `false`. Changing it needs a restart.
@@ -1090,6 +1178,15 @@ cluster rather than per job, so the default covers an idle queue far
 larger than most access points have; this exists for a queue that is
 pathological rather than merely large. A value that is not a
 non-negative whole number refuses to start.
+
+### `HTTP_API_REST_STATS`
+
+**Boolean.** Default `true`. Changing it needs a restart.
+
+Count REST API requests. On by default; false turns off the REST
+counting while leaving the MCP counting alone.
+
+See [REST API requests](metrics.md#rest-api-requests).
 
 ### `HTTP_API_SANDBOX_CACHE_DIR`
 
@@ -1352,6 +1449,28 @@ of -- an access point that will not have a log written outside the
 home directory, say. Otherwise as above: HTCondor configuration
 syntax, operator-only, spliced in as written.
 
+### `HTTP_API_SUPERUSER_FALLBACK_IDENTITY`
+
+**String.** Unset uses condor@$(UID_DOMAIN). Changing it needs a restart.
+
+The identity superuser mode acts under when the operator is not
+themselves a usable queue superuser. The default suits a schedd
+running as the condor user, where real_owner_is_condor matches the
+daemon's own OS user. It does NOT suit a personal condor, where that
+branch is disabled and the equivalent identity is the user the pool
+runs as -- so a deployment running the schedd as anything else needs
+this.
+
+See [Superuser mode](auth.md#superuser-mode).
+
+### `HTTP_API_TEMPLATE_GLOBAL_PATH`
+
+**String.** Unset by default. Changing it needs a restart.
+
+A YAML file of operator-curated batch-submission templates. Unset
+offers only the built-in templates, which always ship whatever this
+says.
+
 ### `HTTP_API_TLS_CA_CERT`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -1391,6 +1510,16 @@ so is anything else that does not parse, and the server refuses to
 start rather than sweeping on a figure nobody chose. Only rows that
 are already dead -- revoked or expired -- are ever removed, because a
 live grant is somebody's session whatever its age.
+
+### `HTTP_API_UPSTREAM_REFRESH`
+
+**String.** Unset behaves as auto. Changing it needs a restart.
+
+Whether to ask the identity provider for offline_access and keep the
+refresh token it returns, which is what lets group membership be
+re-checked between logins where groups come from the token. auto asks
+and keeps one when offered; on is auto plus a warning per login when
+the provider returns none; off neither asks nor stores.
 
 ### `HTTP_API_USER_HEADER_TRUST_ANY`
 
@@ -1462,7 +1591,6 @@ each one.
 | --- | --- |
 | `HTTP_API_LISTEN_ADDR` | Listen address; default `:8080`. Bound in addition to the shared-port endpoint under `condor_master`. `-listen` on the command line overrides it. |
 | `HTTP_API_BASE_URL` | Externally-visible URL for OAuth2 redirects + share links. |
-| `HTTP_API_DB_PATH` | Unified SQLite DB (sessions, OAuth2, IDP, templates, API keys). Default `$(LOCAL_DIR)/htcondor-api.db`. Runs in **WAL** mode, so expect `-wal` and `-shm` files beside it; back up or copy all three together, and put it on a filesystem with working locking (a local disk) rather than NFS. See [the database](index.md#the-database). |
 | `HTTP_API_SIGNING_KEY` | Pool signing key for minting per-request tokens. Defaults to `SEC_TOKEN_POOL_SIGNING_KEY_FILE`. |
 | `HTTP_API_KEK_FILE` | Path to the master Key Encryption Key (32 raw bytes or 64-char hex; mode 0600/0400). Generate with `openssl rand -hex 32 > <path> && chmod 0600 <path>`. |
 | `HTTP_API_WEBUI_ADMIN_GROUP` | Comma-separated group(s) whose members can reach the admin pages. Unset disables the admin UI. Reloaded on SIGHUP. |
@@ -1480,20 +1608,14 @@ each one.
 | `HTTP_API_WEBUI_APP_ONLY_GROUP` | Comma-separated group(s) whose members land in their site app rather than the dashboard, with the console navigation collapsed. Presentation only; it restricts nothing. Reloaded on SIGHUP. See [Site apps](site-apps.md#app-only-sessions). |
 | `HTTP_API_PROJECT_LEADS_FILE` | File naming each project's leads, who may use superuser mode on jobs whose `ProjectName` they lead. Re-read when it changes and on SIGHUP. See [Project leads](auth.md#project-leads). |
 | `HTTP_API_PROJECT_LEADS_GROUP` | Group-name pattern containing `{project}`, e.g. `{project}-leads`; members of the group it names for a project lead that project. Reloaded on SIGHUP. See [Project leads](auth.md#project-leads). |
-| `HTTP_API_METRICS_PUBLIC` | `true` to disable the API-key gate on `/metrics`. Default off — Prometheus must present an API key with the `metrics` scope. |
 | `HTTP_API_TOOL_STATS_FLUSH_INTERVAL` | How often the usage counters are written to the application database (e.g. `5m`). Default `5m`; they are also written at shutdown. Governs both kinds. See [Usage statistics](metrics.md#usage-statistics). |
 | `HTTP_API_TOOL_STATS_MAX_LABEL_VALUES` | Cap on distinct values per `/metrics` label for usage statistics. Default `1000`; past it the quietest values render as `other`, while the database keeps them all. |
 | `HTTP_API_UTILIZATION_MAX_JOBS` | Most finished jobs one Utilization analysis (`GET /api/v1/utilization`) may read; a larger `limit` is clamped to it. Default `1000000`. An analysis holds about 250 bytes per job while it runs, so the default is about a quarter of a gigabyte at peak; the cached result is the answer, not the jobs. Read at startup. |
 | `HTTP_API_RUNTIME_ESTIMATE_INTERVAL` | How often [runtime estimates](estimates.md#runtime-estimates) read newly completed jobs from the htcondordb mirror (a duration, e.g. `5m`). Default `5m`; `0` turns runtime estimates off entirely. Without a mirror they are off whatever this says. Read at startup. |
 | `HTTP_API_RUNTIME_ESTIMATE_BACKFILL` | How much job history runtime estimates read at startup, and how long a group of similar jobs is remembered without a new completion. Default `168h`. At most 500,000 of the newest records are read; the log says when that cap is hit. Read at startup. |
 | `HTTP_API_TOOL_STATS_MAX_SERIES` | Cap on distinct call combinations held in memory and in the database, per kind. Default `10000`; past it new combinations fold into `other`. This is what bounds memory and disk. |
-| `HTTP_API_REST_STATS` | `false` turns off the counting of REST API requests, keeping the MCP counting. Default on. See [REST API requests](metrics.md#rest-api-requests). |
 | `HTTP_API_TOOL_STATS_OMIT_USER` | `true` renders every `/metrics` user label as `omitted`, for a site that does not want account names on a scrapeable endpoint. The database still records them. See [Usernames on /metrics](metrics.md#usernames-on-metrics). |
-| `HTTP_API_ENABLE_MCP` | Enable the MCP endpoint (`/mcp`), the `/mcp/oauth2/*` spelling of the OAuth2 endpoints, and the `mcp:read`/`mcp:write` scopes in OAuth2 metadata. Required by the chat assistant. OAuth2 itself is served whenever the web UI **or** MCP is enabled, so a web UI with this off still logs people in and serves the device flow. |
 | `HTTP_API_MCP_OAUTH2` | `false` serves MCP with the forwarded-HTCondor-token path alone: no OAuth2 authorize, token or registration endpoint, no protected-resource document for `/mcp`, no `/mcp/oauth2/*` spelling, and an OAuth2 token presented to `/mcp` is refused. Default `true`. For a deployment behind a gateway that forwards a per-user IDTOKEN on every request and holds no pool signing key. A web UI keeps its own OAuth2 regardless. Read at startup; changing it needs a restart. See [MCP without OAuth2](auth.md#mcp-without-oauth2). |
-| `HTTP_API_CREDD_ADDRESS` | Single-AP mode only (refused in multi-AP mode, where each access point's schedd names its own). Pins the credd this server talks to (a sinful, e.g. `<10.0.0.5:9618?sock=credd>`), overriding discovery. Normally unnecessary: the credd is read from the schedd itself, which publishes its own credd as `CredDIpAddr` in its ad and address file — the same binding `DCSchedd::getCreddAddress` uses. Set this when fronting a remote schedd that does not advertise it, since a credd that is not the submitting schedd's accepts credentials and leaves jobs held anyway. |
-| `HTTP_API_REQUIRED_CREDENTIALS` | OAuth service credentials that must exist before a job may be submitted (comma- or space-separated, e.g. `scitokens`). Some access points hold every job submitted without them, whatever the job actually uses. Each submit path checks the caller's credentials first and stores a placeholder for any that is missing, so a person using the web UI does not get a held job for a reason unrelated to what they asked for; a real credential obtained later through the OAuth flow replaces the placeholder. Presence is cached per user for 5 minutes. Best effort: if the credd is unavailable or refuses, the submit still proceeds and the reason is logged. Unset = nothing is required. |
-| `HTTP_API_ADVERTISE` | Advertise this API server to the collector (a `HTCondorAPI` ad: endpoint, schedd, mirror health, versions). Default `true`; `daemon.Advertise` is a no-op without `COLLECTOR_HOST`, so this only matters to opt out when a collector is configured. |
 | `HTTP_API_DBMIRROR_NAME` | Pin job-queue routing to the htcondordb mirror advertising this `Name`. Set it when more than one mirror advertises to the pool: nothing in the ad says which schedd each one mirrors, so without a pin the freshest is chosen, which is a guess. |
 | `HTTP_API_DBMIRROR_ADDRESS` | Dial this sinful string instead of the mirror's advertised `MyAddress`, for one reachable only over NAT, a tunnel, or a Kubernetes Service. Freshness still comes from the collector ad — this changes where to connect, not whether the mirror is current enough to trust — and it applies whether the mirror was found through the collector or not. |
 | `HTTP_API_DBMIRROR_REQUIRED` | Never fall back to the schedd. A read the mirror cannot serve fails instead of becoming load on the access point you were trying to protect. See [the routing notes](../../webapi/httpserver/README.md#configuration) for which failures are 503 and which are 400. |
@@ -1514,8 +1636,6 @@ each one.
 | `HTTP_API_AP_ASSIGNMENT_REST_URL` | Base URL of the site's assignment service, for the `rest` backend; `/v1/assignment` is appended. `https` unless loopback. |
 | `HTTP_API_AP_ASSIGNMENT_REST_TOKEN_FILE` | File whose contents are sent as `Authorization: Bearer` to the assignment service. Re-read when it changes. Unset = no header. |
 | `HTTP_API_AP_ASSIGNMENT_STALE_SECONDS` | How long a user's last known good assignment is used while a backend is failing. Default 3600; `0` never uses one. |
-| `HTTP_API_DBMIRROR_TOKEN_SUBJECT` | Identity the token this server presents to the mirror asserts. Default `condor@<trust domain>`. Set it when the mirror authorizes a different name. |
-| `HTTP_API_UPSTREAM_REFRESH` | `auto` (default), `on` or `off`. Whether to ask the provider for `offline_access` and keep the refresh token it returns, which is what lets group membership be re-checked between logins where groups come from the token. `on` is `auto` plus a warning per login when the provider returns no refresh token. `off` neither asks nor stores. |
 | `HTTP_API_DAGMAN_PATH` | Absolute path to `condor_dagman` on the **access point**, for the `submit_dag` tool. **Normally unnecessary — discovered from the schedd's `BIN`; set it only if that discovery is refused.** The server asks the schedd for `BIN` once (a READ-level `condor_config_val` query) and uses `$(BIN)/condor_dagman`; this knob overrides that, and `/usr/bin/condor_dagman` is the fallback when neither is available. `condor_submit_dag` normally finds the binary with `which` on the submitting machine, which is no help here: this server submits to a schedd it shares no filesystem with. |
 | `HTTP_API_DAGMAN_ENVIRONMENT` | Extra environment for the DAGMan manager job, as whitespace-separated `KEY=VALUE` pairs. The schedd gives a scheduler-universe job only the environment its ad carries, and `getenv` cannot help because it would capture *this server's* environment rather than the access point's. `PATH` is set for you (PRE/POST scripts need it). Set `CONDOR_CONFIG` here if the access point keeps its configuration somewhere other than the default. A DAG's own `ENV SET` pairs are merged in too, underneath this: what an operator configures here wins, so a workflow cannot redirect `CONDOR_CONFIG` or `BEARER_TOKEN_FILE` by writing one line of DAG. `ENV GET` is reported as a warning and not honoured — it copies variables from the submitting process's environment, which here is this server's, not the access point's. |
 | `HTTP_API_SSH_TO_JOB` | Allow anything to reach into a running job. Default `true`. `false` withdraws the SSH gateway, the job page's terminal, the job proxy and the VS Code and Terminal applications, and the MCP tools that run commands in a job; JupyterLab, job output and the live tail are unaffected. Read at startup; changing it needs a restart. See [Sites that forbid condor_ssh_to_job](interactive.md#sites-that-forbid-condor_ssh_to_job). |

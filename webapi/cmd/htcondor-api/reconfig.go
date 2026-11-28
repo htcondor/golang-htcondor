@@ -652,6 +652,22 @@ var reconfigParams = []reconfigParam{
 	// into the MCP server it builds, both at startup.
 	fromKnob(knobs.SpoolMaxUploadBytes.Knob),
 
+	// Settings with no siblings. All restart-required: each is read
+	// once into the Handler or into a client built at startup. Listed
+	// so a change to any of them says so rather than being ignored.
+	fromKnob(knobs.Advertise.Knob),
+	fromKnob(knobs.CreddAddress.Knob),
+	fromKnob(knobs.DBMirrorTokenSubject.Knob),
+	fromKnob(knobs.DBPath.Knob),
+	fromKnob(knobs.EnableMCP.Knob),
+	fromKnob(knobs.MetricsPublic.Knob),
+	fromKnob(knobs.OAuth2RevocationOracles.Knob),
+	fromKnob(knobs.RequiredCredentials.Knob),
+	fromKnob(knobs.RESTStats.Knob),
+	fromKnob(knobs.SuperuserFallbackIdentity.Knob),
+	fromKnob(knobs.TemplateGlobalPath.Knob),
+	fromKnob(knobs.UpstreamRefresh.Knob),
+
 	// Placement onboarding, read when the handler is built.
 	{name: "HTTP_API_PLACEMENT_IDENTITY_CLAIMS"},
 	{name: "HTTP_API_PLACEMENT_DISPLAY_NAME_CLAIMS"},
