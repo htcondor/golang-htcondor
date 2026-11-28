@@ -14,6 +14,22 @@ import { Footer } from './Footer';
 // of an instant redirect loop.
 const publicPaths = ['/'];
 
+// Documentation is public, and for two reasons beyond politeness.
+//
+// Somebody deciding whether to ask for an account here, and somebody
+// following a link to one page of the operator guide, both arrive
+// without a session; bouncing them to the identity provider is a poor
+// answer to "what does this service do".
+//
+// It is also what makes the pages prerender. The shell renders nothing
+// at all until it knows whether there is a session, so a documentation
+// page that was not public would ship as an empty document whose text
+// arrives only once JavaScript has run and /api/v1/auth/me has
+// answered. Public, it is in the HTML.
+export function isPublicPath(pathname: string): boolean {
+  return publicPaths.includes(pathname) || pathname === '/docs' || pathname.startsWith('/docs/');
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   useBrandedDocument();
   const pathname = usePathname();
@@ -39,7 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     queryFn: api.auth.me,
   });
 
-  const isPublic = publicPaths.includes(pathname);
+  const isPublic = isPublicPath(pathname);
   const isAuthenticated = !!session?.authenticated;
 
   const search = searchParams?.toString() ?? '';
