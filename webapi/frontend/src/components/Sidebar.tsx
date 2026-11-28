@@ -50,6 +50,11 @@ interface SidebarProps {
   onClose: () => void;
 }
 
+// Where "Documentation" lands: the first guide, since the documentation
+// tree has no page of its own at /docs -- that URL belongs to the
+// server's Swagger UI, which predates it.
+export const DOCS_HREF = '/docs/user';
+
 const NAV = [
   { href: '/', label: 'Dashboard' },
   { href: '/jobs', label: 'Jobs' },
@@ -61,6 +66,7 @@ const NAV = [
   { href: '/pool', label: 'Pool' },
   { href: '/connectors', label: 'Connectors' },
   { href: '/info', label: 'Info' },
+  { href: DOCS_HREF, label: 'Documentation' },
 ];
 
 // Multi-AP mode serves job and history reads, job actions, submit and
@@ -74,7 +80,15 @@ const MULTI_AP_NAV = [
   { href: '/interactive', label: 'Interactive' },
   { href: '/aps', label: 'Access Points' },
   { href: '/connectors', label: 'Connectors' },
+  { href: DOCS_HREF, label: 'Documentation' },
 ];
+
+// Every documentation page keeps the one nav entry highlighted, rather
+// than only the guide the entry points at.
+function navActive(pathname: string, href: string): boolean {
+  if (href === DOCS_HREF) return pathname === href || pathname.startsWith('/docs/');
+  return pathname === href;
+}
 
 // Offered when this server issues placement tokens and the session has a
 // placement identity.
@@ -191,7 +205,7 @@ export function Sidebar({
                 <NavLink
                   key={item.href}
                   href={item.href}
-                  active={pathname === item.href}
+                  active={navActive(pathname, item.href)}
                   onNavigate={onClose}
                 >
                   {item.label}

@@ -56,6 +56,144 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* Document-scale markdown styling for the documentation route. The
+   chat's .markdown-body below is the opposite problem -- four lines in
+   a bubble -- so the two do not share rules. Written as plain CSS
+   rather than a typography plugin so the route adds no dependency. */
+.docs-body {
+  color: var(--color-ink-800);
+  line-height: 1.65;
+  max-width: 48rem;
+}
+.docs-body p,
+.docs-body ul,
+.docs-body ol,
+.docs-body blockquote,
+.docs-body pre,
+.docs-body table {
+  margin: 0 0 1rem;
+}
+.docs-body h1,
+.docs-body h2,
+.docs-body h3,
+.docs-body h4,
+.docs-body h5,
+.docs-body h6 {
+  font-weight: 600;
+  color: var(--color-ink-900);
+  line-height: 1.25;
+  margin: 2rem 0 0.75rem;
+  scroll-margin-top: 1rem;
+}
+.docs-body h1 {
+  font-size: 1.875rem;
+  margin-top: 0;
+}
+.docs-body h2 {
+  font-size: 1.375rem;
+  border-bottom: 1px solid var(--color-ink-100);
+  padding-bottom: 0.25rem;
+}
+.docs-body h3 {
+  font-size: 1.125rem;
+}
+.docs-body h4,
+.docs-body h5,
+.docs-body h6 {
+  font-size: 1rem;
+}
+/* The per-heading permalink. Out of the text flow so the heading sits
+   on the same left margin as the prose, and only drawn on hover --
+   it is a convenience for someone sharing a link, not furniture. */
+.docs-body .docs-anchor {
+  float: left;
+  margin-left: -1.1em;
+  padding-right: 0.3em;
+  color: var(--color-ink-300);
+  text-decoration: none;
+  opacity: 0;
+}
+.docs-body .docs-anchor::before {
+  content: '#';
+}
+.docs-body h1:hover .docs-anchor,
+.docs-body h2:hover .docs-anchor,
+.docs-body h3:hover .docs-anchor,
+.docs-body h4:hover .docs-anchor,
+.docs-body .docs-anchor:focus {
+  opacity: 1;
+}
+.docs-body a {
+  color: var(--color-brand-700);
+  text-decoration: underline;
+}
+.docs-body ul,
+.docs-body ol {
+  padding-left: 1.5rem;
+}
+.docs-body ul {
+  list-style: disc;
+}
+.docs-body ol {
+  list-style: decimal;
+}
+.docs-body li {
+  margin: 0.25rem 0;
+}
+.docs-body li > ul,
+.docs-body li > ol {
+  margin: 0.25rem 0;
+}
+.docs-body code {
+  background: var(--color-ink-50);
+  border: 1px solid var(--color-ink-100);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+  font-size: 0.875em;
+}
+.docs-body pre {
+  background: var(--color-ink-900);
+  color: var(--color-ink-50);
+  border-radius: 6px;
+  padding: 0.875rem 1rem;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.docs-body pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.docs-body blockquote {
+  border-left: 3px solid var(--color-ink-200);
+  padding-left: 1rem;
+  color: var(--color-ink-600);
+}
+.docs-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  font-size: 0.875rem;
+}
+.docs-body th,
+.docs-body td {
+  border: 1px solid var(--color-ink-200);
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+.docs-body th {
+  background: var(--color-ink-50);
+}
+.docs-body hr {
+  border: 0;
+  border-top: 1px solid var(--color-ink-200);
+  margin: 2rem 0;
+}
+
 /* Compact markdown styling for chat bubbles. Browser defaults
    give <ul>/<p>/<h*> generous vertical margins that look wrong
    inside a 4-line response; tighten everything. */
