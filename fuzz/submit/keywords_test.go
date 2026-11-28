@@ -115,11 +115,12 @@ func seedInputs() []string {
 // keyword that Go silently stored as written would otherwise only show up
 // as a value divergence under an attribute name nobody was looking at.
 var pathKeywords = map[string]string{
-	"executable":       "resolved by resolveExecutable, against the SUBMITTING directory rather than Iwd: the entry is f_special, so it never reaches do_simple_commands",
-	"log":              "resolved against Iwd by setStandardFiles",
-	"dagman_log":       "not implemented by the Go parser; see knownDivergentGenerated[dagmannodeslog]",
-	"output_directory": "not implemented by the Go parser; see knownDivergentGenerated[outputdirectory]",
-	"starter_log":      "resolved against Iwd by the simple-keyword pass, which also derives JobStarterDebug from it",
+	"executable":                 "resolved by resolveExecutable, against the SUBMITTING directory rather than Iwd: the entry is f_special, so it never reaches do_simple_commands",
+	"log":                        "resolved against Iwd by setStandardFiles",
+	"dagman_log":                 "not implemented by the Go parser; see knownDivergentGenerated[dagmannodeslog]",
+	"output_directory":           "not implemented by the Go parser; HTCONDOR-3618 made it f_special, so against a release that has the change the row is dropped from the simple table -- see knownDivergentGenerated[outputdirectory]",
+	"organized_output_directory": "not implemented by the Go parser; it is the base half of HTCONDOR-3618 organized output, which SetOutputDirSpecial folds into OutputDirectory -- see knownDivergentGenerated[outputdirectory]",
+	"starter_log":                "resolved against Iwd by the simple-keyword pass, which also derives JobStarterDebug from it",
 }
 
 func TestFileRoleKeywordsAreAccountedFor(t *testing.T) {
