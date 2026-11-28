@@ -3345,14 +3345,17 @@ func (h *Handler) isUserHeaderTrustedSource(r *http.Request) bool {
 //     empty footer and a console message. Only those origins, and only
 //     for images.
 //
-//   - connect-src is widened by api.github.com where this server
-//     offers installing a site app from a GitHub release. There is no
-//     connect-src here otherwise, so it falls back to default-src
-//     'self' and the page may not call anything off this origin --
-//     which is what the site apps admin page needs to do, and the only
-//     thing it needs to do, to list a repository's releases and to
-//     notice that an installed app's repository has published a new
-//     one. Metadata only: the release ASSET is fetched by this server,
+//   - connect-src is always stated, as 'self', and widened by
+//     api.github.com where this server offers installing a site app
+//     from a GitHub release. (This said there was no connect-src
+//     otherwise and that the page fell back to default-src. The effect
+//     is the same -- same-origin only -- but the directive is emitted
+//     unconditionally below, and a reader deciding whether some page
+//     needs connect-src added should not have to discover that from
+//     the code.) Listing a repository's releases, and noticing that an
+//     installed app's repository has published a new one, is what the
+//     site apps admin page needs the widening for, and the only thing
+//     it needs it for. Metadata only: the release ASSET is fetched by this server,
 //     because GitHub does not serve it cross-origin at all.
 //
 //     Named rather than left open because a policy that permits any
