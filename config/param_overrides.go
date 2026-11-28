@@ -68,4 +68,17 @@ var paramOverrides = []struct {
 		Name:    "MAX_HTTP_API_LOG",
 		Default: "$(MAX_DEFAULT_LOG)",
 	},
+	{
+		// The pattern organized output builds a per-job directory
+		// from, added upstream by HTCONDOR-3618. The generated table
+		// is pinned to v25.13.2, which predates it, and regenerating
+		// the whole table to pick up one knob would carry every other
+		// default that moved since.
+		//
+		// Without it, naming organized_output_directory alone leaves
+		// no pattern and the submission fails, where condor_submit
+		// writes <base>/<cluster>/<cluster>.<proc>.
+		Name:    "ORGANIZED_OUTPUT_PATTERN",
+		Default: "$(batch_name:$(ClusterId))/$(JobId)",
+	},
 }

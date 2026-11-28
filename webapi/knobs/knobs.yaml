@@ -83,6 +83,80 @@ knobs:
       that is pathological rather than merely large. A value that is not
       a non-negative whole number refuses to start.
 
+  # Mapping a token subject to a local account, and where group
+  # membership comes from. Two independent switches: a container has no
+  # account database to read and keeps the token's claim, which is why
+  # "token" is the group default even when subject mapping is on.
+  #
+  # All five are read through each knob's Name() and keep their own
+  # parsing: two of them refuse to start on a bad value, and the TTL
+  # warns and keeps a default the knob type does not know about.
+  - name: HTTP_API_IDENTITY_MAP
+    type: string
+    default: ""
+    scope: startup
+    see:
+      - text: Local identity mapping
+        url: auth.md#local-identity-mapping
+    doc: >
+      Ordered strategies for turning a token subject into a local
+      account, separated by commas; the first to answer wins. gecos
+      matches the subject against accounts' GECOS names, username
+      treats it as a login name, and placementd asks
+      condor_placementd. Unset does no mapping. An unparseable list
+      refuses to start rather than falling back to an unmapped
+      identity, which would own no jobs.
+
+  - name: HTTP_API_IDENTITY_MAP_PASSWD_FILE
+    type: string
+    default: ""
+    scope: startup
+    doc: >
+      Read accounts from this file instead of /etc/passwd. Both the
+      index and the re-check use it, so the two cannot disagree. Read
+      only when subject mapping or a local group source is
+      configured.
+
+  - name: HTTP_API_IDENTITY_MAP_TTL
+    type: duration
+    default: 5m
+    scope: startup
+    doc: >
+      How long the account index and group answers are reused. The
+      index is rebuilt lazily on the first login after it expires. A
+      value that is not a positive duration is reported and the default
+      kept, rather than refusing to start: a stale index is a
+      performance question, not a correctness one.
+
+  - name: HTTP_API_IDENTITY_MAP_STRIP_DOMAIN
+    type: bool
+    default: "false"
+    scope: startup
+    doc: >
+      Also try the local part of a scoped subject, so bockelman@wisc.edu
+      matches a GECOS of bockelman. The full subject is tried first, so
+      this only ever adds a fallback. Which providers may issue such a
+      token is decided by HTTP_API_OAUTH2_REQUIREMENTS, not here.
+      Refuses to start on a non-boolean.
+
+  - name: HTTP_API_GROUP_SOURCE
+    type: string
+    default: ""
+    scope: startup
+    see:
+      - text: Local identity mapping
+        url: auth.md#local-identity-mapping
+    doc: >
+      Where group membership comes from, as a comma-separated list:
+      token (or oidc) keeps the groups the token carried, system (or
+      unix) reads the account database, and file:<path> reads a groups
+      file. Local sources are unioned, but token may NOT be mixed with
+      one: groups come either from the token or from this machine, and
+      a list naming both refuses to start rather than picking. Unset
+      means token, which is the default and the only option in a
+      container, where there is no account database to read.
+      Independent of HTTP_API_IDENTITY_MAP.
+
   # Who is in front of this server, and whether it believes a header
   # about who the user is. All three are read through each knob's
   # Name() and keep their own parsing: the two proxy lists are split by

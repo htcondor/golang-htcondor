@@ -1489,7 +1489,7 @@ func userHalf(cfg *config.Config, logger *logging.Logger, k config.StringKnob, g
 // while a host whose accounts and groups are the real authority wants
 // both. Neither is on by default.
 func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.Logger) {
-	if spec, ok := cfg.Get("HTTP_API_IDENTITY_MAP"); ok && strings.TrimSpace(spec) != "" {
+	if spec, ok := cfg.Get(knobs.IdentityMap.Name()); ok && strings.TrimSpace(spec) != "" {
 		strategies, err := idmap.ParseStrategies(spec)
 		if err != nil {
 			// Refusing to start beats starting with a mapping nobody
@@ -1505,12 +1505,12 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 	// Where group membership comes from. Independent of the subject
 	// mapping above: a container has no account database to read and
 	// must keep the token's claim, which is why "token" is the default.
-	if v, ok := cfg.Get("HTTP_API_GROUP_SOURCE"); ok && strings.TrimSpace(v) != "" {
+	if v, ok := cfg.Get(knobs.GroupSource.Name()); ok && strings.TrimSpace(v) != "" {
 		specs, err := httpserver.ParseGroupSources(v)
 		if err != nil {
 			logger.Error(logging.DestinationHTTP,
-				"HTTP_API_GROUP_SOURCE is not usable; refusing to start",
-				"value", v, "error", err)
+				"group source is not usable; refusing to start",
+				"key", knobs.GroupSource.Name(), "value", v, "error", err)
 			os.Exit(1)
 		}
 		mcpCfg.identityGroupSources = specs
@@ -1535,29 +1535,30 @@ func loadIdentityMapping(cfg *config.Config, mcpCfg *mcpConfig, logger *logging.
 	mcpCfg.sshSessionDiskMB = positiveConfigInt(cfg, knobs.SSHGatewaySessionDiskMB.Name(), logger)
 
 	if len(mcpCfg.identityMapStrategies) > 0 || len(mcpCfg.identityGroupSources) > 0 {
-		mcpCfg.identityMapPasswdFile, _ = cfg.Get("HTTP_API_IDENTITY_MAP_PASSWD_FILE")
+		mcpCfg.identityMapPasswdFile = knobs.IdentityMapPasswdFile.Get(cfg)
 		// Whether a scoped subject may also be matched by its local part.
 		// A boolean, because the domain it strips is whichever the token
 		// carried; which providers may issue such a token is decided by
 		// HTTP_API_OAUTH2_REQUIREMENTS, not here.
-		if v, ok := cfg.Get("HTTP_API_IDENTITY_MAP_STRIP_DOMAIN"); ok && strings.TrimSpace(v) != "" {
+		if v, ok := cfg.Get(knobs.IdentityMapStripDomain.Name()); ok && strings.TrimSpace(v) != "" {
 			parsed, perr := strconv.ParseBool(strings.TrimSpace(v))
 			if perr != nil {
 				logger.Error(logging.DestinationHTTP,
-					"HTTP_API_IDENTITY_MAP_STRIP_DOMAIN must be a boolean; refusing to start",
-					"value", v)
+					"strip-domain must be a boolean; refusing to start",
+					"key", knobs.IdentityMapStripDomain.Name(), "value", v)
 				os.Exit(1)
 			}
 			mcpCfg.identityMapStripDomain = parsed
 		}
 		mcpCfg.identityMapTTL = 5 * time.Minute
-		if raw, ok := cfg.Get("HTTP_API_IDENTITY_MAP_TTL"); ok && raw != "" {
+		if raw, ok := cfg.Get(knobs.IdentityMapTTL.Name()); ok && raw != "" {
 			if d, err := time.ParseDuration(raw); err == nil && d > 0 {
 				mcpCfg.identityMapTTL = d
 			} else {
 				logger.Warn(logging.DestinationHTTP,
-					"HTTP_API_IDENTITY_MAP_TTL is not a duration; keeping the default",
-					"value", raw, "default", mcpCfg.identityMapTTL)
+					"identity map TTL is not a positive duration; keeping the default",
+					"key", knobs.IdentityMapTTL.Name(), "value", raw,
+					"default", mcpCfg.identityMapTTL)
 			}
 		}
 		groupsFrom := "token"
