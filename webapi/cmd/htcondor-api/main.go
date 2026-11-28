@@ -4176,15 +4176,15 @@ func loadCCBStreaming(cfg *config.Config, logger *logging.Logger) bool {
 	streaming := !daemon.UnderCondorMaster()
 	source := "standalone default"
 
-	if raw, ok := cfg.Get("HTTP_API_CCB_STREAMING"); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := cfg.Get(knobs.CCBStreaming.Name()); ok && strings.TrimSpace(raw) != "" {
 		v, err := strconv.ParseBool(strings.TrimSpace(raw))
 		if err != nil {
 			// Fatal rather than defaulting: an operator who set this was
 			// working around a reachability problem, and ignoring a typo
 			// would put them back where they started with no clue why.
-			log.Fatalf("invalid HTTP_API_CCB_STREAMING=%q: must be a boolean", raw)
+			log.Fatalf("invalid %s=%q: must be a boolean", knobs.CCBStreaming.Name(), raw)
 		}
-		streaming, source = v, "HTTP_API_CCB_STREAMING"
+		streaming, source = v, knobs.CCBStreaming.Name()
 	}
 
 	logger.Info(logging.DestinationHTTP,
@@ -4254,10 +4254,11 @@ func loadCCBDialer(cfg *config.Config, logger *logging.Logger, router *sharedpor
 	if router != nil {
 		dcfg.Router = router
 	}
-	if raw := strings.TrimSpace(firstConfigValue(cfg, "HTTP_API_CCB_LEARNED_TTL")); raw != "" {
+	if raw := strings.TrimSpace(firstConfigValue(cfg, knobs.CCBLearnedTTL.Name())); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil || d <= 0 {
-			log.Fatalf("invalid HTTP_API_CCB_LEARNED_TTL=%q: must be a positive duration (e.g. 15m)", raw)
+			log.Fatalf("invalid %s=%q: must be a positive duration (e.g. 15m)",
+				knobs.CCBLearnedTTL.Name(), raw)
 		}
 		dcfg.LearnedTTL = d
 	}
@@ -4403,14 +4404,14 @@ const (
 // bare number is ambiguous by a factor of sixty.
 func loadRuntimeEstimateConfig(cfg *config.Config, logger *logging.Logger) (interval, backfill time.Duration) {
 	interval = defaultRuntimeEstimateInterval
-	if raw, ok := cfg.Get("HTTP_API_RUNTIME_ESTIMATE_INTERVAL"); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := cfg.Get(knobs.RuntimeEstimateInterval.Name()); ok && strings.TrimSpace(raw) != "" {
 		if strings.TrimSpace(raw) == "0" {
 			interval = 0
 		} else {
-			interval = configDurationSetting(cfg, "HTTP_API_RUNTIME_ESTIMATE_INTERVAL", logger)
+			interval = configDurationSetting(cfg, knobs.RuntimeEstimateInterval.Name(), logger)
 		}
 	}
-	backfill = configDurationSetting(cfg, "HTTP_API_RUNTIME_ESTIMATE_BACKFILL", logger)
+	backfill = configDurationSetting(cfg, knobs.RuntimeEstimateBackfill.Name(), logger)
 	if backfill == 0 {
 		backfill = defaultRuntimeEstimateBackfill
 	}

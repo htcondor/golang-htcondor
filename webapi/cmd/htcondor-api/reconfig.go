@@ -652,6 +652,17 @@ var reconfigParams = []reconfigParam{
 	// into the MCP server it builds, both at startup.
 	fromKnob(knobs.SpoolMaxUploadBytes.Knob),
 
+	// Reaching daemons behind CCB. Restart-required: the dialer is
+	// built once at startup. Listed so a change says so -- before
+	// these a change to either was neither applied nor reported.
+	fromKnob(knobs.CCBStreaming.Knob),
+	fromKnob(knobs.CCBLearnedTTL.Knob),
+
+	// Runtime estimates. Also restart-required: the refresh ticker and
+	// the first backfill pass are started once.
+	fromKnob(knobs.RuntimeEstimateInterval.Knob),
+	fromKnob(knobs.RuntimeEstimateBackfill.Knob),
+
 	// Placement onboarding, read when the handler is built.
 	{name: "HTTP_API_PLACEMENT_IDENTITY_CLAIMS"},
 	{name: "HTTP_API_PLACEMENT_DISPLAY_NAME_CLAIMS"},
