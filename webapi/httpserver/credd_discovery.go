@@ -11,6 +11,7 @@ import (
 	htcondor "github.com/htcondor/golang-htcondor"
 	"github.com/htcondor/golang-htcondor/config"
 	"github.com/htcondor/golang-htcondor/logging"
+	"github.com/htcondor/golang-htcondor/webapi/knobs"
 )
 
 // Finding the credd that belongs to the schedd this server submits to.
@@ -41,10 +42,15 @@ type creddSource string
 
 //nolint:gosec // G101: these name where an address came from, not a credential.
 const (
-	creddFromConfig      creddSource = "HTTP_API_CREDD_ADDRESS"
 	creddFromScheddAd    creddSource = "the schedd's CredDIpAddr"
 	creddFromAddressFile creddSource = "a local credd address file"
 )
+
+// creddFromConfig names the pinned-address source. A var rather than a
+// const because it is spelled through the knob, so the table stays the
+// only place the parameter name is written; see
+// TestNoDeclaredSettingIsAlsoSpelledByHand.
+var creddFromConfig = creddSource(knobs.CreddAddress.Name())
 
 // discoverCredd returns the address of the credd this schedd uses.
 //
@@ -84,7 +90,7 @@ func discoverCredd(ctx context.Context, cfg creddLookup, logger *logging.Logger)
 
 	if !cfg.scheddIsLocal {
 		return "", fmt.Errorf("the schedd %q does not advertise %s and is not on this host, "+
-			"so there is no credd to use; set HTTP_API_CREDD_ADDRESS to name one",
+			"so there is no credd to use; set "+knobs.CreddAddress.Name()+" to name one",
 			cfg.scheddName, creddAddressAttr)
 	}
 	return "", fmt.Errorf("no credd found: the schedd advertises no %s and no local credd address file exists",
@@ -93,7 +99,7 @@ func discoverCredd(ctx context.Context, cfg creddLookup, logger *logging.Logger)
 
 // creddLookup is what discovery needs to know about the schedd being fronted.
 type creddLookup struct {
-	// configured is HTTP_API_CREDD_ADDRESS, which always wins.
+	// configured is the pinned credd address, which always wins.
 	configured string
 	// scheddName and scheddAddr identify the schedd whose credd is wanted.
 	scheddName string

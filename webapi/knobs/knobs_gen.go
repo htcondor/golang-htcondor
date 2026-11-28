@@ -8,6 +8,16 @@ import (
 	"github.com/htcondor/golang-htcondor/config"
 )
 
+// Advertise is HTTP_API_ADVERTISE.
+//
+// Advertise this API server to the collector, as an HTCondorAPI ad
+// carrying the endpoint, the schedd, mirror health and versions. On by
+// default, and a no-op without COLLECTOR_HOST -- so this only matters
+// as a way to opt OUT where a collector is configured. A non-boolean
+// refuses to start.
+var Advertise = config.DefineBool("HTTP_API_ADVERTISE", true, config.Startup,
+	"Advertise this API server to the collector, as an HTCondorAPI ad carrying the endpoint, the schedd, mirror health and versions. On by default, and a no-op without COLLECTOR_HOST -- so this only matters as a way to opt OUT where a collector is configured. A non-boolean refuses to start.")
+
 // AnyUserReadGroups is HTTP_API_ANYUSER_READ_GROUPS.
 //
 // Groups whose members may request the anyuser:read entitlement, which
@@ -152,6 +162,36 @@ var ConnectorOutputSweepInterval = config.DefineDuration("HTTP_API_CONNECTOR_OUT
 var ConnectorPrefix = config.DefineString("HTTP_API_CONNECTOR_PREFIX", "webapi", config.Startup,
 	"The prefix of the credd service names this server stores connected-account credentials under. Change it only to keep two servers sharing one credd from seeing each other's credentials.")
 
+// CreddAddress is HTTP_API_CREDD_ADDRESS.
+//
+// Pin the credd this server talks to, as a sinful address, overriding
+// discovery. Single-AP mode only -- refused in multi-AP mode, where
+// each access point's schedd names its own. Normally unnecessary: the
+// credd is read from the schedd itself, which publishes CredDIpAddr in
+// its ad and address file, the same binding DCSchedd::getCreddAddress
+// uses. Set it when fronting a remote schedd that does not advertise
+// one, since a credd that is not the submitting schedd's accepts
+// credentials and leaves jobs held anyway.
+var CreddAddress = config.DefineString("HTTP_API_CREDD_ADDRESS", "", config.Startup,
+	"Pin the credd this server talks to, as a sinful address, overriding discovery. Single-AP mode only -- refused in multi-AP mode, where each access point's schedd names its own. Normally unnecessary: the credd is read from the schedd itself, which publishes CredDIpAddr in its ad and address file, the same binding DCSchedd::getCreddAddress uses. Set it when fronting a remote schedd that does not advertise one, since a credd that is not the submitting schedd's accepts credentials and leaves jobs held anyway.")
+
+// DBMirrorTokenSubject is HTTP_API_DBMIRROR_TOKEN_SUBJECT.
+//
+// The identity the token this server presents to the htcondordb mirror
+// asserts. Set it when the mirror authorizes a different name.
+var DBMirrorTokenSubject = config.DefineString("HTTP_API_DBMIRROR_TOKEN_SUBJECT", "", config.Startup,
+	"The identity the token this server presents to the htcondordb mirror asserts. Set it when the mirror authorizes a different name.")
+
+// DBPath is HTTP_API_DB_PATH.
+//
+// The unified SQLite database holding sessions, OAuth2 and IDP state,
+// templates and API keys. It runs in WAL mode, so expect -wal and -shm
+// files beside it: back up or copy all three together, and put it on a
+// filesystem with working locking -- a local disk rather than NFS. See
+// "The database" in the operator guide.
+var DBPath = config.DefineString("HTTP_API_DB_PATH", "", config.Startup,
+	"The unified SQLite database holding sessions, OAuth2 and IDP state, templates and API keys. It runs in WAL mode, so expect -wal and -shm files beside it: back up or copy all three together, and put it on a filesystem with working locking -- a local disk rather than NFS. See \"The database\" in the operator guide.")
+
 // EnableIDP is HTTP_API_ENABLE_IDP.
 //
 // Run the built-in identity provider, so this server signs users in
@@ -160,6 +200,17 @@ var ConnectorPrefix = config.DefineString("HTTP_API_CONNECTOR_PREFIX", "webapi",
 // HTTP_API_IDP_DB_PATH it once had is no longer read.
 var EnableIDP = config.DefineBool("HTTP_API_ENABLE_IDP", false, config.Startup,
 	"Run the built-in identity provider, so this server signs users in itself instead of sending them to an external one. Off by default. The provider shares the unified application database; the separate HTTP_API_IDP_DB_PATH it once had is no longer read.")
+
+// EnableMCP is HTTP_API_ENABLE_MCP.
+//
+// Serve the MCP endpoint at /mcp, the /mcp/oauth2/* spelling of the
+// OAuth2 endpoints, and the mcp:read and mcp:write scopes in OAuth2
+// metadata. Required by the chat assistant. OAuth2 itself is served
+// whenever the web UI OR MCP is on, so a web UI with this off still
+// logs people in and serves the device flow. See "Agents: MCP, site
+// skills, chat" in the operator guide.
+var EnableMCP = config.DefineBool("HTTP_API_ENABLE_MCP", false, config.Startup,
+	"Serve the MCP endpoint at /mcp, the /mcp/oauth2/* spelling of the OAuth2 endpoints, and the mcp:read and mcp:write scopes in OAuth2 metadata. Required by the chat assistant. OAuth2 itself is served whenever the web UI OR MCP is on, so a web UI with this off still logs people in and serves the device flow. See \"Agents: MCP, site skills, chat\" in the operator guide.")
 
 // GroupSource is HTTP_API_GROUP_SOURCE.
 //
@@ -768,6 +819,14 @@ var MCPWriteGroups = config.DefineString("HTTP_API_MCP_WRITE_GROUPS", "", config
 var MCPWriteUsers = config.DefineString("HTTP_API_MCP_WRITE_USERS", "", config.Reconfig,
 	"Users granted the mcp:write scope, named individually rather than through a group. Identities are compared as for HTTP_API_MCP_ACCESS_USERS. See \"Authorization groups\" in the operator guide.")
 
+// MetricsPublic is HTTP_API_METRICS_PUBLIC.
+//
+// Remove the API-key gate on /metrics. Off by default, so Prometheus
+// must present an API key carrying the metrics scope. See "Metrics and
+// usage statistics" in the operator guide.
+var MetricsPublic = config.DefineBool("HTTP_API_METRICS_PUBLIC", false, config.Startup,
+	"Remove the API-key gate on /metrics. Off by default, so Prometheus must present an API key carrying the metrics scope. See \"Metrics and usage statistics\" in the operator guide.")
+
 // OAuth2AccessTokenLifespan is HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN.
 //
 // How long an access token this server issues as an OAuth2
@@ -879,6 +938,18 @@ var OAuth2RefreshTokenLifespan = config.DefineDuration("HTTP_API_OAUTH2_REFRESH_
 var OAuth2Requirements = config.DefineString("HTTP_API_OAUTH2_REQUIREMENTS", "", config.Startup,
 	"Login policy as a ClassAd expression over the token's claims; a login proceeds only where it evaluates true. It is parsed at startup and a malformed one stops the server, rather than failing at somebody's first login. See \"Local identity mapping\" in the operator guide.")
 
+// OAuth2RevocationOracles is HTTP_API_OAUTH2_REVOCATION_ORACLES.
+//
+// Which sources are consulted to decide whether a refresh grant is
+// still good, as a comma-separated list -- system-groups reads this
+// machine's account database, upstream-userinfo asks the identity
+// provider. Unset runs whichever the deployment can support. The
+// literal "none" disables all of them, and is the spelling that exists
+// because a configuration file cannot otherwise express "empty" as
+// distinct from "unset".
+var OAuth2RevocationOracles = config.DefineString("HTTP_API_OAUTH2_REVOCATION_ORACLES", "", config.Startup,
+	"Which sources are consulted to decide whether a refresh grant is still good, as a comma-separated list -- system-groups reads this machine's account database, upstream-userinfo asks the identity provider. Unset runs whichever the deployment can support. The literal \"none\" disables all of them, and is the spelling that exists because a configuration file cannot otherwise express \"empty\" as distinct from \"unset\".")
+
 // OAuth2Scopes is HTTP_API_OAUTH2_SCOPES.
 //
 // Scopes requested at sign-in, space separated as RFC 6749 writes
@@ -935,6 +1006,22 @@ var PingInterval = config.DefineDuration("HTTP_API_PING_INTERVAL", time.Duration
 var ReadTimeout = config.DefineDuration("HTTP_API_READ_TIMEOUT", time.Duration(30000000000) /* 30s */, config.Startup,
 	"How long a request may take to arrive in full, as a Go duration. A value that cannot be parsed is logged and the default applies.")
 
+// RequiredCredentials is HTTP_API_REQUIRED_CREDENTIALS.
+//
+// OAuth service credentials that must exist before a job may be
+// submitted, separated by commas or whitespace. Some access points
+// hold every job submitted without them, whatever the job actually
+// uses. Each submit path checks the caller's credentials first and
+// stores a placeholder for any that is missing, so somebody using the
+// web UI does not get a held job for a reason unrelated to what they
+// asked for; a real credential obtained later through the OAuth flow
+// replaces the placeholder. Presence is cached per user for five
+// minutes. Best effort: if the credd is unavailable or refuses, the
+// submit still proceeds and the reason is logged. Unset requires
+// nothing.
+var RequiredCredentials = config.DefineString("HTTP_API_REQUIRED_CREDENTIALS", "", config.Startup,
+	"OAuth service credentials that must exist before a job may be submitted, separated by commas or whitespace. Some access points hold every job submitted without them, whatever the job actually uses. Each submit path checks the caller's credentials first and stores a placeholder for any that is missing, so somebody using the web UI does not get a held job for a reason unrelated to what they asked for; a real credential obtained later through the OAuth flow replaces the placeholder. Presence is cached per user for five minutes. Best effort: if the credd is unavailable or refuses, the submit still proceeds and the reason is logged. Unset requires nothing.")
+
 // Reservations is HTTP_API_RESERVATIONS.
 //
 // Run the reservations subsystem: the admin API, the admin page and
@@ -978,6 +1065,14 @@ var ReservationEPConstraint = config.DefineString("HTTP_API_RESERVATION_EP_CONST
 // non-negative whole number refuses to start.
 var ReservationStampBudget = config.DefineInt("HTTP_API_RESERVATION_STAMP_BUDGET", 0, config.Startup,
 	"How many cluster ads one stamping pass writes. The write is per cluster rather than per job, so the default covers an idle queue far larger than most access points have; this exists for a queue that is pathological rather than merely large. A value that is not a non-negative whole number refuses to start.")
+
+// RESTStats is HTTP_API_REST_STATS.
+//
+// Count REST API requests. On by default; false turns off the REST
+// counting while leaving the MCP counting alone. See "REST API
+// requests" in the operator guide.
+var RESTStats = config.DefineBool("HTTP_API_REST_STATS", true, config.Startup,
+	"Count REST API requests. On by default; false turns off the REST counting while leaving the MCP counting alone. See \"REST API requests\" in the operator guide.")
 
 // SandboxCacheDir is HTTP_API_SANDBOX_CACHE_DIR.
 //
@@ -1187,6 +1282,26 @@ var SubmitFileDefaults = config.DefineString("HTTP_API_SUBMIT_FILE_DEFAULTS", ""
 var SubmitFileOverrides = config.DefineString("HTTP_API_SUBMIT_FILE_OVERRIDES", "", config.Startup,
 	"Submit-file lines added to every submission that win over whatever the submit file says. For requirements that are not the user's to opt out of -- an access point that will not have a log written outside the home directory, say. Otherwise as above: HTCondor configuration syntax, operator-only, spliced in as written.")
 
+// SuperuserFallbackIdentity is HTTP_API_SUPERUSER_FALLBACK_IDENTITY.
+//
+// The identity superuser mode acts under when the operator is not
+// themselves a usable queue superuser. The default suits a schedd
+// running as the condor user, where real_owner_is_condor matches the
+// daemon's own OS user. It does NOT suit a personal condor, where that
+// branch is disabled and the equivalent identity is the user the pool
+// runs as -- so a deployment running the schedd as anything else needs
+// this. See "Superuser mode" in the operator guide.
+var SuperuserFallbackIdentity = config.DefineString("HTTP_API_SUPERUSER_FALLBACK_IDENTITY", "", config.Startup,
+	"The identity superuser mode acts under when the operator is not themselves a usable queue superuser. The default suits a schedd running as the condor user, where real_owner_is_condor matches the daemon's own OS user. It does NOT suit a personal condor, where that branch is disabled and the equivalent identity is the user the pool runs as -- so a deployment running the schedd as anything else needs this. See \"Superuser mode\" in the operator guide.")
+
+// TemplateGlobalPath is HTTP_API_TEMPLATE_GLOBAL_PATH.
+//
+// A YAML file of operator-curated batch-submission templates. Unset
+// offers only the built-in templates, which always ship whatever this
+// says.
+var TemplateGlobalPath = config.DefineString("HTTP_API_TEMPLATE_GLOBAL_PATH", "", config.Startup,
+	"A YAML file of operator-curated batch-submission templates. Unset offers only the built-in templates, which always ship whatever this says.")
+
 // TLSCACert is HTTP_API_TLS_CA_CERT.
 //
 // CA bundle used to verify client certificates. Unset asks for no
@@ -1227,6 +1342,16 @@ var TLSKey = config.DefineString("HTTP_API_TLS_KEY", "", config.Startup,
 // its age.
 var TokenRetention = config.DefineString("HTTP_API_TOKEN_RETENTION", "", config.Startup,
 	"How long rows for dead OAuth2 tokens are kept before being swept, as a duration with a unit, or off (equivalently 0) to keep them forever. A bare number is refused rather than read as nanoseconds, which is what parsing \"90\" would otherwise mean and is never what anybody intends; so is anything else that does not parse, and the server refuses to start rather than sweeping on a figure nobody chose. Only rows that are already dead -- revoked or expired -- are ever removed, because a live grant is somebody's session whatever its age.")
+
+// UpstreamRefresh is HTTP_API_UPSTREAM_REFRESH.
+//
+// Whether to ask the identity provider for offline_access and keep the
+// refresh token it returns, which is what lets group membership be
+// re-checked between logins where groups come from the token. auto
+// asks and keeps one when offered; on is auto plus a warning per login
+// when the provider returns none; off neither asks nor stores.
+var UpstreamRefresh = config.DefineString("HTTP_API_UPSTREAM_REFRESH", "", config.Startup,
+	"Whether to ask the identity provider for offline_access and keep the refresh token it returns, which is what lets group membership be re-checked between logins where groups come from the token. auto asks and keeps one when offered; on is auto plus a warning per login when the provider returns none; off neither asks nor stores.")
 
 // UserHeaderTrustAny is HTTP_API_USER_HEADER_TRUST_ANY.
 //
@@ -1539,6 +1664,7 @@ func (s SiteAppSettings) Icon() config.StringKnob {
 // that check the table against the code. A family's per-instance settings
 // are not here: they have no name until an instance does.
 var All = []config.Knob{
+	Advertise.Knob,
 	AnyUserReadGroups.Knob,
 	AnyUserReadUsers.Knob,
 	AnyUserWriteGroups.Knob,
@@ -1554,7 +1680,11 @@ var All = []config.Knob{
 	BuildStagingBase.Knob,
 	ConnectorOutputSweepInterval.Knob,
 	ConnectorPrefix.Knob,
+	CreddAddress.Knob,
+	DBMirrorTokenSubject.Knob,
+	DBPath.Knob,
 	EnableIDP.Knob,
+	EnableMCP.Knob,
 	GroupSource.Knob,
 	IdempotencyKeyCheck.Knob,
 	IdempotencyKeyHistoryWindow.Knob,
@@ -1614,6 +1744,7 @@ var All = []config.Knob{
 	MCPWriteGroup.Knob,
 	MCPWriteGroups.Knob,
 	MCPWriteUsers.Knob,
+	MetricsPublic.Knob,
 	OAuth2AccessTokenLifespan.Knob,
 	OAuth2AuthURL.Knob,
 	OAuth2ClientID.Knob,
@@ -1626,16 +1757,19 @@ var All = []config.Knob{
 	OAuth2RedirectURL.Knob,
 	OAuth2RefreshTokenLifespan.Knob,
 	OAuth2Requirements.Knob,
+	OAuth2RevocationOracles.Knob,
 	OAuth2Scopes.Knob,
 	OAuth2TokenURL.Knob,
 	OAuth2UserinfoURL.Knob,
 	OAuth2UsernameClaim.Knob,
 	PingInterval.Knob,
 	ReadTimeout.Knob,
+	RequiredCredentials.Knob,
 	Reservations.Knob,
 	ReservationClaims.Knob,
 	ReservationEPConstraint.Knob,
 	ReservationStampBudget.Knob,
+	RESTStats.Knob,
 	SandboxCacheDir.Knob,
 	SandboxCacheMB.Knob,
 	SandboxMaxGB.Knob,
@@ -1658,10 +1792,13 @@ var All = []config.Knob{
 	SSHHostKeyFile.Knob,
 	SubmitFileDefaults.Knob,
 	SubmitFileOverrides.Knob,
+	SuperuserFallbackIdentity.Knob,
+	TemplateGlobalPath.Knob,
 	TLSCACert.Knob,
 	TLSCert.Knob,
 	TLSKey.Knob,
 	TokenRetention.Knob,
+	UpstreamRefresh.Knob,
 	UserHeaderTrustAny.Knob,
 	VSCodeImage.Knob,
 	WebUIAccessGroup.Knob,
