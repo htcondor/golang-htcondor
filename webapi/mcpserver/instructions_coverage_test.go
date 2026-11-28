@@ -1,6 +1,8 @@
 package mcpserver
 
 import (
+	"os"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -68,5 +70,45 @@ func TestInstructionsOmitManualLookupsWhenNotEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(genericInstructions(true), "doc_search") {
 		t.Error("instructions do not name doc_search in a build that offers it")
+	}
+}
+
+// The README is what docs/operator/agents.md and docs/operator/index.md
+// send a human to for "the tool catalogue", and for a long time it
+// promised one and listed 16 of 52: the per-tool sections were written
+// as tools were added early on and then simply stopped being written.
+// Nothing noticed, because a document that lists a subset is internally
+// consistent -- there is no dangling reference to find.
+//
+// Same shape as TestEveryToolIsNamedInTheGuide above, and for the same
+// reason: toolAnnotations is the complete list (annotations_test.go
+// keeps it so), so the next tool added inherits this check whether or
+// not a bare server would enable it.
+//
+// This does NOT check that the README describes a tool correctly, only
+// that it names it. What a tool accepts is served live by tools/list,
+// which is the one place that cannot drift.
+func TestEveryToolIsNamedInTheREADME(t *testing.T) {
+	b, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(b)
+	if len(toolAnnotations) == 0 {
+		t.Fatal("no tools to check; this test would pass vacuously")
+	}
+	var missing []string
+	for name := range toolAnnotations {
+		// Backticked, so a tool whose name happens to be a substring of
+		// prose does not count as catalogued -- get_job appears inside
+		// get_job_output and inside sentences about job retrieval.
+		if !strings.Contains(readme, "`"+name+"`") {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("not named in webapi/mcpserver/README.md, which the operator documentation "+
+			"calls the tool catalogue: %v\nAdd a row to one of its two tables.", missing)
 	}
 }
