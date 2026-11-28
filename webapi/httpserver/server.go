@@ -366,9 +366,15 @@ type Config struct {
 	// Nil selects the default set; see HandlerConfig.OAuth2RevocationOracles
 	// for the recognized names.
 	OAuth2RevocationOracles []string
-	MCPAccessGroup          string // Group required for any MCP access (empty = all authenticated)
-	MCPReadGroup            string // Group required for read operations (empty = all have read)
-	MCPWriteGroup           string // Group required for write operations (empty = all have write)
+	// Who may reach /mcp, and who may read or write through it. Each is
+	// a group list and a user list; naming nobody requires nothing, so
+	// an unconfigured gate admits every authenticated caller.
+	MCPAccessGroups string
+	MCPAccessUsers  string
+	MCPReadGroups   string
+	MCPReadUsers    string
+	MCPWriteGroups  string
+	MCPWriteUsers   string
 	// UpstreamRefresh is HTTP_API_UPSTREAM_REFRESH: auto, on or off.
 	// Decides whether this server keeps the identity provider's refresh
 	// token so it can ask about a user later. See upstream_refresh.go.
@@ -449,9 +455,10 @@ type Config struct {
 	// restriction. See webapi/poolpolicy.
 	PoolQueryPolicy *poolpolicy.Policy
 	WebUIAdminGroup string // Group required for Web UI admin pages (empty disables admin UI). Configurable via HTTP_API_WEBUI_ADMIN_GROUP.
-	// WebUIAccessGroup gates web interface login; empty falls back to
-	// MCPAccessGroup. Comma-separated.
-	WebUIAccessGroup string
+	// WebUIAccessGroups and WebUIAccessUsers gate web interface login;
+	// naming nobody at all falls back to the MCP access gate.
+	WebUIAccessGroups string
+	WebUIAccessUsers  string
 	// Web UI branding: the site's own name, footer logos, images,
 	// stylesheet and tab icon. All optional; unset leaves the pages as
 	// they ship. See HandlerConfig and httpserver/branding.go.
@@ -691,9 +698,12 @@ func NewServer(cfg Config) (*Server, error) {
 		OAuth2RefreshTokenLifespan:  cfg.OAuth2RefreshTokenLifespan,
 		OAuth2MaxGrantLifetime:      cfg.OAuth2MaxGrantLifetime,
 		OAuth2RevocationOracles:     cfg.OAuth2RevocationOracles,
-		MCPAccessGroup:              cfg.MCPAccessGroup,
-		MCPReadGroup:                cfg.MCPReadGroup,
-		MCPWriteGroup:               cfg.MCPWriteGroup,
+		MCPAccessGroups:             cfg.MCPAccessGroups,
+		MCPAccessUsers:              cfg.MCPAccessUsers,
+		MCPReadGroups:               cfg.MCPReadGroups,
+		MCPReadUsers:                cfg.MCPReadUsers,
+		MCPWriteGroups:              cfg.MCPWriteGroups,
+		MCPWriteUsers:               cfg.MCPWriteUsers,
 		AnyUserReadGroups:           cfg.AnyUserReadGroups,
 		AnyUserReadUsers:            cfg.AnyUserReadUsers,
 		AnyUserWriteGroups:          cfg.AnyUserWriteGroups,
@@ -735,7 +745,8 @@ func NewServer(cfg Config) (*Server, error) {
 		WebUIPrivacyURL:             cfg.WebUIPrivacyURL,
 		WebUITermsFile:              cfg.WebUITermsFile,
 		WebUITermsURL:               cfg.WebUITermsURL,
-		WebUIAccessGroup:            cfg.WebUIAccessGroup,
+		WebUIAccessGroups:           cfg.WebUIAccessGroups,
+		WebUIAccessUsers:            cfg.WebUIAccessUsers,
 		SpoolBufferDir:              cfg.SpoolBufferDir,
 		SuperuserGroup:              cfg.SuperuserGroup,
 		ProjectLeadsFile:            cfg.ProjectLeadsFile,

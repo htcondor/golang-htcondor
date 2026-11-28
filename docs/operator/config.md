@@ -515,6 +515,34 @@ a message -- except under condor_master, where stdout is discarded and
 there would be nowhere to report anything, so the daemon refuses to
 start and the reason goes to the master's log instead.
 
+### `HTTP_API_MCP_ACCESS_GROUPS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Groups whose members may reach /mcp at all. Comma-separated, or a JSON
+array to spell a group name containing a comma. Unset, with
+`HTTP_API_MCP_ACCESS_USERS` unset too, places no requirement on the
+surface and every authenticated caller reaches it; naming anybody in
+either half restricts it to the people named.
+
+See [Authorization groups](auth.md#authorization-groups).
+
+### `HTTP_API_MCP_ACCESS_USERS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Users who may reach /mcp, named individually rather than through a
+group -- which is the only half that decides anything where
+`HTTP_API_GROUP_SOURCE` is token and the token carries no groups.
+Identities are compared the way HTCondor compares two users: the
+domain case-insensitively, the part before the @ exactly, and a bare
+name matches only a bare name. Write alice@example.org, not alice,
+where the access point reports fully-qualified users. Naming somebody
+here restricts the surface to the people named, here or in
+`HTTP_API_MCP_ACCESS_GROUPS`.
+
+See [Authorization groups](auth.md#authorization-groups).
+
 ### `HTTP_API_MCP_BASE_URL`
 
 **String.** Unset by default. Changing it needs a restart.
@@ -574,6 +602,17 @@ making progress is still cut off on its last window; this is the
 backstop for one that never finishes at all. It needs a unit, and a
 value without one refuses to start.
 
+### `HTTP_API_MCP_READ_GROUPS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Groups whose members are granted the mcp:read scope, which reads the
+caller's own jobs through /mcp. Unset, with `HTTP_API_MCP_READ_USERS`
+unset too, the scope follows the access gate instead: whoever may
+reach /mcp may read through it.
+
+See [Authorization groups](auth.md#authorization-groups).
+
 ### `HTTP_API_MCP_READ_ONLY`
 
 **Boolean.** Default `false`. A change is installed by `condor_reconfig`.
@@ -583,6 +622,16 @@ whatever their scopes. Off by default. While it is on, mcp:write is
 neither advertised nor granted.
 
 See [A read-only access point](agents.md#a-read-only-access-point).
+
+### `HTTP_API_MCP_READ_USERS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Users granted the mcp:read scope, named individually rather than
+through a group. Identities are compared as for
+`HTTP_API_MCP_ACCESS_USERS`.
+
+See [Authorization groups](auth.md#authorization-groups).
 
 ### `HTTP_API_MCP_REDACT_DISABLED_RULES`
 
@@ -638,6 +687,28 @@ a gateway or proxy with a tighter timeout sits in front of this
 server, and higher only where the clients reaching this deployment are
 known to be configured for a longer tool timeout. It needs a unit, as
 above.
+
+### `HTTP_API_MCP_WRITE_GROUPS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Groups whose members are granted the mcp:write scope -- and
+condor:/WRITE, which mints an IDTOKEN carrying the same authorization,
+so the two follow one policy rather than offering the same power under
+two names. Unset, with `HTTP_API_MCP_WRITE_USERS` unset too, the scope
+follows the access gate.
+
+See [Authorization groups](auth.md#authorization-groups).
+
+### `HTTP_API_MCP_WRITE_USERS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Users granted the mcp:write scope, named individually rather than
+through a group. Identities are compared as for
+`HTTP_API_MCP_ACCESS_USERS`.
+
+See [Authorization groups](auth.md#authorization-groups).
 
 ### `HTTP_API_OAUTH2_ACCESS_TOKEN_LIFESPAN`
 
@@ -1189,6 +1260,31 @@ any image. Unset otherwise runs a published code-server image.
 
 See [VS Code sessions](interactive.md#vs-code-sessions).
 
+### `HTTP_API_WEBUI_ACCESS_GROUPS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Groups whose members may log in to the web interface. Separate from
+the MCP gate because the two answer different questions: somebody may
+be entitled to open this access point's pages without being entitled
+to drive it through an agent, and the reverse. Unset, with
+`HTTP_API_WEBUI_ACCESS_USERS` unset too, the MCP access gate applies
+instead -- which is what gated the browser before these were separate
+settings.
+
+See [Authorization groups](auth.md#authorization-groups).
+
+### `HTTP_API_WEBUI_ACCESS_USERS`
+
+**String.** Unset by default. A change is installed by `condor_reconfig`.
+
+Users who may log in to the web interface, named individually rather
+than through a group. Identities are compared as for
+`HTTP_API_MCP_ACCESS_USERS`. Naming somebody here is enough to make
+the web interface answer to its own gate rather than the MCP one.
+
+See [Authorization groups](auth.md#authorization-groups).
+
 ### `HTTP_API_WRITE_TIMEOUT`
 
 **Duration.** Default `30s`. Changing it needs a restart.
@@ -1212,7 +1308,6 @@ each one.
 | `HTTP_API_DB_PATH` | Unified SQLite DB (sessions, OAuth2, IDP, templates, API keys). Default `$(LOCAL_DIR)/htcondor-api.db`. Runs in **WAL** mode, so expect `-wal` and `-shm` files beside it; back up or copy all three together, and put it on a filesystem with working locking (a local disk) rather than NFS. See [the database](index.md#the-database). |
 | `HTTP_API_SIGNING_KEY` | Pool signing key for minting per-request tokens. Defaults to `SEC_TOKEN_POOL_SIGNING_KEY_FILE`. |
 | `HTTP_API_KEK_FILE` | Path to the master Key Encryption Key (32 raw bytes or 64-char hex; mode 0600/0400). Generate with `openssl rand -hex 32 > <path> && chmod 0600 <path>`. |
-| `HTTP_API_WEBUI_ACCESS_GROUP` | Comma-separated group(s) permitted to log in to the web interface (or a JSON array of names, for names holding a comma). Unset falls back to `HTTP_API_MCP_ACCESS_GROUP`. Reloaded on SIGHUP. See [Authorization groups](auth.md#authorization-groups). |
 | `HTTP_API_WEBUI_ADMIN_GROUP` | Comma-separated group(s) whose members can reach the admin pages. Unset disables the admin UI. Reloaded on SIGHUP. |
 | `HTTP_API_WEBUI_SITE_NAME` / `HTTP_API_WEBUI_SITE_TAGLINE` | What the pages call this access point. Reloaded on SIGHUP. See [Web UI branding](branding.md). |
 | `HTTP_API_WEBUI_FOOTER_LOGOS` | JSON array of `{"src", "alt", "href"}` for the footer's institutional band. Unset keeps the shipped CHTC/Morgridge/UW band; `[]` removes it. Reloaded on SIGHUP. |

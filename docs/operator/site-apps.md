@@ -60,7 +60,7 @@ idea which groups exist here, and their natural placeholder is
 ### Why configuration rather than a file beside the bundle
 
 Every other group gate this server has —
-`HTTP_API_WEBUI_ACCESS_GROUP`, `HTTP_API_WEBUI_ADMIN_GROUP`,
+`HTTP_API_WEBUI_ACCESS_GROUPS`, `HTTP_API_WEBUI_ADMIN_GROUP`,
 `HTTP_API_SUPERUSER_GROUP`, the MCP ones — is an `HTTP_API_*`
 parameter. Keeping these with them means `condor_config_val -dump
 HTTP_API` answers "who can see what here?" in one place, and your
@@ -293,7 +293,7 @@ console page is still reachable by typing its URL, and the expert link
 is one click. It exists so that someone who came here to run a pipeline
 is not handed a batch system console they did not ask for. Do not rely
 on it to keep anyone out of anything; use
-`HTTP_API_WEBUI_ACCESS_GROUP` and the ordinary authorization settings
+`HTTP_API_WEBUI_ACCESS_GROUPS` and the ordinary authorization settings
 for that.
 
 A session counts as app-only only when *every* group it holds is named

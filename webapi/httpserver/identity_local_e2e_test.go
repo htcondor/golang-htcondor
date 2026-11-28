@@ -229,7 +229,7 @@ func startIdentityMappedServer(t *testing.T, ssoBaseURL, passwdPath, accessGroup
 		OAuth2UserInfoURL:   ssoBaseURL + "/userinfo",
 		OAuth2GroupsClaim:   "groups",
 		OAuth2UsernameClaim: usernameClaim,
-		MCPAccessGroup:      accessGroup,
+		MCPAccessGroups:     accessGroup,
 
 		// The thing under test.
 		IdentityMapStrategies: []idmap.Strategy{idmap.StrategyGecos},
